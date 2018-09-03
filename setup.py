@@ -14,7 +14,7 @@ setup(
     name='SmartPipeline',
     version='0.0.1',
     description='A simple framework for developing data pipelines',
-    long_description=readfile('README.rst'),
+    long_description=readfile('README.md'),
     classifiers=[
         'Intended Audience :: Science/Research',
         'License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)',
@@ -25,6 +25,5 @@ setup(
     author_email='barnets@gmail.com',
     packages=['smartpipeline'],
     setup_requires=['pytest-runner'],
-    tests_require=['pytest'],
-    include_package_data=True,
+    tests_require=['pytest']
 )
