@@ -1,7 +1,7 @@
 import os
 from abc import ABC, abstractmethod
 
-from inpipeline.core.error import Error, CriticalError
+from smartpipeline.error import Error, CriticalError
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
