@@ -10,11 +10,12 @@ class Pipeline:
 
     def __init__(self):
         self._raise_on_critical = False
+        self._skip_on_critical = False
         self._stages = OrderedDict()
         self.error_manager = ErrorManager()
         self.source = None
 
-    def run(self):
+    def run(self, max_workers=1):
         if self.source is None:
             raise ValueError("Set the data source for this pipeline")
         item = self.source.pop()
@@ -22,14 +23,15 @@ class Pipeline:
             yield self.process(item)
             item = self.source.pop()
 
-    def process(self, item):
+    def process(self, item, max_workers=1):
         for name, stage in self._stages.items():
             item = self._process(stage, name, item)
             if item.has_critical_errors():
                 if self._raise_on_critical:
                     for e in item.critical_errors():
                         raise e.get_exception()
-                break
+                if self._skip_on_critical:
+                    break
         return item
 
     def set_source(self, source):
@@ -44,10 +46,17 @@ class Pipeline:
         self._raise_on_critical = True
         return self
 
-    def append_stage(self, name, stage):
+    def skip_on_critical_error(self):
+        self._skip_on_critical = True
+        return self
+
+    def append_stage(self, name, stage, max_workers=1):
         stage.set_name(name)
         self._stages[name] = stage
         return self
+
+    def append_stage_concurrently(self, name, stage_class, args=[], kwargs={}, max_workers=1):
+        pass
 
     def _process(self, stage, stage_name, item):
         try:
@@ -57,7 +66,7 @@ class Pipeline:
             item.set_timing(stage_name, (time.time() - time1) * 1000.)
             self.error_manager.handle(e, stage, item)
             return item
-        # this can't be in a finally, otherwise would register the error_manager time
+        # this can't be in a finally, otherwise it would register the error_manager time
         item.set_timing(stage_name, (time.time() - time1) * 1000.)
         return ret
 
