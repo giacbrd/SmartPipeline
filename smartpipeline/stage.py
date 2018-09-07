@@ -12,6 +12,7 @@ class DataItem:
         self._critical_errors = []
         self._meta = {}
         self._payload = {}
+        self._timings = {}
 
     def has_errors(self):
         return any(self._errors)
@@ -61,6 +62,13 @@ class DataItem:
 
     def get_metadata(self, field):
         return self._meta.get(field)
+
+    def set_timing(self, stage, ms):
+        self._timings[stage] = ms
+        return self
+
+    def get_timing(self, stage):
+        return self._timings.get(stage)
 
     @property
     def id(self):

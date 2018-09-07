@@ -1,3 +1,4 @@
+import time
 from collections import OrderedDict
 
 from smartpipeline.error import ErrorManager
@@ -22,8 +23,8 @@ class Pipeline:
             item = self.source.pop()
 
     def process(self, item):
-        for stage in self._stages.values():
-            item = self._process(stage, item)
+        for name, stage in self._stages.items():
+            item = self._process(stage, name, item)
             if item.has_critical_errors():
                 if self._raise_on_critical:
                     for e in item.critical_errors():
@@ -48,13 +49,15 @@ class Pipeline:
         self._stages[name] = stage
         return self
 
-    def _process(self, stage, item):
-        ret = item
+    def _process(self, stage, stage_name, item):
         try:
+            time1 = time.time()
             ret = stage.process(item)
         except Exception as e:
+            item.set_timing(stage_name, (time.time() - time1) * 1000.)
             self.error_manager.handle(e, stage, item)
             return item
-        finally:
-            return ret
+        # this can't be in a finally, otherwise would register the error_manager time
+        item.set_timing(stage_name, (time.time() - time1) * 1000.)
+        return ret
 
