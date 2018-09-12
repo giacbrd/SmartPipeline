@@ -15,7 +15,7 @@ class Pipeline:
         self.error_manager = ErrorManager()
         self.source = None
 
-    def run(self, max_workers=1):
+    def run(self):
         if self.source is None:
             raise ValueError("Set the data source for this pipeline")
         item = self.source.pop()
@@ -23,7 +23,7 @@ class Pipeline:
             yield self.process(item)
             item = self.source.pop()
 
-    def process(self, item, max_workers=1):
+    def process(self, item):
         for name, stage in self._stages.items():
             item = self._process(stage, name, item)
             if item.has_critical_errors():
@@ -50,12 +50,12 @@ class Pipeline:
         self._skip_on_critical = True
         return self
 
-    def append_stage(self, name, stage, max_workers=1):
+    def append_stage(self, name, stage, concurrency=0):
         stage.set_name(name)
         self._stages[name] = stage
         return self
 
-    def append_stage_concurrently(self, name, stage_class, args=[], kwargs={}, max_workers=1):
+    def append_stage_concurrently(self, name, stage_class, args=[], kwargs={}, concurrency=0):
         pass
 
     def _process(self, stage, stage_name, item):

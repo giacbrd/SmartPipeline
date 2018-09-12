@@ -7,7 +7,7 @@ A simple framework for developing data pipelines.
 Install the source files directly:
 
 ```
-pip install -U -e git://github.com/giacbrd/SmartPipeline.git#egg=smartpipeline
+pip install -e git://github.com/giacbrd/SmartPipeline.git#egg=smartpipeline
 ```
 
 #### Example 
