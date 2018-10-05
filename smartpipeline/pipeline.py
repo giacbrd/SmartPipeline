@@ -1,25 +1,11 @@
 import time
-from collections import OrderedDict
 from concurrent.futures.process import ProcessPoolExecutor
 from multiprocessing import Queue
 
 from smartpipeline.error import ErrorManager
+from smartpipeline.utils import OrderedDict
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
-
-
-def _last_key(d):
-    return next(reversed(d))
-
-
-def _get_stage_processor(stage, queues):
-    def _processor():
-        while True:
-            item = queues[0].get()
-            item = stage.process(item)
-            queues[1].put(item)
-            #FIXME manage queue size and timeout
-    return _processor
 
 
 class Pipeline:
@@ -37,6 +23,17 @@ class Pipeline:
         self._in_queue = None
         self._queues = OrderedDict()
 
+    def _get_stage_processor(self, stage, queues):
+        def _processor():
+            while True:
+                item = queues[0].get(block=True)
+                item = stage.process(item)
+                if self._check_item_errors(item):
+                    return item
+                queues[1].put(item, block=True)
+                # FIXME manage queue size and timeout
+        return _processor
+
     def _wait_executors(self):
         if self._init_executor is not None:
             self._init_executor.shutdown(wait=True)
@@ -44,7 +41,7 @@ class Pipeline:
         if self._stage_executors:
             for name in self._stage_executors.keys():
                 executor = self._get_stage_executor(name)
-                executor.submit(_get_stage_processor(self._stages[name], self._queues[name]))
+                executor.submit(self._get_stage_processor(self._stages[name], self._queues[name]))
 
     def __del__(self):
         if self._init_executor is not None:
@@ -57,21 +54,45 @@ class Pipeline:
         self._wait_executors()
         if self.source is None:
             raise ValueError("Set the data source for this pipeline")
+        if self._stage_executors:
+            return self._run_concurrently()
         item = self.source.pop()
         while item is not None:
             yield self.process(item)
             item = self.source.pop()
 
+    def _run_concurrently(self):
+        item = self.source.pop()
+        while item is not None:
+            prev_stage = self.source
+            for name, stage in self._stages.items():
+                # stage is concurrent
+                if self._concurrencies.get(name, 0) > 0:
+                    # if previous stage is not concurrent or it is the source (in the main thread)
+                    if prev_stage == self.source or prev_stage not in self._stage_executors:
+                        self._queues[name][0].put(item, block=True)
+                        continue
+                    # if this is the last stage
+                    if self._stages.last_key() == name:
+                        item = self._queues[name][1].get(block=True)
+                else:
+                    # if previous stage is concurrent
+                    if prev_stage in self._stage_executors:
+                        item = self._queues[prev_stage][1].get(block=True)
+                    item = self._process(stage, name, item)
+                prev_stage = name
+                if self._check_item_errors(item):
+                    break
+            yield item
+            item = self.source.pop()
+
     def process(self, item):
-        self._wait_executors()
+        if self._stage_executors:
+            raise Exception('Cannot process a single item when some stages are concurrent')
         for name, stage in self._stages.items():
             item = self._process(stage, name, item)
-            if item.has_critical_errors():
-                if self._raise_on_critical:
-                    for e in item.critical_errors():
-                        raise e.get_exception()
-                if self._skip_on_critical:
-                    break
+            if self._check_item_errors(item):
+                return item
         return item
 
     def set_source(self, source):
@@ -142,7 +163,7 @@ class Pipeline:
     def _init_worker(self, name):
         #FIXME also build executor
         if self._stages:
-            last_stage = _last_key(self._stages)
+            last_stage = self._stages.last_key()
             assert last_stage != name, 'This worker is initialized after the stage {} is built'.format(name)
             prev_queues = self._queues.get(last_stage)
             if prev_queues is None:
@@ -157,3 +178,12 @@ class Pipeline:
     def _check_stage_name(self, name):
         if name in self._stages or name in self._queues:
             raise ValueError('The stage name {} is already used in this pipeline'.format(name))
+
+    def _check_item_errors(self, item):
+        if item.has_critical_errors():
+            if self._raise_on_critical:
+                for e in item.critical_errors():
+                    raise e.get_exception()
+            if self._skip_on_critical:
+                return True
+        return False
