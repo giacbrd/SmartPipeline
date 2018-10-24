@@ -1,7 +1,7 @@
 import pytest
 
 from smartpipeline.error import CriticalError, Error
-from smartpipeline.stage import DataItem, FileItem
+from smartpipeline.stage import DataItem, FilePathItem
 from tests.utils import TextReverser
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
@@ -40,7 +40,7 @@ def test_error():
 
 
 def test_fileitem():
-    item = FileItem('/path/to/file')
+    item = FilePathItem('/path/to/file')
     assert item.id
     assert not item.payload
     assert item.path in str(item)

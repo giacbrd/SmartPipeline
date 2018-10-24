@@ -22,7 +22,9 @@ class Error(Exception):
         return getattr(self, '_intelmatch_pipeline_exception', Exception())
 
     def __str__(self):
-        return super(Error, self).__str__() or str(self.get_exception())
+        error = super(Error, self).__str__().strip()
+        exception = str(self.get_exception()).strip()
+        return '\n'.join((error, exception)).strip()
 
 
 class CriticalError(Error):

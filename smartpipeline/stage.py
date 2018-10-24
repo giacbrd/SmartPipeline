@@ -78,7 +78,7 @@ class DataItem:
         return 'Data Item {} with payload {}...'.format(self.id, str(self._payload)[:100])
 
 
-class FileItem(DataItem):
+class FilePathItem(DataItem):
     def __init__(self, path):
         super().__init__()
         self.path = path
@@ -89,6 +89,12 @@ class FileItem(DataItem):
     @property
     def id(self):
         return os.path.basename(self.path) or super().id()
+
+
+class FileObjItem(FilePathItem):
+    def __init__(self, file):
+        super().__init__(file.name)
+        self.file = file
 
 
 class Stage(ABC):

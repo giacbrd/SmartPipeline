@@ -1,5 +1,6 @@
 import random
 import socket
+import time
 from datetime import datetime
 from time import sleep
 
@@ -58,6 +59,7 @@ class TextDuplicator(Stage):
 
 class ExceptionStage(Stage):
     def process(self, item: DataItem):
+        time.sleep(0.5)
         raise Exception('test exception')
 
 

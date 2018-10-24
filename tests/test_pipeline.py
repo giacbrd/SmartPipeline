@@ -11,8 +11,8 @@ def test_run():
     pipeline.append_stage('duplicator', TextDuplicator())
     for item in pipeline.run():
         assert len([x for x in item.payload.keys() if x.startswith('text')]) == 2
-        assert item.get_timing('reverser') > 1
-        assert item.get_timing('duplicator') > 1
+        assert item.get_timing('reverser')
+        assert item.get_timing('duplicator')
 
 
 def test_error(caplog):
@@ -22,8 +22,8 @@ def test_error(caplog):
     pipeline.append_stage('error', ErrorStage())
     for item in pipeline.run():
         assert item.has_errors()
-        assert item.get_timing('reverser') > 1
-        assert item.get_timing('error') > 1
+        assert item.get_timing('reverser')
+        assert item.get_timing('error')
         error = next(item.errors())
         assert isinstance(error.get_exception(), Exception)
         assert str(error) == 'test pipeline error'
@@ -35,9 +35,9 @@ def test_error(caplog):
     pipeline.append_stage('error2', ExceptionStage())
     for item in pipeline.run():
         assert item.has_critical_errors()
-        assert item.get_timing('reverser') > 1
-        assert item.get_timing('error1') > 1
-        assert item.get_timing('error2') is None
+        assert item.get_timing('reverser')
+        assert item.get_timing('error1')
+        assert item.get_timing('error2') >= 0.5
         for error in item.critical_errors():
             assert isinstance(error.get_exception(), Exception)
             assert str(error) == 'test pipeline critical error' or str(error) == 'test exception'
