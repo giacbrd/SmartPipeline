@@ -124,6 +124,9 @@ class Pipeline:
         self._stages[name] = stage
         return self
 
+    def get_stage(self, stage_name):
+        return self._stages.get(stage_name)
+
     def append_stage_concurrently(self, name, stage_class, args=[], kwargs={}, concurrency=0, use_threads=False):
         self._check_stage_name(name)
         if concurrency > 0:
