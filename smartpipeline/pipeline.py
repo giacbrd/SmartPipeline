@@ -49,6 +49,9 @@ class Pipeline:
         self._stages[name] = stage
         return self
 
+    def get_stage(self, stage_name):
+        return self._stages.get(stage_name)
+
     def _process(self, stage, stage_name, item):
         try:
             time1 = time.time()
