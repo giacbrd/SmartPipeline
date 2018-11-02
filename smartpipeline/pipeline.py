@@ -1,6 +1,7 @@
 import time
 from _queue import Empty
 from concurrent.futures.process import ProcessPoolExecutor
+from concurrent.futures.thread import ThreadPoolExecutor
 from multiprocessing import Queue, Manager
 
 from smartpipeline.error import ErrorManager
@@ -45,19 +46,9 @@ class Pipeline:
                 executor.submit(_stage_processor, self._stages[name], self._queues[name][0], self._queues[name][1])
 
     def _shutdown(self):
-        # e = -1
-        # for name, queues in self._queues.items():
-        #     e+=1
-        #     for i, queue in enumerate(queues):
-        #         if queue:
-        #             try:
-        #                 print(name, e, i, queue.get_nowait().payload['count'])
-        #                 while queue.get_nowait():
-        #                     pass
-        #             except Empty:
-        #                 pass
         for queues in self._queues.values():
-            queues[0].put(None)
+            if queues[0] is not None:
+                queues[0].put(None)
         if self._init_executor is not None:
             self._init_executor.shutdown()
         if self._stage_executors:
@@ -141,9 +132,7 @@ class Pipeline:
         self._check_stage_name(name)
         stage.set_name(name)
         if concurrency > 0:
-            self._concurrencies[name] = concurrency
-            self._init_worker(name)
-            self._get_stage_executor(name)
+            self._init_worker(concurrency, name, use_threads)
         self._stages[name] = stage
         return self
 
@@ -157,11 +146,9 @@ class Pipeline:
             args = []
         self._check_stage_name(name)
         if concurrency > 0:  #FIXME extract in one method
-            self._concurrencies[name] = concurrency
-            self._init_worker(name)
-            self._get_stage_executor(name)
+            self._init_worker(concurrency, name, use_threads)
         self._stages[name] = None  # so the order of the calls of this method is followed in `_stages`
-        future = self._get_init_executor().submit(stage_class, args, kwargs)
+        future = self._get_init_executor(use_threads).submit(stage_class, args, kwargs)
 
         def append_stage(stage_future):
             self._stages[name] = stage_future.result()
@@ -169,14 +156,21 @@ class Pipeline:
         future.add_done_callback(append_stage)
         return self
 
-    def _get_init_executor(self):
+    def _init_worker(self, concurrency, name, use_threads):
+        self._concurrencies[name] = concurrency
+        self._init_queues(name)
+        self._get_stage_executor(name, use_threads)
+
+    def _get_init_executor(self, use_threads=False):
         if self._init_executor is None:
-            self._init_executor = ProcessPoolExecutor(max_workers=self.max_workers)
+            executor = ThreadPoolExecutor if use_threads else ProcessPoolExecutor
+            self._init_executor = executor(max_workers=self.max_workers)
         return self._init_executor
 
-    def _get_stage_executor(self, name):
+    def _get_stage_executor(self, name, use_threads=False):
         if name not in self._stage_executors or self._stage_executors[name] is None:
-            self._stage_executors[name] = ProcessPoolExecutor(max_workers=self._concurrencies.get(name, 1))
+            executor = ThreadPoolExecutor if use_threads else ProcessPoolExecutor
+            self._stage_executors[name] = executor(max_workers=self._concurrencies.get(name, 1))
         return self._stage_executors[name]
 
     def _process(self, stage, stage_name, item):
@@ -191,7 +185,7 @@ class Pipeline:
         item.set_timing(stage_name, (time.time() - time1) * 1000.)
         return ret
 
-    def _init_worker(self, name):
+    def _init_queues(self, name):
         if self._stages:
             last_stage = self._stages.last_key()
             assert last_stage != name, 'This worker is initialized after the stage {} is built'.format(name)
