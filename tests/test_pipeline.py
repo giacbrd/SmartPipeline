@@ -43,3 +43,12 @@ def test_error(caplog):
             assert str(error) == 'test pipeline critical error' or str(error) == 'test exception'
     assert any(caplog.records)
 
+
+def test_concurrent_run(caplog):
+    pipeline = Pipeline()
+    pipeline.set_source(FakeSource(1000))
+    pipeline.append_stage('parallel_reverser', TextReverser(), concurrency=2)
+    pipeline.append_stage('reverser', TextReverser(), concurrency=1)
+    pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2)
+    for item in pipeline.run():
+        print(item.payload['count'])

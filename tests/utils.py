@@ -33,7 +33,7 @@ class FakeSource(Source):
         if self.counter > self.total:
             return None
         item = DataItem()
-        item.payload.update({'text': random_text()})
+        item.payload.update({'text': random_text(), 'count': self.counter})
         return item
 
 
