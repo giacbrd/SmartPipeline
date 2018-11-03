@@ -1,5 +1,6 @@
 from smartpipeline.pipeline import Pipeline
-from tests.utils import FakeSource, TextDuplicator, TextReverser, ErrorStage, CriticalErrorStage, ExceptionStage
+from tests.utils import FakeSource, TextDuplicator, TextReverser, ErrorStage, CriticalErrorStage, ExceptionStage, \
+    TimeWaster
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -47,7 +48,7 @@ def test_error(caplog):
 def test_concurrent_run():
     pipeline = Pipeline()
     pipeline.set_source(FakeSource(100))
-    pipeline.append_stage('parallel_reverser', TextReverser(), concurrency=2)
+    pipeline.append_stage('reverser0', TextReverser(), concurrency=2)
     pipeline.append_stage('reverser1', TextReverser(), concurrency=0)
     pipeline.append_stage('reverser2', TextReverser(), concurrency=1)
     pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2)
@@ -56,7 +57,7 @@ def test_concurrent_run():
     assert any(item.payload['count'] == 100 for item in items)
     pipeline = Pipeline()
     pipeline.set_source(FakeSource(100))
-    pipeline.append_stage('parallel_reverser', TextReverser(), concurrency=2, use_threads=True)
+    pipeline.append_stage('reverser0', TextReverser(), concurrency=2, use_threads=True)
     pipeline.append_stage('reverser1', TextReverser(), concurrency=1, use_threads=True)
     pipeline.append_stage('reverser2', TextReverser(), concurrency=0, use_threads=True)
     pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2, use_threads=True)
@@ -65,7 +66,7 @@ def test_concurrent_run():
     assert any(item.payload['count'] == 100 for item in items)
     pipeline = Pipeline()
     pipeline.set_source(FakeSource(100))
-    pipeline.append_stage('parallel_reverser', TextReverser(), concurrency=0)
+    pipeline.append_stage('reverser0', TextReverser(), concurrency=0)
     pipeline.append_stage('reverser1', TextReverser(), concurrency=1)
     pipeline.append_stage('duplicator', TextDuplicator(), concurrency=0)
     items = list(pipeline.run())

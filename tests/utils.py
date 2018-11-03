@@ -57,6 +57,12 @@ class TextDuplicator(Stage):
         return item
 
 
+class TimeWaster(Stage):
+    def process(self, item: DataItem):
+        time.sleep(1)
+        return item
+
+
 class ExceptionStage(Stage):
     def process(self, item: DataItem):
         time.sleep(0.5)
