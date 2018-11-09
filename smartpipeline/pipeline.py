@@ -1,4 +1,5 @@
 import time
+import uuid
 from _queue import Empty
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -35,6 +36,7 @@ class Pipeline:
         self._in_queue = None
         self._queues = OrderedDict()
         self._queue_manager = Manager()
+        self._source_name = None
 
     def _wait_executors(self):
         if self._init_executor is not None:
@@ -110,6 +112,9 @@ class Pipeline:
 
     def set_source(self, source):
         self.source = source
+        self._source_name = uuid.uuid4()
+        self._queues[self._source_name] = (None, self.source)
+        self._queues.move_to_end(self._source_name, last=False)
         return self
 
     def set_error_manager(self, error_manager):

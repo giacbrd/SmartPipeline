@@ -119,3 +119,6 @@ class Source(ABC):
     @abstractmethod
     def pop(self):
         return None
+
+    def get(self, *args, **kwargs):
+        return self.pop()
