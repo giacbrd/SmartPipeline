@@ -122,3 +122,6 @@ class Source(ABC):
 
     def get(self, *args, **kwargs):
         return self.pop()
+
+    def put(self, *args, **kwargs):
+        pass

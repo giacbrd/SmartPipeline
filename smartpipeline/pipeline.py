@@ -6,6 +6,7 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from multiprocessing import Queue, Manager
 
 from smartpipeline.error import ErrorManager
+from smartpipeline.stage import Source
 from smartpipeline.utils import OrderedDict
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
@@ -14,7 +15,9 @@ __author__ = 'Giacomo Berardi <giacbrd.com>'
 def _stage_processor(stage, in_queue, out_queue):
     while True:
         item = in_queue.get(block=True)
+        #FIXME manage the fact that a developer could have missed the `return item` (so he returns a None) in the overloaded `process` method of his stage
         if item is None:
+            out_queue.put(None, block=True)
             return
         item = stage.process(item)
         out_queue.put(item, block=True)
@@ -30,7 +33,7 @@ class Pipeline:
         self._stages = OrderedDict()
         self.error_manager = ErrorManager()
         self.source = None
-        self.max_workers = None  # number of CPUs
+        self.max_workers = None  # default: number of CPUs
         self._init_executor = None
         self._stage_executors = {}
         self._in_queue = None
@@ -48,7 +51,7 @@ class Pipeline:
                 executor.submit(_stage_processor, self._stages[name], self._queues[name][0], self._queues[name][1])
 
     def _shutdown(self):
-        for queues in self._queues.values():
+        for queues in self._queues.values():  # interrupt all processor
             if queues[0] is not None:
                 queues[0].put(None)
         if self._init_executor is not None:
@@ -74,36 +77,34 @@ class Pipeline:
                 item = self.source.pop()
 
     def _run_concurrently(self):
-        item = self.source.pop()
-        while item is not None:
-            prev_stage = self.source
+        item = 'FLAG'  # if the item is set to the FLAG, we must get the next one from a queue
+        while item is not None or not self._concurrent_queues_are_empy():  # the second condition is checked at the end while processing last items
+            item = 'FLAG'
             for name, stage in self._stages.items():
-                # stage is concurrent
-                if self._concurrencies.get(name, 0) > 0:
-                    # if previous stage is not concurrent or it is the source (in the main thread)
-                    if prev_stage == self.source or prev_stage not in self._stage_executors:
-                        if not self.check_item_errors(item):
-                            self._queues[name][0].put(item, block=True)
-                        prev_stage = name
-                        continue
-                    # if this is the last stage
-                    if self._stages.last_key() == name:
-                        item = self._queues[name][1].get(block=True)
-                else:
-                    # if previous stage is concurrent
-                    if prev_stage in self._stage_executors:
-                        item = self._queues[prev_stage][1].get(block=True)
-                    item = self._process(stage, name, item)
-                prev_stage = name
-                if self.check_item_errors(item):
-                    break
+                if name not in self._stage_executors:
+                    in_queue, out_queue = self._queues[name]
+                    if item != 'FLAG':
+                        item = stage.process(item)
+                    else:
+                        # in_queue must exists
+                        item = in_queue.get(block=True)
+                        if item is None:  # the source has sent the stop
+                            #FIXME
+                            continue
+                        item = stage.process(item)
+                    if out_queue is not None:  # next stage is concurrent
+                        assert item is not None
+                        out_queue.put(item, block=True)
+                        item = 'FLAG'  # next non current stage will get an item from a queue
+            last_queue = self._queues[self._stages.last_key()][1]
+            if last_queue is not None:
+                item = last_queue.get(block=True)
             yield item
-            item = self.source.pop()
         self._shutdown()
 
     def process(self, item):
         if self._stage_executors:
-            raise Exception('Cannot process a single item when some stages are concurrent')
+            raise Exception('Cannot process a single item when some stages are concurrent')  #FIXME on should be able to asyncronously process single items
         for name, stage in self._stages.items():
             item = self._process(stage, name, item)
             if self.check_item_errors(item):
@@ -112,6 +113,7 @@ class Pipeline:
 
     def set_source(self, source):
         self.source = source
+        self._in_queue = source
         self._source_name = uuid.uuid4()
         self._queues[self._source_name] = (None, self.source)
         self._queues.move_to_end(self._source_name, last=False)
@@ -133,9 +135,10 @@ class Pipeline:
         self._skip_on_critical = True
         return self
 
-    def append_stage(self, name, stage, concurrency=0, use_threads=False):
+    def append_stage(self, name, stage, concurrency=0, use_threads=True):
         self._check_stage_name(name)
         stage.set_name(name)
+        self._init_queues(name, concurrency > 0)
         if concurrency > 0:
             self._init_worker(concurrency, name, use_threads)
         self._stages[name] = stage
@@ -144,12 +147,13 @@ class Pipeline:
     def get_stage(self, stage_name):
         return self._stages.get(stage_name)
 
-    def append_stage_concurrently(self, name, stage_class, args=None, kwargs=None, concurrency=0, use_threads=False):
+    def append_stage_concurrently(self, name, stage_class, args=None, kwargs=None, concurrency=0, use_threads=True):
         if kwargs is None:
             kwargs = {}
         if args is None:
             args = []
         self._check_stage_name(name)
+        self._init_queues(name, concurrency > 0)
         if concurrency > 0:  #FIXME extract in one method
             self._init_worker(concurrency, name, use_threads)
         self._stages[name] = None  # so the order of the calls of this method is followed in `_stages`
@@ -163,16 +167,15 @@ class Pipeline:
 
     def _init_worker(self, concurrency, name, use_threads):
         self._concurrencies[name] = concurrency
-        self._init_queues(name)
-        self._get_stage_executor(name, use_threads)
+        return self._get_stage_executor(name, use_threads)
 
-    def _get_init_executor(self, use_threads=False):
+    def _get_init_executor(self, use_threads=True):
         if self._init_executor is None:
             executor = ThreadPoolExecutor if use_threads else ProcessPoolExecutor
             self._init_executor = executor(max_workers=self.max_workers)
         return self._init_executor
 
-    def _get_stage_executor(self, name, use_threads=False):
+    def _get_stage_executor(self, name, use_threads=True):
         if name not in self._stage_executors or self._stage_executors[name] is None:
             executor = ThreadPoolExecutor if use_threads else ProcessPoolExecutor
             self._stage_executors[name] = executor(max_workers=self._concurrencies.get(name, 1))
@@ -190,19 +193,25 @@ class Pipeline:
         item.set_timing(stage_name, (time.time() - time1) * 1000.)
         return ret
 
-    def _init_queues(self, name):
+    def _init_queues(self, name, concurrent):
+        self._queues[name] = [None, None]
+        last_stage = None
         if self._stages:
             last_stage = self._stages.last_key()
             assert last_stage != name, 'This worker is initialized after the stage {} is built'.format(name)
+        elif self._source_name:
+            last_stage = self._source_name
+        if last_stage is None and concurrent:  # first stage and no source set
+            self._in_queue = self._queue_manager.Queue()
+            self._queues[name] = (self._in_queue, self._queue_manager.Queue())
+        else:
             prev_queues = self._queues.get(last_stage)
-            if prev_queues is None:
+            if prev_queues[1] is None and concurrent:  # last stage is not concurrent
                 in_queue = self._queue_manager.Queue()
-                self._queues[last_stage] = (None, in_queue)
+                self._queues[last_stage] = (prev_queues[0], in_queue)
             else:
                 in_queue = prev_queues[1]
-        else:
-            self._in_queue = in_queue = self._queue_manager.Queue()
-        self._queues[name] = (in_queue, self._queue_manager.Queue())
+            self._queues[name] = [in_queue, self._queue_manager.Queue() if concurrent else None]
 
     def _check_stage_name(self, name):
         if name in self._stages or name in self._queues:
@@ -216,3 +225,12 @@ class Pipeline:
             if self._skip_on_critical:
                 return True
         return False
+
+    def _concurrent_queues_are_empy(self):
+        for name, queues in self._queues.items():
+            if queues[0] is not None and not isinstance(queues[0], Source) and not queues[0].empty():
+                return False
+            elif queues[1] is not None and not isinstance(queues[1], Source) and not queues[1].empty():
+                return False
+        return True
+
