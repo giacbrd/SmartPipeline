@@ -1,7 +1,8 @@
 import pytest
 
 from smartpipeline.error import CriticalError, Error
-from smartpipeline.stage import DataItem, FilePathItem
+from smartpipeline.examples import FilePathItem
+from smartpipeline.stage import DataItem
 from tests.utils import TextReverser
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'

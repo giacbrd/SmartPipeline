@@ -5,7 +5,7 @@ from datetime import datetime
 from time import sleep
 
 from smartpipeline.error import Error, CriticalError
-from smartpipeline.stage import Source, DataItem, Stage
+from smartpipeline.stage import Source, DataItem, Stage, Stop
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -31,7 +31,7 @@ class FakeSource(Source):
     def pop(self):
         self.counter += 1
         if self.counter > self.total:
-            return None
+            return Stop()
         item = DataItem()
         item.payload.update({'text': random_text(), 'count': self.counter})
         return item
@@ -42,7 +42,9 @@ class ListSource(Source):
         self.items = iter(items)
 
     def pop(self):
-        return next(self.items)
+        ret = next(self.items)
+        if not ret:
+            return Stop()
 
 
 class TextReverser(Stage):
