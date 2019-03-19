@@ -5,7 +5,8 @@ from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from multiprocessing import Manager
 
-from smartpipeline.error import Error, CriticalError
+from smartpipeline.error import Error, CriticalError, ErrorManager
+from smartpipeline.utils import new_queue
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -17,6 +18,7 @@ class DataItem:
         self._meta = {}
         self._payload = {}
         self._timings = {}
+        self._callback_fun = None
 
     def has_errors(self):
         return any(self._errors)
@@ -36,7 +38,7 @@ class DataItem:
     def payload(self):
         return self._payload
 
-    def add_error(self, stage, exception):
+    def add_error(self, stage, exception: Error):
         if hasattr(exception, 'set_stage'):
             if not type(exception) is Error:
                 raise ValueError("Add a pipeline error or a generic exception.")
@@ -48,7 +50,7 @@ class DataItem:
             error.set_stage(stage)
             self._errors.append(error)
 
-    def add_critical_error(self, stage, exception):
+    def add_critical_error(self, stage, exception: Error):
         if hasattr(exception, 'set_stage'):
             if not type(exception) is CriticalError:
                 raise ValueError("Add a critical pipeline error or a generic exception.")
@@ -60,18 +62,18 @@ class DataItem:
             error.set_stage(stage)
             self._critical_errors.append(error)
 
-    def set_metadata(self, field, value):
+    def set_metadata(self, field: str, value):
         self._meta[field] = value
         return self
 
-    def get_metadata(self, field):
+    def get_metadata(self, field: str):
         return self._meta.get(field)
 
-    def set_timing(self, stage, ms):
+    def set_timing(self, stage: str, ms: float):
         self._timings[stage] = ms
         return self
 
-    def get_timing(self, stage):
+    def get_timing(self, stage: str):
         return self._timings.get(stage)
 
     @property
@@ -81,10 +83,17 @@ class DataItem:
     def __str__(self):
         return 'Data Item {} with payload {}...'.format(self.id, str(self._payload)[:100])
 
+    def set_callback(self, fun):
+        self._callback_fun = fun
+
+    def callback(self):
+        if self._callback_fun is not None:
+            self._callback_fun(self)
+
 
 class Stage(ABC):
 
-    def set_name(self, name):
+    def set_name(self, name: str):
         self._name = name
 
     @property
@@ -92,7 +101,7 @@ class Stage(ABC):
         return getattr(self, '_name', '<undefined>')
 
     @abstractmethod
-    def process(self, item: DataItem):
+    def process(self, item: DataItem) -> DataItem:
         return item
 
     def __str__(self):
@@ -102,23 +111,54 @@ class Stage(ABC):
 class Source(ABC):
 
     @abstractmethod
-    def pop(self):
+    def pop(self) -> DataItem:
         return None
 
-    def get_item(self):
+    def get_item(self, block=False) -> DataItem:
         return self.pop()
-    
-    def send_stop(self):
-        self._is_stopped = True
-        
-    def has_stopped(self):
-        current = getattr(self, '_is_stopped', False)
-        self._is_stopped = False
-        return current
+
+
+class Container(ABC):
+
+    @abstractmethod
+    def get_item(self, block=False) -> DataItem:
+        return None
+
+
+class SourceContainer(Container):
+    def __init__(self):
+        self._source = None
+        # use the next two attributes jointly so we do not need to use a queue if we only work synchronously
+        self._next_item = None
+        self._queue = new_queue()
+
+    def set(self, source: Source):
+        self._source = source
+
+    def is_set(self):
+        return self._source is not None
+
+    def prepend_item(self, item: DataItem):
+        if self._next_item is not None:
+            self._queue.put(item)
+        else:
+            self._next_item = item
+
+    def get_item(self, block=False):
+        if self._next_item is not None:
+            ret = self._next_item
+            try:
+                self._next_item = self._queue.get(block=block)
+            except queue.Empty:
+                self._next_item = None
+            return ret
+        else:
+            return self._source.pop()
 
 
 class Stop(DataItem):
-    pass
+    def __str__(self):
+        return 'Stop signal {}'.format(self.id)
 
 
 def _stage_processor(stage_container):
@@ -131,8 +171,8 @@ def _stage_processor(stage_container):
         # FIXME manage queue size, timeout, minimum time between processes
 
 
-class StageContainer:
-    def __init__(self, name: str, stage: Stage, error_manager):
+class StageContainer(Container):
+    def __init__(self, name: str, stage: Stage, error_manager: ErrorManager):
         self._error_manager = error_manager
         self._name = name
         stage.set_name(name)
@@ -145,8 +185,11 @@ class StageContainer:
     def get_stage(self):
         return self._stage
 
-    def process(self):
-        item = self._previous.get_item()
+    def is_stopped(self):
+        return self._is_stopped
+
+    def process(self, block=False) -> DataItem:
+        item = self._previous.get_item(block)
         if isinstance(item, Stop):
             self._is_stopped = True
         elif item is not None:
@@ -154,7 +197,7 @@ class StageContainer:
         self._put_item(item)
         return item
 
-    def _process(self, item):
+    def _process(self, item: DataItem) -> DataItem:
         time1 = time.time()
         try:
             ret = self._stage.process(item)
@@ -166,22 +209,21 @@ class StageContainer:
         item.set_timing(self._name, (time.time() - time1) * 1000.)
         return ret
 
-    def set_previous_stage(self, stage_container):
-        self._previous = stage_container
+    def set_previous_stage(self, container: Container):
+        self._previous = container
         
     def get_item(self, block=False):
+        ret = self._last_processed  # if the stage is stopped this is always a Stop
+        self._last_processed = None
         if self._out_queue is not None:
             try:
-                # empty all remained processed items before sending a stop to next stages
+                # empty all remained processed items before sending a Stop to next stages
                 if self._is_stopped and self._out_queue.empty():
-                    ret = Stop()
+                    return Stop()
                 else:
-                    ret = self._out_queue.get(block=block)
+                    return self._out_queue.get(block=block)
             except queue.Empty:
                 return None
-        else:
-            ret = self._last_processed
-            self._last_processed = None
         return ret
 
     def _put_item(self, item):
@@ -197,8 +239,7 @@ class ConcurrentStageContainer(StageContainer):
         self._use_threads = use_threads
         self._stage_executor = None
         self._stage_executor = self._get_stage_executor()
-        self._queue_manager = Manager()
-        self._out_queue = self._queue_manager.Queue()
+        self._out_queue = new_queue()
 
     def _get_stage_executor(self):
         if self._stage_executor is None:
@@ -214,3 +255,6 @@ class ConcurrentStageContainer(StageContainer):
 
     def get_item(self, block=True):
         return super().get_item(block=block)
+
+    def is_stopped(self):
+        return self._out_queue.empty() and super().is_stopped()

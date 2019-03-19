@@ -4,8 +4,8 @@ from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 
 from smartpipeline.error import ErrorManager
-from smartpipeline.stage import StageContainer, ConcurrentStageContainer, Stop
-from smartpipeline.utils import OrderedDict
+from smartpipeline.stage import StageContainer, ConcurrentStageContainer, Stop, SourceContainer
+from smartpipeline.utils import OrderedDict, new_queue
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -26,10 +26,12 @@ class Pipeline:
         self._skip_on_critical = False
         self._stages = OrderedDict()
         self.error_manager = ErrorManager()
-        self.source = None
+        self._source_container = SourceContainer()
         self.max_workers = None  # default: number of CPUs
         self._init_executor = None
         self._source_name = None
+        self._pipeline_executor = None
+        self._out_queue = None
 
     def _wait_executors(self):
         if self._init_executor is not None:
@@ -45,41 +47,59 @@ class Pipeline:
         for name, stage in self._stages.items():
             if isinstance(stage, ConcurrentStageContainer):
                 stage.shutdown()
+        self._stop_pipeline()
+
+    def _stop_pipeline(self):
+        if self._out_queue is not None:
+            self._out_queue.join()
+        if self._pipeline_executor is not None:
+            self._pipeline_executor.shutdown()
+        self._out_queue = None
 
     def __del__(self):
         self._shutdown()
 
     def run(self):
         self._wait_executors()
-        if self.source is None:
+        if not self._source_container.is_set():
             raise ValueError("Set the data source for this pipeline")
         last_stage_name = self._stages.last_key()
         while True:
-            all_stopped = True
             for name, stage in self._stages.items():
                 if not isinstance(stage, ConcurrentStageContainer):
                     item = stage.process()
-                    if not isinstance(item, Stop):
-                        all_stopped = False
                 if name == last_stage_name:
                     item = stage.get_item()
                     if item is not None:
                         if not isinstance(item, Stop):
                             yield item
-                        elif all_stopped:
+                        elif self._all_empty():
                             return
 
+    def _all_empty(self):
+        return all(stage.is_stopped() for stage in self._stages.values())
+
     def process(self, item):
-        if self._stage_executors:
-            raise Exception('Cannot process a single item when some stages are concurrent')  #FIXME on should be able to asyncronously process single items
+        last_stage_name = self._stages.last_key()
+        self._source_container.prepend_item(item)
         for name, stage in self._stages.items():
-            item = self._process(stage, name, item)
-            if self.check_item_errors(item):
-                return item
-        return item
+            stage.process(block=True)
+            if name == last_stage_name:
+                return stage.get_item(block=True)
+
+    def process_async(self, item, callback=None):
+        item.set_callback(callback)
+        self._source_container.prepend_item(item)
+        self._start_pipeline_executor()
+
+    def get_item(self, block=True):
+        if self._out_queue is not None:
+            self._out_queue.get(block)
+        else:
+            raise ValueError("No pipeline is running asynchronously, not item can be retrieved from the output queue")
 
     def set_source(self, source):
-        self.source = source
+        self._source_container.set(source)
         self._source_name = uuid.uuid4()
         return self
 
@@ -103,7 +123,7 @@ class Pipeline:
         if self._stages:
             return self._stages[self._stages.last_key()]
         else:
-            return self.source
+            return self._source_container
 
     def append_stage(self, name, stage, concurrency=0, use_threads=True):
         self._check_stage_name(name)
@@ -146,6 +166,19 @@ class Pipeline:
             self._init_executor = executor(max_workers=self.max_workers)
         return self._init_executor
 
+    def _start_pipeline_executor(self):
+        if self._pipeline_executor is None:
+            self._out_queue = new_queue()
+            self._pipeline_executor = ThreadPoolExecutor(max_workers=self.max_workers)
+
+            def pipeline_runner():
+                for item in self.run():
+                    self._out_queue.put(item)
+                    item.callback()
+
+            self._pipeline_executor.submit(pipeline_runner)
+        return self._pipeline_executor
+
     def _check_stage_name(self, name):
         if name in self._stages:
             raise ValueError('The stage name {} is already used in this pipeline'.format(name))
@@ -158,5 +191,4 @@ class Pipeline:
             if self._skip_on_critical:
                 return True
         return False
-
 

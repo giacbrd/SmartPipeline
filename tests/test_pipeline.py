@@ -53,6 +53,7 @@ def test_concurrent_run():
     pipeline.append_stage('reverser2', TextReverser(), concurrency=1)
     pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2)
     items = list(pipeline.run())
+    assert len(items) == 100
     assert any(item.payload['count'] == 1 for item in items)
     assert any(item.payload['count'] == 100 for item in items)
     pipeline = Pipeline()
@@ -62,6 +63,7 @@ def test_concurrent_run():
     pipeline.append_stage('reverser2', TextReverser(), concurrency=0, use_threads=True)
     pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2, use_threads=True)
     items = list(pipeline.run())
+    assert len(items) == 100
     assert any(item.payload['count'] == 1 for item in items)
     assert any(item.payload['count'] == 100 for item in items)
     pipeline = Pipeline()
@@ -70,5 +72,6 @@ def test_concurrent_run():
     pipeline.append_stage('reverser1', TextReverser(), concurrency=1)
     pipeline.append_stage('duplicator', TextDuplicator(), concurrency=0)
     items = list(pipeline.run())
+    assert len(items) == 100
     assert any(item.payload['count'] == 1 for item in items)
     assert any(item.payload['count'] == 100 for item in items)
