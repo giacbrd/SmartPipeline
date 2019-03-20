@@ -1,8 +1,14 @@
+import logging
+import time
+
 from smartpipeline.pipeline import Pipeline
 from tests.utils import FakeSource, TextDuplicator, TextReverser, ErrorStage, CriticalErrorStage, ExceptionStage, \
     TimeWaster
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
+
+
+logger = logging.getLogger(__name__)
 
 
 def test_run():
@@ -45,14 +51,12 @@ def test_error(caplog):
     assert any(caplog.records)
 
 
+def _check(items, num):
+    diff = frozenset(range(1, num+1)).difference(item.payload['count'] for item in items)
+    assert not diff, 'Not found items {}'.format(diff)
+
+
 def test_concurrent_run():
-
-    def _check(items):
-        assert len(items) == 100, 'Not found items {}'.format(
-            set(range(1, 101)).difference(item.payload['count'] for item in items))
-        assert any(item.payload['count'] == 1 for item in items)
-        assert any(item.payload['count'] == 100 for item in items)
-
     pipeline = Pipeline()
     pipeline.set_source(FakeSource(100))
     pipeline.append_stage('reverser0', TextReverser(), concurrency=2)
@@ -60,19 +64,66 @@ def test_concurrent_run():
     pipeline.append_stage('reverser2', TextReverser(), concurrency=1)
     pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2)
     items = list(pipeline.run())
-    _check(items)
+    _check(items, 100)
     pipeline = Pipeline()
     pipeline.set_source(FakeSource(100))
-    pipeline.append_stage('reverser0', TextReverser(), concurrency=2, use_threads=True)
-    pipeline.append_stage('reverser1', TextReverser(), concurrency=1, use_threads=True)
-    pipeline.append_stage('reverser2', TextReverser(), concurrency=0, use_threads=True)
-    pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2, use_threads=True)
+    pipeline.append_stage('reverser0', TextReverser(), concurrency=2, use_threads=False)
+    pipeline.append_stage('reverser1', TextReverser(), concurrency=1, use_threads=False)
+    pipeline.append_stage('reverser2', TextReverser(), concurrency=0)
+    pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2, use_threads=False)
     items = list(pipeline.run())
-    _check(items)
+    _check(items, 100)
     pipeline = Pipeline()
     pipeline.set_source(FakeSource(100))
     pipeline.append_stage('reverser0', TextReverser(), concurrency=0)
     pipeline.append_stage('reverser1', TextReverser(), concurrency=1)
     pipeline.append_stage('duplicator', TextDuplicator(), concurrency=0)
     items = list(pipeline.run())
-    _check(items)
+    _check(items, 100)
+    pipeline = Pipeline()
+    pipeline.set_source(FakeSource(100))
+    pipeline.append_stage('reverser0', TextReverser(), concurrency=1, use_threads=False)
+    pipeline.append_stage('reverser1', TextReverser(), concurrency=1, use_threads=True)
+    pipeline.append_stage('duplicator', TextDuplicator(), concurrency=1, use_threads=False)
+    items = list(pipeline.run())
+    _check(items, 100)
+    pipeline = Pipeline()
+    pipeline.set_source(FakeSource(100))
+    pipeline.append_stage('duplicator0', TextDuplicator(), concurrency=0)
+    pipeline.append_stage('reverser', TextReverser(), concurrency=0)
+    pipeline.append_stage('duplicator1', TextDuplicator(), concurrency=0)
+    items = list(pipeline.run())
+    _check(items, 100)
+    pipeline = Pipeline()
+    pipeline.set_source(FakeSource(100))
+    pipeline.append_stage('reverser', TextReverser(), concurrency=0)
+    pipeline.append_stage('duplicator0', TextDuplicator(), concurrency=0)
+    pipeline.append_stage('duplicator1', TextDuplicator(), concurrency=1)
+    items = list(pipeline.run())
+    _check(items, 100)
+
+
+def test_huge_run():
+    pipeline = Pipeline()
+    pipeline.set_source(FakeSource(10000))
+    pipeline.append_stage('reverser0', TextReverser(), concurrency=2, use_threads=False)
+    pipeline.append_stage('reverser1', TextReverser(), concurrency=3, use_threads=False)
+    pipeline.append_stage('reverser2', TextReverser(), concurrency=1, use_threads=False)
+    pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2, use_threads=False)
+    start_time = time.time()
+    items = list(pipeline.run())
+    elasped1 = time.time() - start_time
+    logger.debug('Time for parallel: {}'.format(elasped1))
+    _check(items, 10000)
+    pipeline = Pipeline()
+    pipeline.set_source(FakeSource(10000))
+    pipeline.append_stage('reverser0', TextReverser(), concurrency=0)
+    pipeline.append_stage('reverser1', TextReverser(), concurrency=0)
+    pipeline.append_stage('reverser2', TextReverser(), concurrency=0)
+    pipeline.append_stage('duplicator', TextDuplicator(), concurrency=0)
+    start_time = time.time()
+    items = list(pipeline.run())
+    elasped2 = time.time() - start_time
+    logger.debug('Time for sequential: {}'.format(elasped2))
+    _check(items, 10000)
+    assert elasped2 > elasped1

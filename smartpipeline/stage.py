@@ -186,6 +186,10 @@ class StageContainer(Container):
         self._previous = None
         self._is_stopped = False
 
+    @property
+    def name(self):
+        return self._name
+
     def get_stage(self):
         return self._stage
 
@@ -217,7 +221,7 @@ class StageContainer(Container):
         self._previous = container
         
     def get_item(self, block=False):
-        # if the stage is stopped this is always a Stop, if last input was empty this is an EmptyInput signal
+        # if the stage is stopped this is always a Stop
         ret = self._last_processed
         self._last_processed = None
         if self._out_queue is not None:
