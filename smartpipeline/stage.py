@@ -130,7 +130,7 @@ class SourceContainer(Container):
         self._source = None
         # use the next two attributes jointly so we do not need to use a queue if we only work synchronously
         self._next_item = None
-        self._queue = new_queue()
+        self.out_queue = new_queue()
 
     def set(self, source: Source):
         self._source = source
@@ -140,7 +140,7 @@ class SourceContainer(Container):
 
     def prepend_item(self, item: DataItem):
         if self._next_item is not None:
-            self._queue.put(item)
+            self.out_queue.put(item)
         else:
             self._next_item = item
 
@@ -148,7 +148,7 @@ class SourceContainer(Container):
         if self._next_item is not None:
             ret = self._next_item
             try:
-                self._next_item = self._queue.get(block=block)
+                self._next_item = self.out_queue.get(block=block)
             except queue.Empty:
                 self._next_item = None
             return ret
@@ -178,7 +178,7 @@ class StageContainer(Container):
         stage.set_name(name)
         self._stage = stage
         self._last_processed = None
-        self._out_queue = None
+        self.out_queue = None
         self._previous = None
         self._is_stopped = False
 
@@ -188,8 +188,8 @@ class StageContainer(Container):
     def is_stopped(self):
         return self._is_stopped
 
-    def process(self, block=False) -> DataItem:
-        item = self._previous.get_item(block)
+    def process(self) -> DataItem:
+        item = self._previous.get_item()
         if isinstance(item, Stop):
             self._is_stopped = True
         elif item is not None:
@@ -213,23 +213,20 @@ class StageContainer(Container):
         self._previous = container
         
     def get_item(self, block=False):
-        ret = self._last_processed  # if the stage is stopped this is always a Stop
+        # if the stage is stopped this is always a Stop, if last input was empty this is an EmptyInput signal
+        ret = self._last_processed
         self._last_processed = None
-        if self._out_queue is not None:
+        if self.out_queue is not None:
             try:
-                # empty all remained processed items before sending a Stop to next stages
-                if self._is_stopped and self._out_queue.empty():
-                    return Stop()
-                else:
-                    return self._out_queue.get(block=block)
+                ret = self.out_queue.get(block=block)
             except queue.Empty:
                 return None
         return ret
 
     def _put_item(self, item):
         self._last_processed = item
-        if self._out_queue is not None:
-            self._out_queue.put(self._last_processed, block=True)
+        if self.out_queue is not None and self._last_processed is not None:
+            self.out_queue.put(self._last_processed, block=True)
 
 
 class ConcurrentStageContainer(StageContainer):
@@ -239,7 +236,7 @@ class ConcurrentStageContainer(StageContainer):
         self._use_threads = use_threads
         self._stage_executor = None
         self._stage_executor = self._get_stage_executor()
-        self._out_queue = new_queue()
+        self.out_queue = new_queue()
 
     def _get_stage_executor(self):
         if self._stage_executor is None:
@@ -247,14 +244,16 @@ class ConcurrentStageContainer(StageContainer):
             self._stage_executor = executor(max_workers=self._concurrency)
         return self._stage_executor
 
+    def set_previous_stage(self, container: Container):
+        super().set_previous_stage(container)
+        if self._previous.out_queue is None:
+            self._previous.out_queue = new_queue()
+
     def run(self):
         self._stage_executor.submit(_stage_processor, self)
 
     def shutdown(self):
         self._stage_executor.shutdown()
 
-    def get_item(self, block=True):
-        return super().get_item(block=block)
-
     def is_stopped(self):
-        return self._out_queue.empty() and super().is_stopped()
+        return super().is_stopped() and self.out_queue.empty()

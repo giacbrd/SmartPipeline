@@ -67,7 +67,7 @@ class Pipeline:
         while True:
             for name, stage in self._stages.items():
                 if not isinstance(stage, ConcurrentStageContainer):
-                    item = stage.process()
+                    stage.process()
                 if name == last_stage_name:
                     item = stage.get_item()
                     if item is not None:

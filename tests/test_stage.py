@@ -1,7 +1,7 @@
 import pytest
 
 from smartpipeline.error import CriticalError, Error
-from smartpipeline.examples import FilePathItem
+from smartpipeline.helpers import FilePathItem
 from smartpipeline.stage import DataItem
 from tests.utils import TextReverser
 
