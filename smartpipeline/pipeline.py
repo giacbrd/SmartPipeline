@@ -4,7 +4,8 @@ from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 
 from smartpipeline.error import ErrorManager
-from smartpipeline.stage import StageContainer, ConcurrentStageContainer, Stop, SourceContainer
+from smartpipeline.stage import Stop
+from smartpipeline.executors import SourceContainer, StageContainer, ConcurrentStageContainer
 from smartpipeline.utils import OrderedDict, new_queue
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'

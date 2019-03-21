@@ -127,3 +127,29 @@ def test_huge_run():
     logger.debug('Time for sequential: {}'.format(elasped2))
     _check(items, 10000)
     assert elasped2 > elasped1
+
+
+def test_run_times():
+    pipeline = Pipeline()
+    pipeline.set_source(FakeSource(10))
+    pipeline.append_stage('waster0', TimeWaster(0.2), concurrency=2, use_threads=False)
+    pipeline.append_stage('waster1', TimeWaster(0.2), concurrency=2, use_threads=False)
+    pipeline.append_stage('waster2', TimeWaster(0.2), concurrency=2, use_threads=False)
+    pipeline.append_stage('waster3', TimeWaster(0.2), concurrency=2, use_threads=False)
+    start_time = time.time()
+    items = list(pipeline.run())
+    _check(items, 10)
+    elasped1 = time.time() - start_time
+    logger.debug('Time for parallel: {}'.format(elasped1))
+    pipeline = Pipeline()
+    pipeline.set_source(FakeSource(10))
+    pipeline.append_stage('waster0', TimeWaster(0.2), concurrency=0)
+    pipeline.append_stage('waster1', TimeWaster(0.2), concurrency=0)
+    pipeline.append_stage('waster2', TimeWaster(0.2), concurrency=0)
+    pipeline.append_stage('waster3', TimeWaster(0.2), concurrency=0)
+    start_time = time.time()
+    items = list(pipeline.run())
+    _check(items, 10)
+    elasped2 = time.time() - start_time
+    logger.debug('Time for sequential: {}'.format(elasped2))
+    assert elasped2 > elasped1

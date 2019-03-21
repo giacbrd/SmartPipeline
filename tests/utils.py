@@ -60,8 +60,11 @@ class TextDuplicator(Stage):
 
 
 class TimeWaster(Stage):
+    def __init__(self, time=1):
+        self._time = time
+
     def process(self, item: DataItem):
-        time.sleep(1)
+        time.sleep(self._time)
         return item
 
 
