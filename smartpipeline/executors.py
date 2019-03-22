@@ -41,8 +41,9 @@ class SourceContainer(Container):
     def is_set(self):
         return self._source is not None
 
+    # this only used with multi processes
     def pop_into_queue(self):
-        self._out_queue.put(self.get_item(), block=True)
+        self._out_queue.put(self._get_next_item(), block=True)
 
     def prepend_item(self, item: DataItem):
         if self._out_queue is not None:
@@ -52,20 +53,23 @@ class SourceContainer(Container):
         else:
             self._next_item = item
 
+    # this must not be used with multi processes (in fact we don't query the out_queue)
     def get_item(self, block=False):
+        if self._out_queue is not None:
+            return self._out_queue.get(block=True)
+        else:
+            return self._get_next_item()
+
+    def _get_next_item(self):
         if self._next_item is not None:
             ret = self._next_item
             try:
-                self._next_item = self._out_queue.get(block=block)
+                self._next_item = self._internal_queue.get(block=False)
             except queue.Empty:
                 self._next_item = None
             return ret
         else:
             return self._source.pop()
-
-    # to mimic queue interface
-    def get(self, block):
-        return self.get_item(block)
 
 
 def _process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataItem:

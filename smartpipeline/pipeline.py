@@ -135,7 +135,7 @@ class Pipeline:
             container = StageContainer(name, stage, self.error_manager)
         else:
             container = ConcurrentStageContainer(name, stage, self.error_manager, concurrency, use_threads)
-            if not use_threads and not self._stages:
+            if not self._stages:
                 self._enqueue_source = True
         container.set_previous_stage(self._last_stage())
         self._stages[name] = container
@@ -150,7 +150,7 @@ class Pipeline:
         if args is None:
             args = []
         self._check_stage_name(name)
-        if not use_threads and not self._stages:
+        if concurrency > 0 and not self._stages:
             self._enqueue_source = True
         last_stage_name = self._stages.last_key()
         self._stages[name] = None  # so the order of the calls of this method is followed in `_stages`
