@@ -132,6 +132,17 @@ def test_huge_run():
 def test_run_times():
     pipeline = Pipeline()
     pipeline.set_source(FakeSource(10))
+    pipeline.append_stage('waster0', TimeWaster(0.2), concurrency=2)
+    pipeline.append_stage('waster1', TimeWaster(0.2), concurrency=2)
+    pipeline.append_stage('waster2', TimeWaster(0.2), concurrency=2)
+    pipeline.append_stage('waster3', TimeWaster(0.2), concurrency=2)
+    start_time = time.time()
+    items = list(pipeline.run())
+    _check(items, 10)
+    elasped0 = time.time() - start_time
+    logger.debug('Time for multi-threading: {}'.format(elasped0))
+    pipeline = Pipeline()
+    pipeline.set_source(FakeSource(10))
     pipeline.append_stage('waster0', TimeWaster(0.2), concurrency=2, use_threads=False)
     pipeline.append_stage('waster1', TimeWaster(0.2), concurrency=2, use_threads=False)
     pipeline.append_stage('waster2', TimeWaster(0.2), concurrency=2, use_threads=False)
@@ -140,7 +151,7 @@ def test_run_times():
     items = list(pipeline.run())
     _check(items, 10)
     elasped1 = time.time() - start_time
-    logger.debug('Time for parallel: {}'.format(elasped1))
+    logger.debug('Time for multi-process: {}'.format(elasped1))
     pipeline = Pipeline()
     pipeline.set_source(FakeSource(10))
     pipeline.append_stage('waster0', TimeWaster(0.2), concurrency=0)
@@ -152,4 +163,5 @@ def test_run_times():
     _check(items, 10)
     elasped2 = time.time() - start_time
     logger.debug('Time for sequential: {}'.format(elasped2))
+    assert elasped2 > elasped0
     assert elasped2 > elasped1

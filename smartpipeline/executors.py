@@ -22,23 +22,33 @@ class Container(ABC):
         self._out_queue = new_queue()
         return self._out_queue
 
+    @property
+    def out_queue(self):
+        return self._out_queue
+
 
 class SourceContainer(Container):
     def __init__(self):
         self._source = None
         # use the next two attributes jointly so we do not need to use a queue if we only work synchronously
         self._next_item = None
-        self._out_queue = self.init_queue()
+        self._internal_queue = new_queue()
+        self._out_queue = None
 
-    def set(self, source: Source):
+    def set(self, source):
         self._source = source
 
     def is_set(self):
         return self._source is not None
 
+    def pop_into_queue(self):
+        self._out_queue.put(self.get_item(), block=True)
+
     def prepend_item(self, item: DataItem):
-        if self._next_item is not None:
-            self._out_queue.put(item)
+        if self._out_queue is not None:
+            self._out_queue.put(item, block=True)
+        elif self._next_item is not None:
+            self._internal_queue.put(item)
         else:
             self._next_item = item
 
@@ -53,6 +63,7 @@ class SourceContainer(Container):
         else:
             return self._source.pop()
 
+    # to mimic queue interface
     def get(self, block):
         return self.get_item(block)
 
@@ -106,10 +117,6 @@ class StageContainer(Container):
     @property
     def stage(self):
         return self._stage
-
-    @property
-    def out_queue(self):
-        return self._out_queue
 
     def get_stage(self):
         return self._stage
@@ -169,8 +176,6 @@ class ConcurrentStageContainer(StageContainer):
     def set_previous_stage(self, container: Container):
         super().set_previous_stage(container)
         self._previous_queue = self._previous.init_queue()
-        if isinstance(container, SourceContainer):
-            self._previous_queue = container
 
     def run(self):
         for _ in range(self._concurrency):
@@ -178,7 +183,6 @@ class ConcurrentStageContainer(StageContainer):
                 self._future = self._stage_executor.submit(_simple_stage_processor, self)
             else:
                 self._future = self._stage_executor.submit(_mp_stage_processor, self.stage, self._previous_queue, self._out_queue, self._error_manager)
-                self._future.result()
 
     def shutdown(self):
         self._stage_executor.shutdown()
