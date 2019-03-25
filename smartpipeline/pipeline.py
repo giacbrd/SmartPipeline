@@ -1,4 +1,3 @@
-import time
 import uuid
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -78,10 +77,11 @@ class Pipeline:
                         if not isinstance(item, Stop):
                             yield item
                         elif self._all_empty():
+                            self._shutdown()
                             return
 
     def _all_empty(self):
-        return all(stage.is_stopped() for stage in self._stages.values())
+        return self._source_container.is_stopped() and all(stage.is_stopped() for stage in self._stages.values())
 
     def process(self, item):
         last_stage_name = self._stages.last_key()
@@ -98,7 +98,9 @@ class Pipeline:
 
     def get_item(self, block=True):
         if self._out_queue is not None:
-            self._out_queue.get(block)
+            item = self._out_queue.get(block)
+            self._out_queue.task_done()
+            return item
         else:
             raise ValueError("No pipeline is running asynchronously, not item can be retrieved from the output queue")
 

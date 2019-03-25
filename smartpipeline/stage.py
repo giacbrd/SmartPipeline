@@ -111,6 +111,9 @@ class Source(ABC):
     def get_item(self, block=False) -> DataItem:
         return self.pop()
 
+    def stop(self):
+        self._is_stopped = True
+
 
 class Stop(DataItem):
     def __str__(self):

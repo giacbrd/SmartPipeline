@@ -3,10 +3,9 @@ import time
 from abc import ABC, abstractmethod
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
-from multiprocessing.managers import BaseManager
 
 from smartpipeline.error import ErrorManager
-from smartpipeline.stage import DataItem, Source, Stop, Stage
+from smartpipeline.stage import DataItem, Stop, Stage
 from smartpipeline.utils import new_queue
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
@@ -41,10 +40,14 @@ class SourceContainer(Container):
     def is_set(self):
         return self._source is not None
 
+    def is_stopped(self):
+        return getattr(self._source, '_is_stopped', False)
+
     # this only used with multi processes
     def pop_into_queue(self):
         self._out_queue.put(self._get_next_item(), block=True)
 
+    # only used for processing single items
     def prepend_item(self, item: DataItem):
         if self._out_queue is not None:
             self._out_queue.put(item, block=True)
@@ -53,7 +56,6 @@ class SourceContainer(Container):
         else:
             self._next_item = item
 
-    # this must not be used with multi processes (in fact we don't query the out_queue)
     def get_item(self, block=False):
         if self._out_queue is not None:
             return self._out_queue.get(block=True)
@@ -61,15 +63,22 @@ class SourceContainer(Container):
             return self._get_next_item()
 
     def _get_next_item(self):
-        if self._next_item is not None:
-            ret = self._next_item
+        ret = self._next_item
+        if ret is not None:
             try:
                 self._next_item = self._internal_queue.get(block=False)
             except queue.Empty:
-                self._next_item = None
+                if self.is_stopped():
+                    self._next_item = Stop()
+                else:
+                    self._next_item = None
             return ret
         else:
-            return self._source.pop()
+            ret = self._source.pop()
+            if self.is_stopped():
+                return Stop()
+            else:
+                return ret
 
 
 def _process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataItem:
@@ -90,10 +99,12 @@ def _mp_stage_processor(stage, in_queue, out_queue, error_manager):
         item = in_queue.get(block=True)
         if isinstance(item, Stop):
             out_queue.put(item, block=True)
+            in_queue.task_done()
             return
         elif item is not None:
             item = _process(stage, item, error_manager)
             out_queue.put(item, block=True)
+            in_queue.task_done()
 
 
 def _simple_stage_processor(stage_container):
@@ -147,6 +158,7 @@ class StageContainer(Container):
         if self._out_queue is not None:
             try:
                 ret = self._out_queue.get(block=block)
+                self._out_queue.task_done()
             except queue.Empty:
                 return None
         return ret

@@ -31,7 +31,7 @@ class FakeSource(Source):
     def pop(self):
         self.counter += 1
         if self.counter > self.total:
-            return Stop()
+            self.stop()
         item = DataItem()
         item.payload.update({'text': random_text(), 'count': self.counter})
         return item
@@ -44,18 +44,26 @@ class ListSource(Source):
     def pop(self):
         ret = next(self.items)
         if not ret:
-            return Stop()
+            self.stop()
 
 
 class TextReverser(Stage):
+    def __init__(self, cycles=1):
+        self._cycles = cycles
+
     def process(self, item: DataItem):
-        item.payload['text'] = item.payload['text'][::-1]
+        for _ in range(self._cycles):
+            item.payload['text'] = item.payload['text'][::-1]
         return item
 
 
 class TextDuplicator(Stage):
+    def __init__(self, cycles=1):
+        self._cycles = cycles
+
     def process(self, item: DataItem):
-        item.payload['text_' + str(random.randint(1, 1000))] = item.payload['text']
+        for _ in range(self._cycles):
+            item.payload['text_' + str(random.randint(1, 1000))] = item.payload['text']
         return item
 
 
