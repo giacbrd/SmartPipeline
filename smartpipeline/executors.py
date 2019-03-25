@@ -3,10 +3,12 @@ import time
 from abc import ABC, abstractmethod
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
+from threading import Event as TEvent
+from multiprocessing import Event as PEvent
 
 from smartpipeline.error import ErrorManager
 from smartpipeline.stage import DataItem, Stop, Stage
-from smartpipeline.utils import new_queue
+from smartpipeline.utils import new_queue, new_event
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -16,6 +18,10 @@ class Container(ABC):
     @abstractmethod
     def get_item(self, block=False) -> DataItem:
         return None
+
+    @abstractmethod
+    def is_stopped(self) -> bool:
+        return False
 
     def init_queue(self):
         self._out_queue = new_queue()
@@ -33,6 +39,7 @@ class SourceContainer(Container):
         self._next_item = None
         self._internal_queue = new_queue()
         self._out_queue = None
+        self._stop_sent = False
 
     def set(self, source):
         self._source = source
@@ -45,7 +52,11 @@ class SourceContainer(Container):
 
     # this only used with multi processes
     def pop_into_queue(self):
-        self._out_queue.put(self._get_next_item(), block=True)
+        item = self._get_next_item()
+        if not self._stop_sent:
+            self._out_queue.put(item, block=True)
+        if isinstance(item, Stop):
+            self._stop_sent = True
 
     # only used for processing single items
     def prepend_item(self, item: DataItem):
@@ -56,11 +67,12 @@ class SourceContainer(Container):
         else:
             self._next_item = item
 
-    def get_item(self, block=False):
+    def get_item(self, block=True):
         if self._out_queue is not None:
-            return self._out_queue.get(block=True)
+            item = self._out_queue.get(block=block)
         else:
-            return self._get_next_item()
+            item = self._get_next_item()
+        return item
 
     def _get_next_item(self):
         ret = self._next_item
@@ -94,24 +106,21 @@ def _process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataI
     return ret
 
 
-def _mp_stage_processor(stage, in_queue, out_queue, error_manager):
+def _stage_processor(stage, in_queue, out_queue, error_manager, terminated):
     while True:
-        item = in_queue.get(block=True)
+        if terminated.is_set():
+            return
+        try:
+            item = in_queue.get(block=True, timeout=0.1)
+        except queue.Empty:
+            continue
         if isinstance(item, Stop):
             out_queue.put(item, block=True)
             in_queue.task_done()
-            return
         elif item is not None:
             item = _process(stage, item, error_manager)
             out_queue.put(item, block=True)
             in_queue.task_done()
-
-
-def _simple_stage_processor(stage_container):
-    while True:
-        item = stage_container.process()
-        if isinstance(item, Stop):
-            return
 
 
 class StageContainer(Container):
@@ -124,6 +133,7 @@ class StageContainer(Container):
         self._out_queue = None
         self._previous = None
         self._is_stopped = False
+        self._stop_sent = False
 
     @property
     def name(self):
@@ -165,8 +175,10 @@ class StageContainer(Container):
 
     def _put_item(self, item):
         self._last_processed = item
-        if self._out_queue is not None and self._last_processed is not None:
+        if self._out_queue is not None and self._last_processed is not None and not self._stop_sent:
             self._out_queue.put(self._last_processed, block=True)
+        if isinstance(self._last_processed, Stop):
+            self._stop_sent = True
 
 
 class ConcurrentStageContainer(StageContainer):
@@ -182,6 +194,7 @@ class ConcurrentStageContainer(StageContainer):
         self._out_queue = self.init_queue()
         self._previous_queue = None
         self._future = None
+        self._terminate_event = None
 
     def _get_stage_executor(self):
         if self._stage_executor is None:
@@ -189,19 +202,26 @@ class ConcurrentStageContainer(StageContainer):
             self._stage_executor = executor(max_workers=self._concurrency)
         return self._stage_executor
 
+    def terminate(self):
+        self._terminate_event.set()
+
     def set_previous_stage(self, container: Container):
         super().set_previous_stage(container)
         self._previous_queue = self._previous.init_queue()
 
     def run(self):
+        if isinstance(self._stage_executor, ThreadPoolExecutor):
+            self._terminate_event = TEvent()
+        else:
+            self._terminate_event = new_event()
         for _ in range(self._concurrency):
-            if isinstance(self._stage_executor, ThreadPoolExecutor):
-                self._future = self._stage_executor.submit(_simple_stage_processor, self)
-            else:
-                self._future = self._stage_executor.submit(_mp_stage_processor, self.stage, self._previous_queue, self._out_queue, self._error_manager)
+            self._future = self._stage_executor.submit(_stage_processor, self.stage, self._previous_queue, self._out_queue, self._error_manager, self._terminate_event)
 
     def shutdown(self):
         self._stage_executor.shutdown()
 
-    def is_stopped(self):
-        return (self._future.done() or self._future.cancelled()) and self._out_queue.empty()
+    def empty_queues(self):
+        return self._previous_queue.empty() and self._out_queue.empty()
+
+    def is_terminated(self):
+        return (self._future.done() or self._future.cancelled()) and self._terminate_event.is_set()

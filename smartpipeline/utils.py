@@ -18,3 +18,10 @@ def new_queue():
     if _QUEUE_MANAGER is None:
         _QUEUE_MANAGER = Manager()
     return _QUEUE_MANAGER.Queue()
+
+
+def new_event():
+    global _QUEUE_MANAGER
+    if _QUEUE_MANAGER is None:
+        _QUEUE_MANAGER = Manager()
+    return _QUEUE_MANAGER.Event()

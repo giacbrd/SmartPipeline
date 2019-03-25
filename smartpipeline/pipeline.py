@@ -1,3 +1,4 @@
+import time
 import uuid
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -76,12 +77,26 @@ class Pipeline:
                     if item is not None:
                         if not isinstance(item, Stop):
                             yield item
-                        elif self._all_empty():
-                            self._shutdown()
-                            return
+                        # after the first stop event is received, we check that all stages have received a stop signal and then processed pending items
+                        elif not self._all_terminated():
+                            self._terminate_all()  #FIXME in a thread, otherwise it brings everything in the last queue? how can this work?
+            if self._all_empty():
+                self._shutdown()
+                return
+
+    def _terminate_all(self):
+        for stage in self._stages.values():
+            if isinstance(stage, ConcurrentStageContainer):
+                stage.terminate()
+                while not stage.empty_queues() and not stage.is_terminated():
+                    time.sleep(0.1)
+                    continue
+
+    def _all_terminated(self):
+        return all(stage.is_terminated() if isinstance(stage, ConcurrentStageContainer) else stage.is_stopped() for stage in self._stages.values())
 
     def _all_empty(self):
-        return self._source_container.is_stopped() and all(stage.is_stopped() for stage in self._stages.values())
+        return self._all_terminated() and all(stage.empty_queues() for stage in self._stages.values() if isinstance(stage, ConcurrentStageContainer))
 
     def process(self, item):
         last_stage_name = self._stages.last_key()
