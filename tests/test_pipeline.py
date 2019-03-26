@@ -105,7 +105,7 @@ def test_concurrent_run():
 
 def test_huge_run():
     pipeline = Pipeline()
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(FakeSource(200))
     pipeline.append_stage('reverser0', TextReverser(10000), concurrency=2, use_threads=False)
     pipeline.append_stage('reverser1', TextReverser(10000), concurrency=3, use_threads=False)
     pipeline.append_stage('reverser2', TextReverser(10000), concurrency=1, use_threads=False)
@@ -114,9 +114,9 @@ def test_huge_run():
     items = list(pipeline.run())
     elasped1 = time.time() - start_time
     logger.debug('Time for parallel: {}'.format(elasped1))
-    _check(items, 100)
+    _check(items, 200)
     pipeline = Pipeline()
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(FakeSource(200))
     pipeline.append_stage('reverser0', TextReverser(10000), concurrency=0)
     pipeline.append_stage('reverser1', TextReverser(10000), concurrency=0)
     pipeline.append_stage('reverser2', TextReverser(10000), concurrency=0)
@@ -125,7 +125,7 @@ def test_huge_run():
     items = list(pipeline.run())
     elasped2 = time.time() - start_time
     logger.debug('Time for sequential: {}'.format(elasped2))
-    _check(items, 100)
+    _check(items, 200)
     assert elasped2 > elasped1
 
 

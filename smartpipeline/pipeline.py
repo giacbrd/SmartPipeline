@@ -2,11 +2,12 @@ import time
 import uuid
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
+from threading import Thread
 
 from smartpipeline.error import ErrorManager
 from smartpipeline.stage import Stop
 from smartpipeline.executors import SourceContainer, StageContainer, ConcurrentStageContainer
-from smartpipeline.utils import OrderedDict, new_queue
+from smartpipeline.utils import OrderedDict, mp_queue
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -66,6 +67,7 @@ class Pipeline:
         if not self._source_container.is_set():
             raise ValueError("Set the data source for this pipeline")
         last_stage_name = self._stages.last_key()
+        terminator = None
         while True:
             if self._enqueue_source:
                 self._source_container.pop_into_queue()
@@ -77,10 +79,12 @@ class Pipeline:
                     if item is not None:
                         if not isinstance(item, Stop):
                             yield item
-                        # after the first stop event is received, we check that all stages have received a stop signal and then processed pending items
                         elif not self._all_terminated():
-                            self._terminate_all()  #FIXME in a thread, otherwise it brings everything in the last queue? how can this work?
+                            terminator = Thread(target=self._terminate_all)
+                            terminator.start()
             if self._all_empty():
+                if terminator is not None:
+                    terminator.join()
                 self._shutdown()
                 return
 
@@ -193,7 +197,7 @@ class Pipeline:
 
     def _start_pipeline_executor(self):
         if self._pipeline_executor is None:
-            self._out_queue = new_queue()
+            self._out_queue = mp_queue()
             self._pipeline_executor = ThreadPoolExecutor(max_workers=self.max_workers)
 
             def pipeline_runner():

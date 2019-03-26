@@ -8,7 +8,7 @@ from multiprocessing import Event as PEvent
 
 from smartpipeline.error import ErrorManager
 from smartpipeline.stage import DataItem, Stop, Stage
-from smartpipeline.utils import new_queue, new_event
+from smartpipeline.utils import mp_queue, mp_event
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -24,7 +24,7 @@ class Container(ABC):
         return False
 
     def init_queue(self):
-        self._out_queue = new_queue()
+        self._out_queue = mp_queue()
         return self._out_queue
 
     @property
@@ -37,7 +37,7 @@ class SourceContainer(Container):
         self._source = None
         # use the next two attributes jointly so we do not need to use a queue if we only work synchronously
         self._next_item = None
-        self._internal_queue = new_queue()
+        self._internal_queue = mp_queue()
         self._out_queue = None
         self._stop_sent = False
 
@@ -50,7 +50,7 @@ class SourceContainer(Container):
     def is_stopped(self):
         return getattr(self._source, '_is_stopped', False)
 
-    # this only used with multi processes
+    # this only used with concurrent stages
     def pop_into_queue(self):
         item = self._get_next_item()
         if not self._stop_sent:
@@ -162,7 +162,6 @@ class StageContainer(Container):
         self._previous = container
 
     def get_item(self, block=False):
-        # if the stage is stopped this is always a Stop
         ret = self._last_processed
         self._last_processed = None
         if self._out_queue is not None:
@@ -182,8 +181,6 @@ class StageContainer(Container):
 
 
 class ConcurrentStageContainer(StageContainer):
-    # FIXME manage the fact that a developer could have missed the `return item` (so he returns a None) in the overloaded `process` method of his stage
-    # FIXME signal to clean queues in round robin way
     # FIXME manage queue size, timeout, minimum time between processes
     def __init__(self, name: str, stage: Stage, error_manager, concurrency=1, use_threads=True):
         super().__init__(name, stage, error_manager)
@@ -213,7 +210,7 @@ class ConcurrentStageContainer(StageContainer):
         if isinstance(self._stage_executor, ThreadPoolExecutor):
             self._terminate_event = TEvent()
         else:
-            self._terminate_event = new_event()
+            self._terminate_event = mp_event()
         for _ in range(self._concurrency):
             self._future = self._stage_executor.submit(_stage_processor, self.stage, self._previous_queue, self._out_queue, self._error_manager, self._terminate_event)
 

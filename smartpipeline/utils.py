@@ -13,14 +13,14 @@ class OrderedDict(ODict):
 _QUEUE_MANAGER = None
 
 
-def new_queue():
+def mp_queue():
     global _QUEUE_MANAGER
     if _QUEUE_MANAGER is None:
         _QUEUE_MANAGER = Manager()
     return _QUEUE_MANAGER.Queue()
 
 
-def new_event():
+def mp_event():
     global _QUEUE_MANAGER
     if _QUEUE_MANAGER is None:
         _QUEUE_MANAGER = Manager()
