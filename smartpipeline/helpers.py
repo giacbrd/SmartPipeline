@@ -41,27 +41,3 @@ class FileObjItem(FilePathItem):
     def __init__(self, file):
         super().__init__(file.name)
         self.file = file
-
-
-class ESErrorLogger(ErrorManager):
-
-    def __init__(self, es_host, es_index, es_doctype):
-        from elasticsearch import Elasticsearch
-        self.es_doctype = es_doctype
-        self.es_host = es_host
-        self.es_index = es_index
-        self.es_client = Elasticsearch(es_host)
-
-    def handle(self, error, stage, item):
-        super(ESErrorLogger, self).handle(error, stage, item)
-        if hasattr(error, 'get_exception'):
-            exception = error.get_exception()
-        else:
-            exception = error
-        self.es_client.index(index=self.es_index, doc_type=self.es_doctype, body={
-            'traceback': exception.__traceback__,
-            'stage': str(stage),
-            'item': str(item),
-            'exception': type(exception),
-            'message': str(error)
-        })

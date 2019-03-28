@@ -27,10 +27,11 @@ class Pipeline:
         self._raise_on_critical = False
         self._skip_on_critical = False
         self._stages = OrderedDict()
-        self.error_manager = ErrorManager()
+        self._error_manager = ErrorManager()
         self._source_container = SourceContainer()
-        self.max_workers = None  # default: number of CPUs
+        self._max_init_workers = None  # default: number of CPUs
         self._init_executor = None
+        self._wait_previous_executor = None
         self._source_name = None
         self._pipeline_executor = None
         self._out_queue = None
@@ -40,6 +41,9 @@ class Pipeline:
         if self._init_executor is not None:
             self._init_executor.shutdown(wait=True)
             self._init_executor = None
+        while not all(self._stages.values()):
+            time.sleep(0.1)
+        self._wait_previous_executor.shutdown(wait=True)
         for name, stage in self._stages.items():
             if isinstance(stage, ConcurrentStageContainer):
                 stage.run()
@@ -66,7 +70,7 @@ class Pipeline:
         self._wait_executors()
         if not self._source_container.is_set():
             raise ValueError("Set the data source for this pipeline")
-        last_stage_name = self._stages.last_key()
+        last_stage_name = self._last_stage_name()
         terminator = None
         while True:
             if self._enqueue_source:
@@ -93,11 +97,11 @@ class Pipeline:
             if isinstance(stage, ConcurrentStageContainer):
                 stage.terminate()
                 while not stage.empty_queues() and not stage.is_terminated():
-                    time.sleep(0.1)
+                    time.sleep(0.1)  #FIXME parametrize wait
                     continue
 
     def _all_terminated(self):
-        return all(stage.is_terminated() if isinstance(stage, ConcurrentStageContainer) else stage.is_stopped() for stage in self._stages.values())
+        return all(stage.is_terminated() for stage in self._stages.values())
 
     def _all_empty(self):
         return self._all_terminated() and all(stage.empty_queues() for stage in self._stages.values() if isinstance(stage, ConcurrentStageContainer))
@@ -129,11 +133,11 @@ class Pipeline:
         return self
 
     def set_error_manager(self, error_manager):
-        self.error_manager = error_manager
+        self._error_manager = error_manager
         return self
 
-    def set_max_workers(self, max_workers):
-        self.max_workers = max_workers
+    def set_max_init_workers(self, max_workers):
+        self._max_init_workers = max_workers
         return self
 
     def raise_on_critical_error(self):
@@ -144,21 +148,36 @@ class Pipeline:
         self._skip_on_critical = True
         return self
 
+    def _last_stage_name(self):
+        if self._stages:
+            return self._stages.last_key()
+
     def _last_stage(self):
         if self._stages:
-            return self._stages[self._stages.last_key()]
+            return self._stages[self._last_stage_name()]
         else:
             return self._source_container
+
+    def _wait_for_previous(self, container, last_stage_name):
+        def _waiter():
+            if last_stage_name is not None:
+                while self._stages[last_stage_name] is None:
+                    time.sleep(0.1)
+                container.set_previous_stage(self._stages[last_stage_name])
+            else:
+                container.set_previous_stage(self._source_container)
+        executor = self._get_wait_previous_executor()
+        executor.submit(_waiter)
 
     def append_stage(self, name, stage, concurrency=0, use_threads=True):
         self._check_stage_name(name)
         if concurrency <= 0:
-            container = StageContainer(name, stage, self.error_manager)
+            container = StageContainer(name, stage, self._error_manager)
         else:
-            container = ConcurrentStageContainer(name, stage, self.error_manager, concurrency, use_threads)
+            container = ConcurrentStageContainer(name, stage, self._error_manager, concurrency, use_threads)
             if not self._stages:
                 self._enqueue_source = True
-        container.set_previous_stage(self._last_stage())
+        self._wait_for_previous(container, self._last_stage_name())
         self._stages[name] = container
         return self
 
@@ -171,19 +190,19 @@ class Pipeline:
         if args is None:
             args = []
         self._check_stage_name(name)
-        if concurrency > 0 and not self._stages:
+        if concurrency > 0 and not self._stages:  # first stage added
             self._enqueue_source = True
-        last_stage_name = self._stages.last_key()
+        last_stage_name = self._last_stage_name()
         self._stages[name] = None  # so the order of the calls of this method is followed in `_stages`
-        future = self._get_init_executor(use_threads).submit(stage_class, args, kwargs)
+        future = self._get_init_executor(use_threads).submit(stage_class, *args, **kwargs)
 
         def append_stage(stage_future):
             stage = stage_future.result()
             if concurrency <= 0:
-                container = StageContainer(name, stage, self.error_manager)
+                container = StageContainer(name, stage, self._error_manager)
             else:
-                container = ConcurrentStageContainer(name, stage, self.error_manager, concurrency, use_threads)
-            container.set_previous_stage(self._stages[last_stage_name])
+                container = ConcurrentStageContainer(name, stage, self._error_manager, concurrency, use_threads)
+            self._wait_for_previous(container, last_stage_name)
             self._stages[name] = container
 
         future.add_done_callback(append_stage)
@@ -192,13 +211,18 @@ class Pipeline:
     def _get_init_executor(self, use_threads=True):
         if self._init_executor is None:
             executor = ThreadPoolExecutor if use_threads else ProcessPoolExecutor
-            self._init_executor = executor(max_workers=self.max_workers)
+            self._init_executor = executor(max_workers=self._max_init_workers)
         return self._init_executor
+
+    def _get_wait_previous_executor(self):
+        if self._wait_previous_executor is None:
+            self._wait_previous_executor = ThreadPoolExecutor()
+        return self._wait_previous_executor
 
     def _start_pipeline_executor(self):
         if self._pipeline_executor is None:
             self._out_queue = mp_queue()
-            self._pipeline_executor = ThreadPoolExecutor(max_workers=self.max_workers)
+            self._pipeline_executor = ThreadPoolExecutor()
 
             def pipeline_runner():
                 for item in self.run():

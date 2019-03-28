@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event as TEvent
-from multiprocessing import Event as PEvent
 
 from smartpipeline.error import ErrorManager
 from smartpipeline.stage import DataItem, Stop, Stage
@@ -40,6 +39,9 @@ class SourceContainer(Container):
         self._internal_queue = mp_queue()
         self._out_queue = None
         self._stop_sent = False
+
+    def __str__(self):
+        return 'Container for source {}'.format(self._source)
 
     def set(self, source):
         self._source = source
@@ -111,7 +113,7 @@ def _stage_processor(stage, in_queue, out_queue, error_manager, terminated):
         if terminated.is_set():
             return
         try:
-            item = in_queue.get(block=True, timeout=0.1)
+            item = in_queue.get(block=True, timeout=0.1)  #FIXME parametrize timeout
         except queue.Empty:
             continue
         if isinstance(item, Stop):
@@ -135,6 +137,9 @@ class StageContainer(Container):
         self._is_stopped = False
         self._stop_sent = False
 
+    def __str__(self):
+        return 'Container {} for stage {}'.format(self._name, self._stage)
+
     @property
     def name(self):
         return self._name
@@ -148,6 +153,9 @@ class StageContainer(Container):
 
     def is_stopped(self):
         return self._is_stopped
+
+    def is_terminated(self):
+        return self.is_stopped()
 
     def process(self) -> DataItem:
         item = self._previous.get_item()
@@ -196,7 +204,7 @@ class ConcurrentStageContainer(StageContainer):
     def _get_stage_executor(self):
         if self._stage_executor is None:
             executor = ThreadPoolExecutor if self._use_threads else ProcessPoolExecutor
-            self._stage_executor = executor(max_workers=self._concurrency)
+            self._stage_executor = executor(max_workers=self._concurrency)  #TODO one executor per stage? why workers are equivalent to concurrency?
         return self._stage_executor
 
     def terminate(self):

@@ -10,7 +10,7 @@ class OrderedDict(ODict):
         return next(reversed(self.keys()))
 
 
-_QUEUE_MANAGER = None
+_QUEUE_MANAGER = None  #TODO create a singleton class
 
 
 def mp_queue():
