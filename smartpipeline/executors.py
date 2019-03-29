@@ -50,7 +50,7 @@ class SourceContainer(Container):
         return self._source is not None
 
     def is_stopped(self):
-        return getattr(self._source, '_is_stopped', False)
+        return getattr(self._source, 'is_stopped', False)
 
     # this only used with concurrent stages
     def pop_into_queue(self):

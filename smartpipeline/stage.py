@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Union
 
 from smartpipeline.error import Error, CriticalError
 
@@ -32,7 +33,7 @@ class DataItem:
     def payload(self):
         return self._payload
 
-    def add_error(self, stage, exception: Error):
+    def add_error(self, stage, exception: Union[Error, Exception]):
         if hasattr(exception, 'set_stage'):
             if not type(exception) is Error:
                 raise ValueError("Add a pipeline error or a generic exception.")
@@ -44,7 +45,7 @@ class DataItem:
             error.set_stage(stage)
             self._errors.append(error)
 
-    def add_critical_error(self, stage, exception: Error):
+    def add_critical_error(self, stage, exception: Union[Error, Exception]):
         if hasattr(exception, 'set_stage'):
             if not type(exception) is CriticalError:
                 raise ValueError("Add a critical pipeline error or a generic exception.")
@@ -113,6 +114,10 @@ class Source(ABC):
 
     def stop(self):
         self._is_stopped = True
+
+    @property
+    def is_stopped(self):
+        return self._is_stopped
 
 
 class Stop(DataItem):

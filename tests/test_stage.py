@@ -45,3 +45,7 @@ def test_fileitem():
     assert item.id
     assert not item.payload
     assert item.path in str(item)
+
+
+def test_containers():
+    pass
