@@ -42,9 +42,17 @@ class ListSource(Source):
         self.items = iter(items)
 
     def pop(self):
-        ret = next(self.items)
-        if not ret:
+        try:
+            return next(self.items)
+        except StopIteration:
             self.stop()
+
+
+class TextGenerator(Stage):
+
+    def process(self, item: DataItem):
+        item.payload['text'] = random_text()
+        return item
 
 
 class TextReverser(Stage):
@@ -98,14 +106,3 @@ def wait_service(timeout, predicate, args):
         sleep(1)
         if (datetime.now() - start).seconds > timeout:
             raise TimeoutError()
-
-
-def is_open(host, port):
-    # FIXME are we shure this works?
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.connect((host, int(port)))
-        s.shutdown(2)
-        return True
-    except:
-        return False

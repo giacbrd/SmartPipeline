@@ -123,5 +123,3 @@ class Source(ABC):
 class Stop(DataItem):
     def __str__(self):
         return 'Stop signal {}'.format(self.id)
-
-

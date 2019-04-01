@@ -198,13 +198,13 @@ class ConcurrentStageContainer(StageContainer):
         self._stage_executor = self._get_stage_executor()
         self._out_queue = self.init_queue()
         self._previous_queue = None
-        self._future = None
+        self._futures = []
         self._terminate_event = None
 
     def _get_stage_executor(self):
         if self._stage_executor is None:
             executor = ThreadPoolExecutor if self._use_threads else ProcessPoolExecutor
-            self._stage_executor = executor(max_workers=self._concurrency)  #TODO one executor per stage? why workers are equivalent to concurrency?
+            self._stage_executor = executor(max_workers=self._concurrency)  #TODO one executor per stage? why max_workers are equivalent to concurrency?
         return self._stage_executor
 
     def terminate(self):
@@ -220,13 +220,13 @@ class ConcurrentStageContainer(StageContainer):
         else:
             self._terminate_event = mp_event()
         for _ in range(self._concurrency):
-            self._future = self._stage_executor.submit(_stage_processor, self.stage, self._previous_queue, self._out_queue, self._error_manager, self._terminate_event)
+            self._futures.append(self._stage_executor.submit(_stage_processor, self.stage, self._previous_queue, self._out_queue, self._error_manager, self._terminate_event))
 
     def shutdown(self):
         self._stage_executor.shutdown()
 
-    def empty_queues(self):
+    def queues_empty(self):
         return self._previous_queue.empty() and self._out_queue.empty()
 
     def is_terminated(self):
-        return (self._future.done() or self._future.cancelled()) and self._terminate_event.is_set()
+        return all(future.done() or future.cancelled() for future in self._futures) and self._terminate_event.is_set()

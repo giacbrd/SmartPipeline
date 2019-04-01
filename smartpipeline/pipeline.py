@@ -96,7 +96,7 @@ class Pipeline:
         for stage in self._stages.values():
             if isinstance(stage, ConcurrentStageContainer):
                 stage.terminate()
-                while not stage.empty_queues() and not stage.is_terminated():
+                while not stage.queues_empty() and not stage.is_terminated():
                     time.sleep(0.1)  #FIXME parametrize wait
                     continue
 
@@ -104,7 +104,7 @@ class Pipeline:
         return all(stage.is_terminated() for stage in self._stages.values())
 
     def _all_empty(self):
-        return self._all_terminated() and all(stage.empty_queues() for stage in self._stages.values() if isinstance(stage, ConcurrentStageContainer))
+        return self._all_terminated() and all(stage.queues_empty() for stage in self._stages.values() if isinstance(stage, ConcurrentStageContainer))
 
     def process(self, item):
         last_stage_name = self._stages.last_key()

@@ -212,3 +212,7 @@ def test_run_times():
     logger.debug('Time for sequential: {}'.format(elasped2))
     assert elasped2 > elasped0
     assert elasped2 > elasped1
+
+
+def test_single_items():
+    pass
