@@ -1,11 +1,10 @@
 import random
-import socket
 import time
 from datetime import datetime
 from time import sleep
 
 from smartpipeline.error import Error, CriticalError
-from smartpipeline.stage import Source, DataItem, Stage, Stop
+from smartpipeline.stage import Source, DataItem, Stage
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 

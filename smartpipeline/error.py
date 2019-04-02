@@ -50,4 +50,4 @@ class ErrorManager:
         logger.exception(self._generate_message(stage, item), exc_info=exc_info)
 
     def _generate_message(self, stage, item):
-        return 'The stage {} ha generated an error on data item {}'.format(stage, item)
+        return 'The stage {} ha generated an error on item {}'.format(stage, item)

@@ -5,6 +5,7 @@ from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event as TEvent
 
+from smartpipeline import CONCURRENCY_WAIT
 from smartpipeline.error import ErrorManager
 from smartpipeline.stage import DataItem, Stop, Stage
 from smartpipeline.utils import mp_queue, mp_event
@@ -62,7 +63,7 @@ class SourceContainer(Container):
         else:
             self._is_stopped = True
 
-    # this only used with concurrent stages
+    # only used with concurrent stages
     def pop_into_queue(self):
         item = self._get_next_item()
         if not self._stop_sent:
@@ -123,7 +124,7 @@ def _stage_processor(stage, in_queue, out_queue, error_manager, terminated):
         if terminated.is_set():
             return
         try:
-            item = in_queue.get(block=True, timeout=0.1)  #FIXME parametrize timeout
+            item = in_queue.get(block=True, timeout=CONCURRENCY_WAIT)
         except queue.Empty:
             continue
         if isinstance(item, Stop):
@@ -173,6 +174,7 @@ class StageContainer(Container):
             self._is_stopped = True
         elif item is not None:
             item = _process(self.stage, item, self._error_manager)
+        # the processed item is set as current output of this stage
         self._put_item(item)
         return item
 
@@ -182,6 +184,7 @@ class StageContainer(Container):
     def get_item(self, block=False):
         ret = self._last_processed
         self._last_processed = None
+        # if we are in a concurrent stage the items are put in this queue after processing
         if self._out_queue is not None:
             try:
                 ret = self._out_queue.get(block=block)
@@ -214,7 +217,8 @@ class ConcurrentStageContainer(StageContainer):
     def _get_stage_executor(self):
         if self._stage_executor is None:
             executor = ThreadPoolExecutor if self._use_threads else ProcessPoolExecutor
-            self._stage_executor = executor(max_workers=self._concurrency)  #TODO one executor per stage? why max_workers are equivalent to concurrency?
+            self._stage_executor = executor(
+                max_workers=self._concurrency)  # TODO one executor per stage? why max_workers are equivalent to concurrency?
         return self._stage_executor
 
     def terminate(self):
@@ -230,7 +234,9 @@ class ConcurrentStageContainer(StageContainer):
         else:
             self._terminate_event = mp_event()
         for _ in range(self._concurrency):
-            self._futures.append(self._stage_executor.submit(_stage_processor, self.stage, self._previous_queue, self._out_queue, self._error_manager, self._terminate_event))
+            self._futures.append(
+                self._stage_executor.submit(_stage_processor, self.stage, self._previous_queue, self._out_queue,
+                                            self._error_manager, self._terminate_event))
 
     def shutdown(self):
         self._stage_executor.shutdown()

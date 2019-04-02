@@ -4,9 +4,10 @@ from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Thread
 
+from smartpipeline import CONCURRENCY_WAIT
 from smartpipeline.error import ErrorManager
-from smartpipeline.stage import Stop, Source
 from smartpipeline.executors import SourceContainer, StageContainer, ConcurrentStageContainer
+from smartpipeline.stage import Stop
 from smartpipeline.utils import OrderedDict, mp_queue
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
@@ -28,7 +29,7 @@ class Pipeline:
         self._skip_on_critical = False
         self._stages = OrderedDict()
         self._error_manager = ErrorManager()
-        self._source_container = SourceContainer()
+        self._source_container = SourceContainer()  # an empty source, on which we can only occasionally send items
         self._max_init_workers = None  # default: number of CPUs
         self._init_executor = None
         self._wait_previous_executor = None
@@ -42,7 +43,7 @@ class Pipeline:
             self._init_executor.shutdown(wait=True)
             self._init_executor = None
         while not all(self._stages.values()):
-            time.sleep(0.1)
+            time.sleep(CONCURRENCY_WAIT)
         self._wait_previous_executor.shutdown(wait=True)
         for name, stage in self._stages.items():
             if isinstance(stage, ConcurrentStageContainer):
@@ -72,10 +73,10 @@ class Pipeline:
         last_stage_name = self._last_stage_name()
         terminator = None
         while True:
-            if self._enqueue_source:
+            if self._enqueue_source:  # in the case the first stage is concurrent
                 self._source_container.pop_into_queue()
             for name, stage in self._stages.items():
-                if not isinstance(stage, ConcurrentStageContainer):
+                if not isinstance(stage, ConcurrentStageContainer):  # concurrent stages run by theirself in threads/processes
                     stage.process()
                 if name == last_stage_name:
                     item = stage.get_item()
@@ -92,18 +93,20 @@ class Pipeline:
                 return
 
     def _terminate_all(self):
+        # scroll the pipeline by its order and terminate stages after the relative queues are empty
         for stage in self._stages.values():
             if isinstance(stage, ConcurrentStageContainer):
                 stage.terminate()
                 while not stage.queues_empty() and not stage.is_terminated():
-                    time.sleep(0.1)  #FIXME parametrize wait
+                    time.sleep(CONCURRENCY_WAIT)
                     continue
 
     def _all_terminated(self):
         return all(stage.is_terminated() for stage in self._stages.values())
 
     def _all_empty(self):
-        return self._all_terminated() and all(stage.queues_empty() for stage in self._stages.values() if isinstance(stage, ConcurrentStageContainer))
+        return self._all_terminated() and all(
+            stage.queues_empty() for stage in self._stages.values() if isinstance(stage, ConcurrentStageContainer))
 
     def process(self, item):
         last_stage_name = self._stages.last_key()
@@ -164,10 +167,11 @@ class Pipeline:
         def _waiter():
             if last_stage_name is not None:
                 while self._stages[last_stage_name] is None:
-                    time.sleep(0.1)
+                    time.sleep(CONCURRENCY_WAIT)
                 container.set_previous_stage(self._stages[last_stage_name])
             else:
                 container.set_previous_stage(self._source_container)
+
         executor = self._get_wait_previous_executor()
         executor.submit(_waiter)
 
@@ -179,7 +183,7 @@ class Pipeline:
             container = ConcurrentStageContainer(name, stage, self._error_manager, concurrency, use_threads)
             if not self._stages:
                 self._enqueue_source = True
-        self._wait_for_previous(container, self._last_stage_name())
+        self._wait_for_previous(container, self._last_stage_name())  # wait that previous stage is initialized
         self._stages[name] = container
         return self
 
@@ -246,4 +250,3 @@ class Pipeline:
             if self._skip_on_critical:
                 return True
         return False
-

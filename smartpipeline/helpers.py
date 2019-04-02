@@ -1,6 +1,4 @@
 import os
-
-from smartpipeline.error import ErrorManager
 from smartpipeline.stage import Source, DataItem
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
