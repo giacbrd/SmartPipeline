@@ -73,7 +73,12 @@ class DataItem:
 
     @property
     def id(self):
-        return self._payload.get('id') or self._meta.get('id') or id(self)
+        ret = self._payload.get('id')
+        if ret is None:
+            ret = self._meta.get('id')
+            if ret is None:
+                ret = id(self)
+        return ret
 
     def __str__(self):
         return 'Data Item {} with payload {}...'.format(self.id, str(self._payload)[:100])

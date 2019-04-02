@@ -39,6 +39,7 @@ class SourceContainer(Container):
         self._internal_queue = mp_queue()
         self._out_queue = None
         self._stop_sent = False
+        self._is_stopped = False
 
     def __str__(self):
         return 'Container for source {}'.format(self._source)
@@ -47,10 +48,19 @@ class SourceContainer(Container):
         self._source = source
 
     def is_set(self):
-        return self._source is not None
+        return self._source is not None or self._next_item is not None or self._out_queue is not None
 
     def is_stopped(self):
-        return getattr(self._source, 'is_stopped', False)
+        if self._source is not None:
+            return getattr(self._source, 'is_stopped', False)
+        else:
+            return self._is_stopped
+
+    def stop(self):
+        if self._source is not None:
+            self._source.stop()
+        else:
+            self._is_stopped = True
 
     # this only used with concurrent stages
     def pop_into_queue(self):
@@ -62,9 +72,7 @@ class SourceContainer(Container):
 
     # only used for processing single items
     def prepend_item(self, item: DataItem):
-        if self._out_queue is not None:
-            self._out_queue.put(item, block=True)
-        elif self._next_item is not None:
+        if self._next_item is not None:
             self._internal_queue.put(item)
         else:
             self._next_item = item
@@ -87,12 +95,14 @@ class SourceContainer(Container):
                 else:
                     self._next_item = None
             return ret
-        else:
+        elif self._source is not None:
             ret = self._source.pop()
             if self.is_stopped():
                 return Stop()
             else:
                 return ret
+        elif self.is_stopped():
+            return Stop()
 
 
 def _process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataItem:

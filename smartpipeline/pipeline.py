@@ -5,7 +5,7 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Thread
 
 from smartpipeline.error import ErrorManager
-from smartpipeline.stage import Stop
+from smartpipeline.stage import Stop, Source
 from smartpipeline.executors import SourceContainer, StageContainer, ConcurrentStageContainer
 from smartpipeline.utils import OrderedDict, mp_queue
 
@@ -54,7 +54,6 @@ class Pipeline:
         for name, stage in self._stages.items():
             if isinstance(stage, ConcurrentStageContainer):
                 stage.shutdown()
-        self._stop_pipeline()
 
     def _stop_pipeline(self):
         if self._out_queue is not None:
@@ -110,7 +109,7 @@ class Pipeline:
         last_stage_name = self._stages.last_key()
         self._source_container.prepend_item(item)
         for name, stage in self._stages.items():
-            stage.process(block=True)
+            stage.process()
             if name == last_stage_name:
                 return stage.get_item(block=True)
 
@@ -118,6 +117,9 @@ class Pipeline:
         item.set_callback(callback)
         self._source_container.prepend_item(item)
         self._start_pipeline_executor()
+
+    def stop(self):
+        self._source_container.stop()
 
     def get_item(self, block=True):
         if self._out_queue is not None:
@@ -222,12 +224,12 @@ class Pipeline:
     def _start_pipeline_executor(self):
         if self._pipeline_executor is None:
             self._out_queue = mp_queue()
-            self._pipeline_executor = ThreadPoolExecutor()
+            self._pipeline_executor = ThreadPoolExecutor(max_workers=1)
 
             def pipeline_runner():
                 for item in self.run():
-                    self._out_queue.put(item)
                     item.callback()
+                    self._out_queue.put(item)
 
             self._pipeline_executor.submit(pipeline_runner)
         return self._pipeline_executor

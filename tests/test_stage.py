@@ -90,11 +90,7 @@ def test_source_container():
     item = DataItem()
     item.set_metadata('id', 1004)
     queue.put(item)
-    item = DataItem()
-    item.set_metadata('id', 1005)
-    container.prepend_item(item)
     assert container.get_item().get_metadata('id') == 1004
-    assert container.get_item().get_metadata('id') == 1005
     container.pop_into_queue()
     assert container.get_item().get_metadata('id') == 4
 
