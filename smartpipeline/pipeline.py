@@ -2,13 +2,14 @@ import time
 import uuid
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
+from multiprocessing import Manager
 from threading import Thread
 
 from smartpipeline import CONCURRENCY_WAIT
 from smartpipeline.error import ErrorManager
 from smartpipeline.executors import SourceContainer, StageContainer, ConcurrentStageContainer
 from smartpipeline.stage import Stop
-from smartpipeline.utils import OrderedDict, mp_queue
+from smartpipeline.utils import OrderedDict
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -25,11 +26,8 @@ class Pipeline:
 
     def __init__(self):
         self._concurrencies = {}
-        self._raise_on_critical = False
-        self._skip_on_critical = False
         self._stages = OrderedDict()
         self._error_manager = ErrorManager()
-        self._source_container = SourceContainer()  # an empty source, on which we can only occasionally send items
         self._max_init_workers = None  # default: number of CPUs
         self._init_executor = None
         self._wait_previous_executor = None
@@ -37,6 +35,19 @@ class Pipeline:
         self._pipeline_executor = None
         self._out_queue = None
         self._enqueue_source = False
+        self._sync_manager = None
+        self._source_container = SourceContainer()  # an empty source, on which we can only occasionally send items
+        self._source_container.init_internal_queue(self.new_queue)
+
+    def new_queue(self):
+        if self._sync_manager is None:
+            self._sync_manager = Manager()
+        return Manager().Queue()
+
+    def new_event(self):
+        if self._sync_manager is None:
+            self._sync_manager = Manager()
+        return Manager().Event()
 
     def _wait_executors(self):
         if self._init_executor is not None:
@@ -47,7 +58,7 @@ class Pipeline:
         self._wait_previous_executor.shutdown(wait=True)
         for name, stage in self._stages.items():
             if isinstance(stage, ConcurrentStageContainer):
-                stage.run()
+                stage.run(self.new_event)
 
     def _shutdown(self):
         if self._init_executor is not None:
@@ -55,13 +66,6 @@ class Pipeline:
         for name, stage in self._stages.items():
             if isinstance(stage, ConcurrentStageContainer):
                 stage.shutdown()
-
-    def _stop_pipeline(self):
-        if self._out_queue is not None:
-            self._out_queue.join()
-        if self._pipeline_executor is not None:
-            self._pipeline_executor.shutdown()
-        self._out_queue = None
 
     def __del__(self):
         self._shutdown()
@@ -78,6 +82,8 @@ class Pipeline:
             for name, stage in self._stages.items():
                 if not isinstance(stage, ConcurrentStageContainer):  # concurrent stages run by theirself in threads/processes
                     stage.process()
+                else:
+                    stage.check_errors()
                 if name == last_stage_name:
                     item = stage.get_item()
                     if item is not None:
@@ -139,18 +145,12 @@ class Pipeline:
 
     def set_error_manager(self, error_manager):
         self._error_manager = error_manager
+        for container in self._stages.values():
+            container.set_error_manager(self._error_manager)
         return self
 
     def set_max_init_workers(self, max_workers):
         self._max_init_workers = max_workers
-        return self
-
-    def raise_on_critical_error(self):
-        self._raise_on_critical = True
-        return self
-
-    def skip_on_critical_error(self):
-        self._skip_on_critical = True
         return self
 
     def _last_stage_name(self):
@@ -180,7 +180,7 @@ class Pipeline:
         if concurrency <= 0:
             container = StageContainer(name, stage, self._error_manager)
         else:
-            container = ConcurrentStageContainer(name, stage, self._error_manager, concurrency, use_threads)
+            container = ConcurrentStageContainer(name, stage, self._error_manager, self.new_queue, concurrency, use_threads)
             if not self._stages:
                 self._enqueue_source = True
         self._wait_for_previous(container, self._last_stage_name())  # wait that previous stage is initialized
@@ -207,7 +207,7 @@ class Pipeline:
             if concurrency <= 0:
                 container = StageContainer(name, stage, self._error_manager)
             else:
-                container = ConcurrentStageContainer(name, stage, self._error_manager, concurrency, use_threads)
+                container = ConcurrentStageContainer(name, stage, self._error_manager, self.new_queue, concurrency, use_threads)
             self._wait_for_previous(container, last_stage_name)
             self._stages[name] = container
 
@@ -227,7 +227,7 @@ class Pipeline:
 
     def _start_pipeline_executor(self):
         if self._pipeline_executor is None:
-            self._out_queue = mp_queue()
+            self._out_queue = self.new_queue()
             self._pipeline_executor = ThreadPoolExecutor(max_workers=1)
 
             def pipeline_runner():
@@ -241,12 +241,3 @@ class Pipeline:
     def _check_stage_name(self, name):
         if name in self._stages:
             raise ValueError('The stage name {} is already used in this pipeline'.format(name))
-
-    def check_item_errors(self, item):
-        if item.has_critical_errors():
-            if self._raise_on_critical:
-                for e in item.critical_errors():
-                    raise e.get_exception()
-            if self._skip_on_critical:
-                return True
-        return False

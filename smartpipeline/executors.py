@@ -1,14 +1,15 @@
+import concurrent
 import queue
 import time
 from abc import ABC, abstractmethod
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
+from multiprocessing import Manager
 from threading import Event as TEvent
 
 from smartpipeline import CONCURRENCY_WAIT
 from smartpipeline.error import ErrorManager
 from smartpipeline.stage import DataItem, Stop, Stage
-from smartpipeline.utils import mp_queue, mp_event
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -23,8 +24,8 @@ class Container(ABC):
     def is_stopped(self) -> bool:
         return False
 
-    def init_queue(self):
-        self._out_queue = mp_queue()
+    def init_queue(self, initializer):
+        self._out_queue = initializer()
         return self._out_queue
 
     @property
@@ -37,10 +38,14 @@ class SourceContainer(Container):
         self._source = None
         # use the next two attributes jointly so we do not need to use a queue if we only work synchronously
         self._next_item = None
-        self._internal_queue = mp_queue()
+        self._internal_queue = None
         self._out_queue = None
         self._stop_sent = False
         self._is_stopped = False
+
+    def init_internal_queue(self, initializer):
+        if self._internal_queue is None:
+            self._internal_queue = initializer()
 
     def __str__(self):
         return 'Container for source {}'.format(self._source)
@@ -107,6 +112,8 @@ class SourceContainer(Container):
 
 
 def _process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataItem:
+    if error_manager.check_errors(item):
+        return item
     time1 = time.time()
     try:
         ret = stage.process(item)
@@ -131,9 +138,14 @@ def _stage_processor(stage, in_queue, out_queue, error_manager, terminated):
             out_queue.put(item, block=True)
             in_queue.task_done()
         elif item is not None:
-            item = _process(stage, item, error_manager)
-            out_queue.put(item, block=True)
-            in_queue.task_done()
+            try:
+                item = _process(stage, item, error_manager)
+            except Exception as e:
+                raise e
+            else:
+                out_queue.put(item, block=True)
+            finally:
+                in_queue.task_done()
 
 
 class StageContainer(Container):
@@ -150,6 +162,9 @@ class StageContainer(Container):
 
     def __str__(self):
         return 'Container {} for stage {}'.format(self._name, self._stage)
+
+    def set_error_manager(self, error_manager):
+        self._error_manager = error_manager
 
     @property
     def name(self):
@@ -203,13 +218,14 @@ class StageContainer(Container):
 
 class ConcurrentStageContainer(StageContainer):
     # FIXME manage queue size, timeout, minimum time between processes
-    def __init__(self, name: str, stage: Stage, error_manager, concurrency=1, use_threads=True):
+    def __init__(self, name: str, stage: Stage, error_manager, queue_initializer, concurrency=1, use_threads=True):
         super().__init__(name, stage, error_manager)
         self._concurrency = concurrency
         self._use_threads = use_threads
         self._stage_executor = None
         self._stage_executor = self._get_stage_executor()
-        self._out_queue = self.init_queue()
+        self._queue_initializer = queue_initializer
+        self._out_queue = self.init_queue(self._queue_initializer)
         self._previous_queue = None
         self._futures = []
         self._terminate_event = None
@@ -217,8 +233,7 @@ class ConcurrentStageContainer(StageContainer):
     def _get_stage_executor(self):
         if self._stage_executor is None:
             executor = ThreadPoolExecutor if self._use_threads else ProcessPoolExecutor
-            self._stage_executor = executor(
-                max_workers=self._concurrency)  # TODO one executor per stage? why max_workers are equivalent to concurrency?
+            self._stage_executor = executor(max_workers=self._concurrency)  # TODO one executor per stage? why max_workers are equivalent to concurrency?
         return self._stage_executor
 
     def terminate(self):
@@ -226,13 +241,13 @@ class ConcurrentStageContainer(StageContainer):
 
     def set_previous_stage(self, container: Container):
         super().set_previous_stage(container)
-        self._previous_queue = self._previous.init_queue()
+        self._previous_queue = self._previous.init_queue(self._queue_initializer)
 
-    def run(self):
+    def run(self, terminate_event_initializer):
         if isinstance(self._stage_executor, ThreadPoolExecutor):
             self._terminate_event = TEvent()
         else:
-            self._terminate_event = mp_event()
+            self._terminate_event = terminate_event_initializer()
         for _ in range(self._concurrency):
             self._futures.append(
                 self._stage_executor.submit(_stage_processor, self.stage, self._previous_queue, self._out_queue,
@@ -240,6 +255,18 @@ class ConcurrentStageContainer(StageContainer):
 
     def shutdown(self):
         self._stage_executor.shutdown()
+
+    def __del__(self):
+        self.shutdown()
+
+    def check_errors(self):
+        for future in self._futures:
+            try:
+                ex = future.exception(timeout=0)
+            except concurrent.futures.TimeoutError:
+                continue
+            if ex is not None:
+                raise ex
 
     def queues_empty(self):
         return self._previous_queue.empty() and self._out_queue.empty()

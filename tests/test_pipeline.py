@@ -2,6 +2,9 @@ import copy
 import logging
 import time
 
+import pytest
+
+from smartpipeline.error import ErrorManager
 from smartpipeline.pipeline import Pipeline
 from tests.utils import FakeSource, TextDuplicator, TextReverser, ErrorStage, CriticalErrorStage, ExceptionStage, \
     TimeWaster
@@ -50,6 +53,14 @@ def test_error(caplog):
             assert isinstance(error.get_exception(), Exception)
             assert str(error) == 'test pipeline critical error' or str(error) == 'test exception'
     assert any(caplog.records)
+    with pytest.raises(Exception):
+        pipeline = Pipeline()
+        pipeline.set_error_manager(ErrorManager().raise_on_critical_error())
+        pipeline.set_source(FakeSource(10))
+        pipeline.append_stage('reverser', TextReverser())
+        pipeline.append_stage('error2', ExceptionStage())
+        for _ in pipeline.run():
+            pass
 
 
 def _check(items, num):
@@ -102,6 +113,25 @@ def test_concurrent_run():
     pipeline.append_stage('duplicator1', TextDuplicator(), concurrency=1)
     items = list(pipeline.run())
     _check(items, 100)
+
+
+def test_concurrency_errors():
+    with pytest.raises(Exception):
+        pipeline = Pipeline()
+        pipeline.set_source(FakeSource(10))
+        pipeline.append_stage('reverser', TextReverser(), concurrency=1)
+        pipeline.append_stage('error2', ExceptionStage(), concurrency=1)
+        pipeline.set_error_manager(ErrorManager().raise_on_critical_error())
+        for _ in pipeline.run():
+            pass
+    with pytest.raises(Exception):
+        pipeline = Pipeline()
+        pipeline.set_source(FakeSource(10))
+        pipeline.append_stage('reverser', TextReverser(), concurrency=1, use_threads=False)
+        pipeline.append_stage('error2', ExceptionStage(), concurrency=1, use_threads=False)
+        pipeline.set_error_manager(ErrorManager().raise_on_critical_error())
+        for _ in pipeline.run():
+            pass
 
 
 def test_concurrent_initialization():

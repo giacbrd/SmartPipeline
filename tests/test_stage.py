@@ -1,4 +1,5 @@
 import time
+from multiprocessing import Manager
 
 import pytest
 
@@ -51,10 +52,12 @@ def test_fileitem():
 
 
 def test_source_container():
+    manager = Manager()
     data = [DataItem() for _ in range(100)]
     for i, item in enumerate(data):
         item.set_metadata('id', i+1)
     container = SourceContainer()
+    container.init_internal_queue(manager.Queue)
     assert not container.is_set()
     source = ListSource(data)
     container.set(source)
@@ -67,6 +70,7 @@ def test_source_container():
         item = container.get_item()
     assert container.is_stopped()
     container = SourceContainer()
+    container.init_internal_queue(manager.Queue)
     source = ListSource(data)
     container.set(source)
     item = DataItem()
@@ -85,7 +89,7 @@ def test_source_container():
     assert container.get_item().get_metadata('id') == 1003
     assert container.get_item().get_metadata('id') == 3
     assert not container.is_stopped()
-    container.init_queue()
+    container.init_queue(manager.Queue)
     queue = container.out_queue
     item = DataItem()
     item.set_metadata('id', 1004)
@@ -96,9 +100,11 @@ def test_source_container():
 
 
 def test_stage_container():
+    manager = Manager()
     simple_item = DataItem()
     simple_item.payload['text'] = 'hello world'
     source = SourceContainer()
+    source.init_internal_queue(manager.Queue)
     source.set(ListSource([DataItem() for _ in range(20)]))
     previous = StageContainer('test0', TextGenerator(), ErrorManager())
     previous.set_previous_stage(source)
@@ -116,20 +122,21 @@ def test_stage_container():
     assert item1 != item3
     assert item3 == item4
     assert not container.is_stopped() and not container.is_terminated()
-    container.init_queue()
+    container.init_queue(manager.Queue)
     queue = container.out_queue
     queue.put(item4)
     assert item4.payload == container.get_item().payload
     source = SourceContainer()
+    source.init_internal_queue(manager.Queue)
     source.set(ListSource([simple_item]))
     container.set_previous_stage(source)
     assert container.process()
     assert isinstance(container.process(), Stop)
     assert container.is_stopped() and container.is_terminated()
 
-    container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager())
+    container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager(), manager.Queue)
     container.set_previous_stage(previous)
-    container.run()
+    container.run(manager.Event)
     previous.process()
     item5 = container.get_item(block=True)
     assert item5
@@ -145,10 +152,11 @@ def test_stage_container():
     container.shutdown()
 
     source = SourceContainer()
+    source.init_internal_queue(manager.Queue)
     source.set(ListSource([simple_item]))
-    container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager())
+    container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager(), manager.Queue)
     container.set_previous_stage(source)
-    container.run()
+    container.run(manager.Event)
     source.pop_into_queue()
     assert container.get_item(block=True)
     source.pop_into_queue()
