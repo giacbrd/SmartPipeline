@@ -18,11 +18,13 @@ setup(
     classifiers=[
         'Intended Audience :: Science/Research',
         'License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)',
-        'Operating System :: OS Independent'
+        'Operating System :: OS Independent',
+        'Programming Language :: Python :: 3',
     ],
     url='https://github.com/giacbrd/SmartPipeline',
     author='Giacomo Berardi',
     author_email='barnets@gmail.com',
     packages=['smartpipeline'],
-    tests_require=['pytest']
+    tests_require=['pytest'],
+    python_requires='>=3'
 )
