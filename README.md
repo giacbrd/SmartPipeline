@@ -1,4 +1,4 @@
-## Smart Pipeline
+## SmartPipeline
 
 A framework for developing simple data pipelines.
 
@@ -12,6 +12,11 @@ Install the source files directly:
 ```bash
 pip install -e git://github.com/giacbrd/SmartPipeline.git#egg=smartpipeline
 ```
+
+#### Documentation
+
+soon
+
 
 #### Examples
 
