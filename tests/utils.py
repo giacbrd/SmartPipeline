@@ -1,5 +1,5 @@
 import random
-import socket
+import time
 from datetime import datetime
 from time import sleep
 
@@ -30,9 +30,9 @@ class FakeSource(Source):
     def pop(self):
         self.counter += 1
         if self.counter > self.total:
-            return None
+            self.stop()
         item = DataItem()
-        item.payload.update({'text': random_text()})
+        item.payload.update({'text': random_text(), 'count': self.counter})
         return item
 
 
@@ -41,23 +41,51 @@ class ListSource(Source):
         self.items = iter(items)
 
     def pop(self):
-        return next(self.items)
+        try:
+            return next(self.items)
+        except StopIteration:
+            self.stop()
+
+
+class TextGenerator(Stage):
+
+    def process(self, item: DataItem):
+        item.payload['text'] = random_text()
+        return item
 
 
 class TextReverser(Stage):
+    def __init__(self, cycles=1):
+        self._cycles = cycles
+
     def process(self, item: DataItem):
-        item.payload['text'] = item.payload['text'][::-1]
+        for _ in range(self._cycles):
+            item.payload['text'] = item.payload['text'][::-1]
         return item
 
 
 class TextDuplicator(Stage):
+    def __init__(self, cycles=1):
+        self._cycles = cycles
+
     def process(self, item: DataItem):
-        item.payload['text_' + str(random.randint(1, 1000))] = item.payload['text']
+        for _ in range(self._cycles):
+            item.payload['text_' + str(random.randint(1, 1000))] = item.payload['text']
+        return item
+
+
+class TimeWaster(Stage):
+    def __init__(self, time=1):
+        self._time = time
+
+    def process(self, item: DataItem):
+        time.sleep(self._time)
         return item
 
 
 class ExceptionStage(Stage):
     def process(self, item: DataItem):
+        time.sleep(0.1)
         raise Exception('test exception')
 
 
@@ -77,14 +105,3 @@ def wait_service(timeout, predicate, args):
         sleep(1)
         if (datetime.now() - start).seconds > timeout:
             raise TimeoutError()
-
-
-def is_open(host, port):
-    # FIXME are we shure this works?
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.connect((host, int(port)))
-        s.shutdown(2)
-        return True
-    except:
-        return False
