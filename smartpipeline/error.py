@@ -34,14 +34,14 @@ class CriticalError(Error):
 class ErrorManager:
     def __init__(self):
         self._raise_on_critical = False
-        self._skip_on_critical = False
+        self._skip_on_critical = True
 
     def raise_on_critical_error(self):
         self._raise_on_critical = True
         return self
 
-    def skip_on_critical_error(self):
-        self._skip_on_critical = True
+    def no_skip_on_critical_error(self):
+        self._skip_on_critical = False
         return self
 
     def handle(self, error: Exception, stage, item):

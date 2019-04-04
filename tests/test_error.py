@@ -28,7 +28,3 @@ def test_manager(caplog):
     assert len(list(item.critical_errors())) == 3
     for record in caplog.records:
         assert 'stage' in record.message
-
-
-def test_logger():
-    pass

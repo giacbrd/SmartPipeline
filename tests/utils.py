@@ -85,7 +85,7 @@ class TimeWaster(Stage):
 
 class ExceptionStage(Stage):
     def process(self, item: DataItem):
-        time.sleep(0.1)
+        time.sleep(0.3)
         raise Exception('test exception')
 
 

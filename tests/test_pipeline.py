@@ -42,13 +42,13 @@ def test_error(caplog):
     pipeline = Pipeline()
     pipeline.set_source(FakeSource(10))
     pipeline.append_stage('reverser', TextReverser())
-    pipeline.append_stage('error1', CriticalErrorStage())
-    pipeline.append_stage('error2', ExceptionStage())
+    pipeline.append_stage('error1', ExceptionStage())
+    pipeline.append_stage('error2', ErrorStage())
     for item in pipeline.run():
         assert item.has_critical_errors()
         assert item.get_timing('reverser')
-        assert item.get_timing('error1')
-        assert item.get_timing('error2') >= 0.5
+        assert item.get_timing('error1') >= 0.3
+        assert not item.get_timing('error2')
         for error in item.critical_errors():
             assert isinstance(error.get_exception(), Exception)
             assert str(error) == 'test pipeline critical error' or str(error) == 'test exception'
