@@ -223,7 +223,7 @@ class ConcurrentStageContainer(StageContainer):
         self._concurrency = concurrency
         self._use_threads = use_threads
         self._stage_executor = None
-        self._stage_executor = self._get_stage_executor()
+        self._stage_executor = None
         self._queue_initializer = queue_initializer
         self._out_queue = self.init_queue(self._queue_initializer)
         self._previous_queue = None
@@ -244,17 +244,19 @@ class ConcurrentStageContainer(StageContainer):
         self._previous_queue = self._previous.init_queue(self._queue_initializer)
 
     def run(self, terminate_event_initializer):
-        if isinstance(self._stage_executor, ThreadPoolExecutor):
+        ex = self._get_stage_executor()
+        if isinstance(ex, ThreadPoolExecutor):
             self._terminate_event = TEvent()
         else:
             self._terminate_event = terminate_event_initializer()
         for _ in range(self._concurrency):
             self._futures.append(
-                self._stage_executor.submit(_stage_processor, self.stage, self._previous_queue, self._out_queue,
+                ex.submit(_stage_processor, self.stage, self._previous_queue, self._out_queue,
                                             self._error_manager, self._terminate_event))
 
     def shutdown(self):
-        self._stage_executor.shutdown()
+        if self._stage_executor is not None:
+            self._stage_executor.shutdown()
 
     def __del__(self):
         self.shutdown()

@@ -42,12 +42,12 @@ class Pipeline:
     def new_queue(self):
         if self._sync_manager is None:
             self._sync_manager = Manager()
-        return Manager().Queue()
+        return self._sync_manager.Queue()
 
     def new_event(self):
         if self._sync_manager is None:
             self._sync_manager = Manager()
-        return Manager().Event()
+        return self._sync_manager.Event()
 
     def _wait_executors(self):
         if self._init_executor is not None:
@@ -63,9 +63,12 @@ class Pipeline:
     def _shutdown(self):
         if self._init_executor is not None:
             self._init_executor.shutdown()
-        for name, stage in self._stages.items():
-            if isinstance(stage, ConcurrentStageContainer):
-                stage.shutdown()
+        # FIXME stage shutdown may raise exception
+        # for name, stage in self._stages.items():
+        #     if isinstance(stage, ConcurrentStageContainer):
+        #         stage.shutdown()
+        if self._sync_manager is not None:
+            self._sync_manager.shutdown()
 
     def __del__(self):
         self._shutdown()
@@ -80,7 +83,8 @@ class Pipeline:
             if self._enqueue_source:  # in the case the first stage is concurrent
                 self._source_container.pop_into_queue()
             for name, stage in self._stages.items():
-                if not isinstance(stage, ConcurrentStageContainer):  # concurrent stages run by theirself in threads/processes
+                # concurrent stages run by theirself in threads/processes
+                if not isinstance(stage, ConcurrentStageContainer):
                     stage.process()
                 else:
                     stage.check_errors()
@@ -89,7 +93,7 @@ class Pipeline:
                     if item is not None:
                         if not isinstance(item, Stop):
                             yield item
-                        elif not self._all_terminated():
+                        elif not self._all_terminated() and terminator is None:
                             terminator = Thread(target=self._terminate_all)
                             terminator.start()
             if self._all_empty():
@@ -180,7 +184,8 @@ class Pipeline:
         if concurrency <= 0:
             container = StageContainer(name, stage, self._error_manager)
         else:
-            container = ConcurrentStageContainer(name, stage, self._error_manager, self.new_queue, concurrency, use_threads)
+            container = ConcurrentStageContainer(name, stage, self._error_manager, self.new_queue, concurrency,
+                                                 use_threads)
             if not self._stages:
                 self._enqueue_source = True
         self._wait_for_previous(container, self._last_stage_name())  # wait that previous stage is initialized
@@ -207,7 +212,8 @@ class Pipeline:
             if concurrency <= 0:
                 container = StageContainer(name, stage, self._error_manager)
             else:
-                container = ConcurrentStageContainer(name, stage, self._error_manager, self.new_queue, concurrency, use_threads)
+                container = ConcurrentStageContainer(name, stage, self._error_manager, self.new_queue, concurrency,
+                                                     use_threads)
             self._wait_for_previous(container, last_stage_name)
             self._stages[name] = container
 
