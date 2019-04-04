@@ -1,5 +1,5 @@
-import os
 from abc import ABC, abstractmethod
+from typing import Union
 
 from smartpipeline.error import Error, CriticalError
 
@@ -13,6 +13,7 @@ class DataItem:
         self._meta = {}
         self._payload = {}
         self._timings = {}
+        self._callback_fun = None
 
     def has_errors(self):
         return any(self._errors)
@@ -32,7 +33,7 @@ class DataItem:
     def payload(self):
         return self._payload
 
-    def add_error(self, stage, exception):
+    def add_error(self, stage, exception: Union[Error, Exception]):
         if hasattr(exception, 'set_stage'):
             if not type(exception) is Error:
                 raise ValueError("Add a pipeline error or a generic exception.")
@@ -44,7 +45,7 @@ class DataItem:
             error.set_stage(stage)
             self._errors.append(error)
 
-    def add_critical_error(self, stage, exception):
+    def add_critical_error(self, stage, exception: Union[Error, Exception]):
         if hasattr(exception, 'set_stage'):
             if not type(exception) is CriticalError:
                 raise ValueError("Add a critical pipeline error or a generic exception.")
@@ -56,44 +57,43 @@ class DataItem:
             error.set_stage(stage)
             self._critical_errors.append(error)
 
-    def set_metadata(self, field, value):
+    def set_metadata(self, field: str, value):
         self._meta[field] = value
         return self
 
-    def get_metadata(self, field):
+    def get_metadata(self, field: str):
         return self._meta.get(field)
 
-    def set_timing(self, stage, ms):
+    def set_timing(self, stage: str, ms: float):
         self._timings[stage] = ms
         return self
 
-    def get_timing(self, stage):
+    def get_timing(self, stage: str):
         return self._timings.get(stage)
 
     @property
     def id(self):
-        return self._payload.get('id') or self._meta.get('id') or id(self)
+        ret = self._payload.get('id')
+        if ret is None:
+            ret = self._meta.get('id')
+            if ret is None:
+                ret = id(self)
+        return ret
 
     def __str__(self):
         return 'Data Item {} with payload {}...'.format(self.id, str(self._payload)[:100])
 
+    def set_callback(self, fun):
+        self._callback_fun = fun
 
-class FileItem(DataItem):
-    def __init__(self, path):
-        super().__init__()
-        self.path = path
-
-    def __str__(self):
-        return 'Data Item {}, file path {}, with payload {}...'.format(self.id, self.path, str(self._payload)[:100])
-
-    @property
-    def id(self):
-        return os.path.basename(self.path) or super().id()
+    def callback(self):
+        if self._callback_fun is not None:
+            self._callback_fun(self)
 
 
 class Stage(ABC):
 
-    def set_name(self, name):
+    def set_name(self, name: str):
         self._name = name
 
     @property
@@ -101,7 +101,7 @@ class Stage(ABC):
         return getattr(self, '_name', '<undefined>')
 
     @abstractmethod
-    def process(self, item: DataItem):
+    def process(self, item: DataItem) -> DataItem:
         return item
 
     def __str__(self):
@@ -111,5 +111,20 @@ class Stage(ABC):
 class Source(ABC):
 
     @abstractmethod
-    def pop(self):
+    def pop(self) -> DataItem:
         return None
+
+    def get_item(self, block=False) -> DataItem:
+        return self.pop()
+
+    def stop(self):
+        self._is_stopped = True
+
+    @property
+    def is_stopped(self):
+        return self._is_stopped
+
+
+class Stop(DataItem):
+    def __str__(self):
+        return 'Stop signal {}'.format(self.id)
