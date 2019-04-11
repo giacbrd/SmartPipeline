@@ -64,12 +64,20 @@ class DataItem:
     def get_metadata(self, field: str):
         return self._meta.get(field)
 
+    @property
+    def metadata_fields(self):
+        return self._meta.keys()
+
     def set_timing(self, stage: str, ms: float):
         self._timings[stage] = ms
         return self
 
     def get_timing(self, stage: str):
         return self._timings.get(stage)
+
+    @property
+    def timed_stages(self):
+        return self._timings.keys()
 
     @property
     def id(self):

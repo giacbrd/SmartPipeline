@@ -239,6 +239,10 @@ class ConcurrentStageContainer(StageContainer):
     def terminate(self):
         self._terminate_event.set()
 
+    @property
+    def use_threads(self):
+        return self._use_threads
+
     def set_previous_stage(self, container: Container):
         super().set_previous_stage(container)
         self._previous_queue = self._previous.init_queue(self._queue_initializer)

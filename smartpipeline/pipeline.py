@@ -60,10 +60,10 @@ class Pipeline:
             if isinstance(stage, ConcurrentStageContainer):
                 stage.run(self.new_event)
 
-    def _shutdown(self):
+    def shutdown(self):
         if self._init_executor is not None:
             self._init_executor.shutdown()
-        # FIXME stage shutdown may raise exception
+        # FIXME stage shutdown may raise exception, the executor gets stuck
         # for name, stage in self._stages.items():
         #     if isinstance(stage, ConcurrentStageContainer):
         #         stage.shutdown()
@@ -71,7 +71,7 @@ class Pipeline:
             self._sync_manager.shutdown()
 
     def __del__(self):
-        self._shutdown()
+        self.shutdown()
 
     def run(self):
         self._wait_executors()
@@ -99,7 +99,7 @@ class Pipeline:
             if self._all_empty():
                 if terminator is not None:
                     terminator.join()
-                self._shutdown()
+                self.shutdown()
                 return
 
     def _terminate_all(self):
