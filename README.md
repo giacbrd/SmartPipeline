@@ -3,6 +3,7 @@
 A framework for developing simple data pipelines.
 
 ![pipeline comic](https://imgs.xkcd.com/comics/data_pipeline.png "A pipeline comic")
+
 <sub><sup>from https://xkcd.com</sup></sub>
 
 #### Install
