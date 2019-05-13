@@ -37,7 +37,6 @@ class Pipeline:
         self._enqueue_source = False
         self._sync_manager = None
         self._source_container = SourceContainer()  # an empty source, on which we can only occasionally send items
-        self._source_container.internal_queue_initializer(self.new_queue)
 
     def new_queue(self):
         if self._sync_manager is None:

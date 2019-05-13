@@ -52,7 +52,7 @@ class SourceContainer(Container):
             self.__internal_queue = self._queue_initializer()
         return self.__internal_queue
 
-    def internal_queue_initializer(self, initializer=Manager().Queue):
+    def internal_queue_initializer(self, initializer=queue.Queue):
         self._queue_initializer = initializer
 
     def __str__(self):
