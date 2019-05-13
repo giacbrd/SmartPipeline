@@ -38,14 +38,22 @@ class SourceContainer(Container):
         self._source = None
         # use the next two attributes jointly so we do not need to use a queue if we only work synchronously
         self._next_item = None
-        self._internal_queue = None
+        self.__internal_queue = None
         self._out_queue = None
         self._stop_sent = False
         self._is_stopped = False
+        self._queue_initializer = None
 
-    def init_internal_queue(self, initializer):
-        if self._internal_queue is None:
-            self._internal_queue = initializer()
+    @property
+    def _internal_queue(self):
+        if self.__internal_queue is None:
+            if self._queue_initializer is None:
+                self.internal_queue_initializer()
+            self.__internal_queue = self._queue_initializer()
+        return self.__internal_queue
+
+    def internal_queue_initializer(self, initializer=Manager().Queue):
+        self._queue_initializer = initializer
 
     def __str__(self):
         return 'Container for source {}'.format(self._source)
