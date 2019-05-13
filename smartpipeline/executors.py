@@ -48,11 +48,11 @@ class SourceContainer(Container):
     def _internal_queue(self):
         if self.__internal_queue is None:
             if self._queue_initializer is None:
-                self.internal_queue_initializer()
+                self.set_internal_queue_initializer()
             self.__internal_queue = self._queue_initializer()
         return self.__internal_queue
 
-    def internal_queue_initializer(self, initializer=queue.Queue):
+    def set_internal_queue_initializer(self, initializer=queue.Queue):
         self._queue_initializer = initializer
 
     def __str__(self):
@@ -100,14 +100,13 @@ class SourceContainer(Container):
 
     def _get_next_item(self):
         ret = self._next_item
+        self._next_item = None
         if ret is not None:
             try:
                 self._next_item = self._internal_queue.get(block=False)
             except queue.Empty:
                 if self.is_stopped():
                     self._next_item = Stop()
-                else:
-                    self._next_item = None
             return ret
         elif self._source is not None:
             ret = self._source.pop()
