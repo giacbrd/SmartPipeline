@@ -57,7 +57,6 @@ def test_source_container():
     for i, item in enumerate(data):
         item.set_metadata('id', i+1)
     container = SourceContainer()
-    container.init_internal_queue(manager.Queue)
     assert not container.is_set()
     source = ListSource(data)
     container.set(source)
@@ -70,7 +69,6 @@ def test_source_container():
         item = container.get_item()
     assert container.is_stopped()
     container = SourceContainer()
-    container.init_internal_queue(manager.Queue)
     source = ListSource(data)
     container.set(source)
     item = DataItem()
@@ -104,7 +102,6 @@ def test_stage_container():
     simple_item = DataItem()
     simple_item.payload['text'] = 'hello world'
     source = SourceContainer()
-    source.init_internal_queue(manager.Queue)
     source.set(ListSource([DataItem() for _ in range(20)]))
     previous = StageContainer('test0', TextGenerator(), ErrorManager())
     previous.set_previous_stage(source)
@@ -127,7 +124,6 @@ def test_stage_container():
     queue.put(item4)
     assert item4.payload == container.get_item().payload
     source = SourceContainer()
-    source.init_internal_queue(manager.Queue)
     source.set(ListSource([simple_item]))
     container.set_previous_stage(source)
     assert container.process()
@@ -152,7 +148,6 @@ def test_stage_container():
     container.shutdown()
 
     source = SourceContainer()
-    source.init_internal_queue(manager.Queue)
     source.set(ListSource([simple_item]))
     container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager(), manager.Queue)
     container.set_previous_stage(source)

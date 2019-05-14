@@ -4,8 +4,6 @@ import time
 from abc import ABC, abstractmethod
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
-from multiprocessing import Manager
-from threading import Event as TEvent
 
 from smartpipeline import CONCURRENCY_WAIT
 from smartpipeline.error import ErrorManager
@@ -38,14 +36,22 @@ class SourceContainer(Container):
         self._source = None
         # use the next two attributes jointly so we do not need to use a queue if we only work synchronously
         self._next_item = None
-        self._internal_queue = None
+        self.__internal_queue = None
         self._out_queue = None
         self._stop_sent = False
         self._is_stopped = False
+        self._queue_initializer = None
 
-    def init_internal_queue(self, initializer):
-        if self._internal_queue is None:
-            self._internal_queue = initializer()
+    @property
+    def _internal_queue(self):
+        if self.__internal_queue is None:
+            if self._queue_initializer is None:
+                self.set_internal_queue_initializer()
+            self.__internal_queue = self._queue_initializer()
+        return self.__internal_queue
+
+    def set_internal_queue_initializer(self, initializer=queue.Queue):
+        self._queue_initializer = initializer
 
     def __str__(self):
         return 'Container for source {}'.format(self._source)
@@ -92,14 +98,13 @@ class SourceContainer(Container):
 
     def _get_next_item(self):
         ret = self._next_item
+        self._next_item = None
         if ret is not None:
             try:
                 self._next_item = self._internal_queue.get(block=False)
             except queue.Empty:
                 if self.is_stopped():
                     self._next_item = Stop()
-                else:
-                    self._next_item = None
             return ret
         elif self._source is not None:
             ret = self._source.pop()
@@ -245,20 +250,22 @@ class ConcurrentStageContainer(StageContainer):
 
     def set_previous_stage(self, container: Container):
         super().set_previous_stage(container)
-        self._previous_queue = self._previous.init_queue(self._queue_initializer)
+        if isinstance(self._previous, ConcurrentStageContainer) and not self._previous.use_threads:
+            self._previous_queue = self._previous.out_queue  # give priority to the preevious execut queue initializer
+        else:
+            self._previous_queue = self._previous.init_queue(self._queue_initializer)
 
     def run(self, terminate_event_initializer):
         ex = self._get_stage_executor()
-        if isinstance(ex, ThreadPoolExecutor):
-            self._terminate_event = TEvent()
-        else:
-            self._terminate_event = terminate_event_initializer()
+        self._terminate_event = terminate_event_initializer()
         for _ in range(self._concurrency):
             self._futures.append(
                 ex.submit(_stage_processor, self.stage, self._previous_queue, self._out_queue,
                                             self._error_manager, self._terminate_event))
 
     def shutdown(self):
+        for future in self._futures:
+            future.cancel()
         if self._stage_executor is not None:
             self._stage_executor.shutdown()
 
@@ -277,5 +284,14 @@ class ConcurrentStageContainer(StageContainer):
     def queues_empty(self):
         return self._previous_queue.empty() and self._out_queue.empty()
 
+    def queues_join(self):
+        return self._previous_queue.join() and self._out_queue.join()
+
     def is_terminated(self):
         return all(future.done() or future.cancelled() for future in self._futures) and self._terminate_event.is_set()
+
+    def empty_queues(self):
+        for queue in (self._previous_queue, self._out_queue):
+            while not queue.empty():
+                queue.get_nowait()
+                queue.task_done()

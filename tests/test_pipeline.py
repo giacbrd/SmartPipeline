@@ -262,7 +262,7 @@ def test_single_items(items_generator_fx):
     pipeline.append_stage('reverser2', TextReverser(), concurrency=1)
     pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2)
     item = next(items_generator_fx)
-    pipeline.process_async(item)
+    pipeline.process_async(copy.deepcopy(item))
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
@@ -285,11 +285,11 @@ def test_single_items(items_generator_fx):
     pipeline.append_stage_concurrently('reverser1', TextReverser, concurrency=1)
     pipeline.append_stage('duplicator', TextDuplicator(10), concurrency=0)
     item = next(items_generator_fx)
-    pipeline.process_async(item)
+    pipeline.process_async(copy.deepcopy(item))
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
-    assert result.payload['text'] != item.payload['text']
+    assert result.payload['text'] == item.payload['text']
 
     pipeline = Pipeline()
     pipeline.append_stage_concurrently('duplicator0', TextDuplicator)
