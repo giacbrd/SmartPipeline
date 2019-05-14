@@ -154,7 +154,7 @@ class Pipeline:
     def stop(self):
         self._source_container.stop()
         if self._pipeline_executor is not None:
-            self._pipeline_executor.shutdown()  # here it runs outside the thread of the pipeline_executor
+            self._pipeline_executor.join()  # here it runs outside the thread of the pipeline_executor
 
     def get_item(self, block=True):
         if self._out_queue is not None:
@@ -256,14 +256,14 @@ class Pipeline:
     def _start_pipeline_executor(self):
         if self._pipeline_executor is None:
             self._init_out_queue()
-            self._pipeline_executor = ThreadPoolExecutor(max_workers=1)
 
             def pipeline_runner():
                 for item in self.run():
                     item.callback()
                     self._out_queue.put(item)
 
-            self._pipeline_executor.submit(pipeline_runner)
+            self._pipeline_executor = Thread(target=pipeline_runner, daemon=True)
+            self._pipeline_executor.start()
         return self._pipeline_executor
 
     def _check_stage_name(self, name):
