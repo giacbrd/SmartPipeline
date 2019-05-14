@@ -81,6 +81,7 @@ class Pipeline:
         if self._sync_manager is not None:
             self._sync_manager.shutdown()
 
+
     def __del__(self):
         self.shutdown()
 
@@ -152,6 +153,8 @@ class Pipeline:
 
     def stop(self):
         self._source_container.stop()
+        if self._pipeline_executor is not None:
+            self._pipeline_executor.shutdown()  # here it runs outside the thread of the pipeline_executor
 
     def get_item(self, block=True):
         if self._out_queue is not None:
