@@ -153,8 +153,6 @@ class Pipeline:
 
     def stop(self):
         self._source_container.stop()
-        if self._pipeline_executor is not None:
-            self._pipeline_executor.join()  # here it runs outside the thread of the pipeline_executor
 
     def get_item(self, block=True):
         if self._out_queue is not None:
