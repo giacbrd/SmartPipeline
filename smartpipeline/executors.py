@@ -4,10 +4,11 @@ import time
 from abc import ABC, abstractmethod
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
+from typing import Sequence
 
 from smartpipeline import CONCURRENCY_WAIT
 from smartpipeline.error import ErrorManager
-from smartpipeline.stage import DataItem, Stop, Stage
+from smartpipeline.stage import DataItem, Stop, Stage, BatchStage
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -128,6 +129,32 @@ def _process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataI
         return item
     # this can't be in a finally, otherwise it would register the `error_manager.handle` time
     item.set_timing(stage.name, (time.time() - time1) * 1000.)
+    return ret
+
+
+def _process_batch(stage: BatchStage, items: Sequence[DataItem], error_manager: ErrorManager) -> Sequence[DataItem]:
+    ret = [None] + len(items)
+    to_process = {}
+    for i, item in enumerate(items):
+        if error_manager.check_errors(item):
+            ret[i] = item
+        else:
+            to_process[i] = item
+    time1 = time.time()
+    try:
+        processed = stage.process_batch(list(to_process.values()))
+    except Exception as e:
+        spent = ((time.time() - time1) * 1000.) / len(to_process)
+        for i, item in to_process.items():
+            item.set_timing(stage.name, spent)
+            error_manager.handle(e, stage, item)
+            ret[i] = item
+        return ret
+    spent = ((time.time() - time1) * 1000.) / len(to_process)
+    for n, i in enumerate(to_process.keys()):
+        item = processed[n]
+        item.set_timing(stage.name, spent)
+        ret[i] = item
     return ret
 
 
