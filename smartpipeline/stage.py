@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Union
+from typing import Union, Sequence
 
 from smartpipeline.error import Error, CriticalError
 
@@ -99,7 +99,7 @@ class DataItem:
             self._callback_fun(self)
 
 
-class Stage(ABC):
+class BaseStage(ABC):
 
     def set_name(self, name: str):
         self._name = name
@@ -108,12 +108,25 @@ class Stage(ABC):
     def name(self):
         return getattr(self, '_name', '<undefined>')
 
+    def __str__(self):
+        return 'Stage {}'.format(self.name)
+
+
+class Stage(BaseStage):
+
     @abstractmethod
     def process(self, item: DataItem) -> DataItem:
         return item
 
+
+class BatchStage(BaseStage):
+
+    @abstractmethod
+    def process_batch(self, items: Sequence[DataItem]) -> Sequence[DataItem]:
+        return items
+
     def __str__(self):
-        return 'Stage {}'.format(self.name)
+        return 'Batch stage {}'.format(self.name)
 
 
 class Source(ABC):
