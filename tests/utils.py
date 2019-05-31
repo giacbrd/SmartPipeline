@@ -4,7 +4,7 @@ from datetime import datetime
 from time import sleep
 
 from smartpipeline.error import Error, CriticalError
-from smartpipeline.stage import Source, DataItem, Stage
+from smartpipeline.stage import Source, DataItem, Stage, BatchStage
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -62,6 +62,39 @@ class TextReverser(Stage):
         for _ in range(self._cycles):
             item.payload['text'] = item.payload['text'][::-1]
         return item
+
+
+class BatchTextGenerator(BatchStage):
+
+    def process_batch(self, items):
+        for item in items:
+            item.payload['text'] = random_text()
+        return items
+
+    def timeout(self):
+        return 1.
+
+    def size(self) -> int:
+        return 10
+
+
+class BatchTextReverser(BatchStage):
+    def __init__(self, cycles=1, size=10, timeout=1.):
+        self._timeout = timeout
+        self._size = size
+        self._cycles = cycles
+
+    def process_batch(self, items):
+        for item in items:
+            for _ in range(self._cycles):
+                item.payload['text'] = item.payload['text'][::-1]
+        return items
+
+    def size(self) -> int:
+        return self._size
+
+    def timeout(self) -> float:
+        return self._timeout
 
 
 class TextDuplicator(Stage):

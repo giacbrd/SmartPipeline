@@ -4,10 +4,11 @@ from multiprocessing import Manager
 import pytest
 
 from smartpipeline.error import CriticalError, Error, ErrorManager
-from smartpipeline.executors import SourceContainer, StageContainer, ConcurrentStageContainer
+from smartpipeline.executors import SourceContainer, StageContainer, ConcurrentStageContainer, BatchStageContainer, \
+    BatchConcurrentStageContainer
 from smartpipeline.helpers import FilePathItem
 from smartpipeline.stage import DataItem, Stop
-from tests.utils import TextReverser, ListSource, TextGenerator
+from tests.utils import TextReverser, ListSource, TextGenerator, BatchTextReverser, BatchTextGenerator
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -156,6 +157,79 @@ def test_stage_container():
     assert container.get_processed(block=True)
     source.pop_into_queue()
     assert isinstance(container.get_processed(block=True), Stop)
+    container.terminate()
+    source.prepend_item(None)
+    time.sleep(1)
+    assert container.is_terminated()
+    container.shutdown()
+
+
+def test_batch_stage_container():
+    manager = Manager()
+    simple_item = DataItem()
+    simple_item.payload['text'] = 'hello world'
+    source = SourceContainer()
+    source.set(ListSource([DataItem() for _ in range(200)]))
+    previous = BatchStageContainer('test0', BatchTextGenerator(), ErrorManager())
+    previous.set_previous_stage(source)
+    container = BatchStageContainer('test1', BatchTextReverser(), ErrorManager())
+    container.set_previous_stage(previous)
+    previous.process()
+    items1 = container.process()
+    items2 = container.get_processed()
+    assert all(items1) and all(items2)
+    assert items1 == items2
+    previous.process()
+    items3 = container.process()
+    items4 = container.get_processed()
+    assert all(items3) and all(items4)
+    assert items1 != items3
+    assert items3 == items4
+    assert not container.is_stopped() and not container.is_terminated()
+    container.init_queue(manager.Queue)
+    queue = container.out_queue
+    for item in items4:
+        queue.put(item)
+    result = container.get_processed()
+    for i, item in enumerate(items4):
+        assert item.payload == result[i].payload
+    source = SourceContainer()
+    source.set(ListSource([DataItem()] * 10))
+    container.set_previous_stage(source)
+    assert container.process()
+    assert any(isinstance(item, Stop) for item in container.process())
+    assert container.is_stopped() and container.is_terminated()
+
+    container = BatchConcurrentStageContainer('test2', BatchTextReverser(), ErrorManager(), manager.Queue)
+    container.set_previous_stage(previous)
+    container.run(manager.Event)
+    previous.process()
+    items5 = container.get_processed(block=True)
+    assert all(items5)
+    previous.process()
+    items6 = container.get_processed(block=True)
+    assert all(items6)
+    assert items5 != items6
+    assert not container.is_stopped() and not container.is_terminated()
+    queue = container.out_queue
+    for item in items6:
+        queue.put(item)
+    result = container.get_processed()
+    for i, item in enumerate(items6):
+        assert item.payload == result[i].payload
+    container.terminate()
+    container.shutdown()
+
+    source = SourceContainer()
+    source.set(ListSource([DataItem()] * 10))
+    container = BatchConcurrentStageContainer('test2', BatchTextReverser(), ErrorManager(), manager.Queue)
+    container.set_previous_stage(source)
+    container.run(manager.Event)
+    for _ in range(10):
+        source.pop_into_queue()
+    assert container.get_processed()
+    source.pop_into_queue()
+    assert any(isinstance(item, Stop) for item in container.get_processed())
     container.terminate()
     source.prepend_item(None)
     time.sleep(1)

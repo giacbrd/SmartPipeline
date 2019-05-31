@@ -133,7 +133,8 @@ class BatchStage(BaseStage):
         return 0
 
     @abstractmethod
-    def timeout(self) -> int:
+    def timeout(self) -> float:
+        """Seconds to wait before flushing a batch"""
         return 0
 
 

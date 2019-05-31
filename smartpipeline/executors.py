@@ -134,7 +134,7 @@ def _process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataI
 
 
 def _process_batch(stage: BatchStage, items: Sequence[DataItem], error_manager: ErrorManager) -> Sequence[DataItem]:
-    ret = [None] + len(items)
+    ret = [None] * len(items)
     to_process = {}
     for i, item in enumerate(items):
         if error_manager.check_errors(item):
@@ -184,23 +184,27 @@ def _stage_processor(stage, in_queue, out_queue, error_manager, terminated):
 def _batch_stage_processor(stage: BatchStage, in_queue, out_queue, error_manager, terminated):
     stop_item = None
     while True:
+        is_terminated = terminated.is_set()
         if stop_item is not None:
             out_queue.put(stop_item, block=True)
             in_queue.task_done()
-            continue
-        if terminated.is_set():
+            if not is_terminated:
+                continue
+        if is_terminated:
             return
         items = []
         try:
             for _ in range(stage.size()):
-                item = in_queue.get(block=True, timeout=CONCURRENCY_WAIT)
+                item = in_queue.get(block=True, timeout=stage.timeout())
                 if item is not None:
                     items.append(item)
         except queue.Empty:
-            continue
+            if not any(items):
+                continue
         end_index = -1
         for i, item in enumerate(items):
             if isinstance(item, Stop):
+                stop_item = item
                 end_index = i
                 break
         if end_index > -1:
@@ -293,24 +297,24 @@ class BatchStageContainer(StageContainer):
             items = prev
         else:
             items = [prev]
-            for _ in range(self.stage.size() - 1):
-                items.append(self._previous.get_processed())
+        for _ in range(self.stage.size() - 1):
+            items.append(self._previous.get_processed())
         if any(isinstance(item, Stop) for item in items):
             self._is_stopped = True
-        elif any(items):
+        if any(items):
             items = _process_batch(self.stage, items, self._error_manager)
         # the processed item is set as current output of this stage
         self._put_item(items)
         return items
 
-    def get_processed(self, block=False):
+    def get_processed(self, block=True):
         ret = self._last_processed
         self._last_processed = None
         if self._out_queue is not None:
             ret = []
             for _ in range(self.stage.size()):
                 try:
-                    ret.append(self._out_queue.get(block=block))
+                    ret.append(self._out_queue.get(block=block, timeout=self.stage.timeout()))
                 except queue.Empty:
                     return ret or None
                 finally:
