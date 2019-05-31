@@ -62,11 +62,11 @@ def test_source_container():
     container.set(source)
     assert not container.is_stopped()
     assert container.is_set()
-    item = container.get_item()
+    item = container.get_processed()
     assert item.get_metadata('id') == 1
     while not isinstance(item, Stop):
         assert not container.is_stopped()
-        item = container.get_item()
+        item = container.get_processed()
     assert container.is_stopped()
     container = SourceContainer()
     source = ListSource(data)
@@ -77,24 +77,24 @@ def test_source_container():
     item = DataItem()
     item.set_metadata('id', 1002)
     container.prepend_item(item)
-    assert container.get_item().get_metadata('id') == 1001
-    assert container.get_item().get_metadata('id') == 1002
-    assert container.get_item().get_metadata('id') == 1
-    assert container.get_item().get_metadata('id') == 2
+    assert container.get_processed().get_metadata('id') == 1001
+    assert container.get_processed().get_metadata('id') == 1002
+    assert container.get_processed().get_metadata('id') == 1
+    assert container.get_processed().get_metadata('id') == 2
     item = DataItem()
     item.set_metadata('id', 1003)
     container.prepend_item(item)
-    assert container.get_item().get_metadata('id') == 1003
-    assert container.get_item().get_metadata('id') == 3
+    assert container.get_processed().get_metadata('id') == 1003
+    assert container.get_processed().get_metadata('id') == 3
     assert not container.is_stopped()
     container.init_queue(manager.Queue)
     queue = container.out_queue
     item = DataItem()
     item.set_metadata('id', 1004)
     queue.put(item)
-    assert container.get_item().get_metadata('id') == 1004
+    assert container.get_processed().get_metadata('id') == 1004
     container.pop_into_queue()
-    assert container.get_item().get_metadata('id') == 4
+    assert container.get_processed().get_metadata('id') == 4
 
 
 def test_stage_container():
@@ -109,12 +109,12 @@ def test_stage_container():
     container.set_previous_stage(previous)
     previous.process()
     item1 = container.process()
-    item2 = container.get_item()
+    item2 = container.get_processed()
     assert item1 and item2
     assert item1 == item2
     previous.process()
     item3 = container.process()
-    item4 = container.get_item()
+    item4 = container.get_processed()
     assert item3 and item4
     assert item1 != item3
     assert item3 == item4
@@ -122,7 +122,7 @@ def test_stage_container():
     container.init_queue(manager.Queue)
     queue = container.out_queue
     queue.put(item4)
-    assert item4.payload == container.get_item().payload
+    assert item4.payload == container.get_processed().payload
     source = SourceContainer()
     source.set(ListSource([simple_item]))
     container.set_previous_stage(source)
@@ -134,16 +134,16 @@ def test_stage_container():
     container.set_previous_stage(previous)
     container.run(manager.Event)
     previous.process()
-    item5 = container.get_item(block=True)
+    item5 = container.get_processed(block=True)
     assert item5
     previous.process()
-    item6 = container.get_item(block=True)
+    item6 = container.get_processed(block=True)
     assert item6
     assert item5 != item6
     assert not container.is_stopped() and not container.is_terminated()
     queue = container.out_queue
     queue.put(item6)
-    assert item6.payload == container.get_item().payload
+    assert item6.payload == container.get_processed().payload
     container.terminate()
     container.shutdown()
 
@@ -153,9 +153,9 @@ def test_stage_container():
     container.set_previous_stage(source)
     container.run(manager.Event)
     source.pop_into_queue()
-    assert container.get_item(block=True)
+    assert container.get_processed(block=True)
     source.pop_into_queue()
-    assert isinstance(container.get_item(block=True), Stop)
+    assert isinstance(container.get_processed(block=True), Stop)
     container.terminate()
     source.prepend_item(None)
     time.sleep(1)

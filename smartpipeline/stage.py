@@ -128,6 +128,14 @@ class BatchStage(BaseStage):
     def __str__(self):
         return 'Batch stage {}'.format(self.name)
 
+    @abstractmethod
+    def size(self) -> int:
+        return 0
+
+    @abstractmethod
+    def timeout(self) -> int:
+        return 0
+
 
 class Source(ABC):
 
@@ -143,7 +151,7 @@ class Source(ABC):
 
     @property
     def is_stopped(self):
-        return self._is_stopped
+        return getattr(self, '_is_stopped', False)
 
 
 class Stop(DataItem):

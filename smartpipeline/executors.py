@@ -4,11 +4,12 @@ import time
 from abc import ABC, abstractmethod
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
+from itertools import islice
 from typing import Sequence
 
 from smartpipeline import CONCURRENCY_WAIT
 from smartpipeline.error import ErrorManager
-from smartpipeline.stage import DataItem, Stop, Stage, BatchStage
+from smartpipeline.stage import DataItem, Stop, Stage, BatchStage, BaseStage
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -16,7 +17,7 @@ __author__ = 'Giacomo Berardi <giacbrd.com>'
 class Container(ABC):
 
     @abstractmethod
-    def get_item(self, block=False) -> DataItem:
+    def get_processed(self, block=False) -> DataItem:
         return None
 
     @abstractmethod
@@ -90,7 +91,7 @@ class SourceContainer(Container):
         else:
             self._next_item = item
 
-    def get_item(self, block=True):
+    def get_processed(self, block=True):
         if self._out_queue is not None:
             item = self._out_queue.get(block=block)
         else:
@@ -180,8 +181,44 @@ def _stage_processor(stage, in_queue, out_queue, error_manager, terminated):
                 in_queue.task_done()
 
 
+def _batch_stage_processor(stage: BatchStage, in_queue, out_queue, error_manager, terminated):
+    stop_item = None
+    while True:
+        if stop_item is not None:
+            out_queue.put(stop_item, block=True)
+            in_queue.task_done()
+            continue
+        if terminated.is_set():
+            return
+        items = []
+        try:
+            for _ in range(stage.size()):
+                item = in_queue.get(block=True, timeout=CONCURRENCY_WAIT)
+                if item is not None:
+                    items.append(item)
+        except queue.Empty:
+            continue
+        end_index = -1
+        for i, item in enumerate(items):
+            if isinstance(item, Stop):
+                end_index = i
+                break
+        if end_index > -1:
+            items = items[:end_index]
+        if any(items):
+            try:
+                items = _process_batch(stage, items, error_manager)
+            except Exception as e:
+                raise e
+            else:
+                for item in items:
+                    out_queue.put(item, block=True)
+            finally:
+                in_queue.task_done()
+
+
 class StageContainer(Container):
-    def __init__(self, name: str, stage: Stage, error_manager: ErrorManager):
+    def __init__(self, name: str, stage: BaseStage, error_manager: ErrorManager):
         self._error_manager = error_manager
         self._name = name
         stage.set_name(name)
@@ -216,7 +253,7 @@ class StageContainer(Container):
         return self.is_stopped()
 
     def process(self) -> DataItem:
-        item = self._previous.get_item()
+        item = self._previous.get_processed()
         if isinstance(item, Stop):
             self._is_stopped = True
         elif item is not None:
@@ -228,7 +265,7 @@ class StageContainer(Container):
     def set_previous_stage(self, container: Container):
         self._previous = container
 
-    def get_item(self, block=False):
+    def get_processed(self, block=False):
         ret = self._last_processed
         self._last_processed = None
         # if we are in a concurrent stage the items are put in this queue after processing
@@ -245,6 +282,47 @@ class StageContainer(Container):
         if self._out_queue is not None and self._last_processed is not None and not self._stop_sent:
             self._out_queue.put(self._last_processed, block=True)
         if isinstance(self._last_processed, Stop):
+            self._stop_sent = True
+
+
+class BatchStageContainer(StageContainer):
+
+    def process(self) -> Sequence[DataItem]:
+        prev = self._previous.get_processed()
+        if isinstance(prev, Sequence):
+            items = prev
+        else:
+            items = [prev]
+            for _ in range(self.stage.size() - 1):
+                items.append(self._previous.get_processed())
+        if any(isinstance(item, Stop) for item in items):
+            self._is_stopped = True
+        elif any(items):
+            items = _process_batch(self.stage, items, self._error_manager)
+        # the processed item is set as current output of this stage
+        self._put_item(items)
+        return items
+
+    def get_processed(self, block=False):
+        ret = self._last_processed
+        self._last_processed = None
+        if self._out_queue is not None:
+            ret = []
+            for _ in range(self.stage.size()):
+                try:
+                    ret.append(self._out_queue.get(block=block))
+                except queue.Empty:
+                    return ret or None
+                finally:
+                    self._out_queue.task_done()
+        return ret
+
+    def _put_item(self, items: Sequence[DataItem]):
+        self._last_processed = items
+        if self._out_queue is not None and self._last_processed is not None and not self._stop_sent:
+            for item in self._last_processed:
+                self._out_queue.put(item, block=True)
+        if any(isinstance(item, Stop) for item in self._last_processed):
             self._stop_sent = True
 
 
@@ -282,12 +360,12 @@ class ConcurrentStageContainer(StageContainer):
         else:
             self._previous_queue = self._previous.init_queue(self._queue_initializer)
 
-    def run(self, terminate_event_initializer):
+    def run(self, terminate_event_initializer, _processor=_stage_processor):
         ex = self._get_stage_executor()
         self._terminate_event = terminate_event_initializer()
         for _ in range(self._concurrency):
             self._futures.append(
-                ex.submit(_stage_processor, self.stage, self._previous_queue, self._out_queue,
+                ex.submit(_processor, self.stage, self._previous_queue, self._out_queue,
                                             self._error_manager, self._terminate_event))
 
     def shutdown(self):
@@ -322,3 +400,9 @@ class ConcurrentStageContainer(StageContainer):
             while not queue.empty():
                 queue.get_nowait()
                 queue.task_done()
+
+
+class BatchConcurrentStageContainer(ConcurrentStageContainer, BatchStageContainer):
+
+    def run(self, terminate_event_initializer, _processor=_batch_stage_processor):
+        super().run(terminate_event_initializer, _processor)

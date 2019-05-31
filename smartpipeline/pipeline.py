@@ -107,7 +107,7 @@ class Pipeline:
                         self.shutdown()
                         raise e
                 if name == last_stage_name:
-                    item = stage.get_item()
+                    item = stage.get_processed()
                     if item is not None:
                         if not isinstance(item, Stop):
                             yield item
@@ -144,7 +144,7 @@ class Pipeline:
         for name, stage in self._stages.items():
             stage.process()
             if name == last_stage_name:
-                return stage.get_item(block=True)
+                return stage.get_processed(block=True)
 
     def process_async(self, item, callback=None):
         item.set_callback(callback)
