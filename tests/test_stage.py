@@ -178,11 +178,15 @@ def test_batch_stage_container():
     items1 = container.process()
     items2 = container.get_processed()
     assert all(items1) and all(items2)
+    assert all(item.payload.get('text') for item in items1)
+    assert all(item.payload.get('text') for item in items2)
     assert items1 == items2
     previous.process()
     items3 = container.process()
     items4 = container.get_processed()
     assert all(items3) and all(items4)
+    assert all(item.payload.get('text') for item in items3)
+    assert all(item.payload.get('text') for item in items4)
     assert items1 != items3
     assert items3 == items4
     assert not container.is_stopped() and not container.is_terminated()
@@ -209,6 +213,8 @@ def test_batch_stage_container():
     previous.process()
     items6 = container.get_processed(block=True)
     assert all(items6)
+    assert all(item.payload.get('text') for item in items5)
+    assert all(item.payload.get('text') for item in items6)
     assert items5 != items6
     assert not container.is_stopped() and not container.is_terminated()
     queue = container.out_queue
@@ -229,7 +235,13 @@ def test_batch_stage_container():
         source.pop_into_queue()
     assert container.get_processed()
     source.pop_into_queue()
-    assert any(isinstance(item, Stop) for item in container.get_processed())
+    stopped = False
+    for _ in range(5):
+        stopped = any(isinstance(item, Stop) for item in container.get_processed())
+        if stopped:
+            break
+        time.sleep(1)
+    assert stopped
     container.terminate()
     source.prepend_item(None)
     time.sleep(1)

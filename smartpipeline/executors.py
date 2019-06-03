@@ -298,7 +298,9 @@ class BatchStageContainer(StageContainer):
         else:
             items = [prev]
         for _ in range(self.stage.size() - 1):
-            items.append(self._previous.get_processed())
+            item = self._previous.get_processed()
+            if item is not None:
+                items.append(item)
         if any(isinstance(item, Stop) for item in items):
             self._is_stopped = True
         if any(items):
@@ -312,13 +314,15 @@ class BatchStageContainer(StageContainer):
         self._last_processed = None
         if self._out_queue is not None:
             ret = []
-            for _ in range(self.stage.size()):
-                try:
-                    ret.append(self._out_queue.get(block=block, timeout=self.stage.timeout()))
-                except queue.Empty:
-                    return ret or None
-                finally:
-                    self._out_queue.task_done()
+            try:
+                for _ in range(self.stage.size()):
+                    item = self._out_queue.get(block=block, timeout=self.stage.timeout())
+                    if item is not None:
+                        ret.append(item)
+            except queue.Empty:
+                return ret or []
+            finally:
+                self._out_queue.task_done()
         return ret
 
     def _put_item(self, items: Sequence[DataItem]):
@@ -332,7 +336,7 @@ class BatchStageContainer(StageContainer):
 
 class ConcurrentStageContainer(StageContainer):
     # FIXME manage queue size, timeout, minimum time between processes
-    def __init__(self, name: str, stage: Stage, error_manager, queue_initializer, concurrency=1, use_threads=True):
+    def __init__(self, name: str, stage: BaseStage, error_manager, queue_initializer, concurrency=1, use_threads=True):
         super().__init__(name, stage, error_manager)
         self._concurrency = concurrency
         self._use_threads = use_threads
