@@ -94,7 +94,7 @@ class Pipeline:
         terminator = None
         while True:
             if self._enqueue_source:  # in the case the first stage is concurrent
-                self._source_container.pop_into_queue()
+                self._source_container.pop_into_queue(as_possible=True)
             for name, stage in self._stages.items():
                 # concurrent stages run by theirself in threads/processes
                 if not isinstance(stage, ConcurrentStageContainer):
@@ -108,17 +108,16 @@ class Pipeline:
                         self.shutdown()
                         raise e
                 if name == last_stage_name:
-                    items = stage.get_processed()
-                    if not isinstance(items, Sequence):
-                        items = [items]
-                    for item in items:
+                    for _ in range(stage.stage.size() if isinstance(stage, BatchStageContainer) else 1):
+                        item = stage.get_processed()
                         if item is not None:
                             if not isinstance(item, Stop):
                                 yield item
+                                continue
                             elif not self._all_terminated() and terminator is None:
                                 terminator = Thread(target=self._terminate_all)
                                 terminator.start()
-                                break
+                        break
             if self._all_empty():
                 if terminator is not None:
                     terminator.join()

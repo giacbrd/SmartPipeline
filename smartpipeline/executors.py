@@ -4,7 +4,6 @@ import time
 from abc import ABC, abstractmethod
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
-from itertools import islice
 from typing import Sequence
 
 from smartpipeline import CONCURRENCY_WAIT
@@ -38,7 +37,7 @@ class SourceContainer(Container):
         self._source = None
         # use the next two attributes jointly so we do not need to use a queue if we only work synchronously
         self._next_item = None
-        self.__internal_queue = None
+        self._internal_queue_obj = None
         self._out_queue = None
         self._stop_sent = False
         self._is_stopped = False
@@ -46,11 +45,11 @@ class SourceContainer(Container):
 
     @property
     def _internal_queue(self):
-        if self.__internal_queue is None:
+        if self._internal_queue_obj is None:
             if self._queue_initializer is None:
                 self.set_internal_queue_initializer()
-            self.__internal_queue = self._queue_initializer()
-        return self.__internal_queue
+            self._internal_queue_obj = self._queue_initializer()
+        return self._internal_queue_obj
 
     def set_internal_queue_initializer(self, initializer=queue.Queue):
         self._queue_initializer = initializer
@@ -77,12 +76,20 @@ class SourceContainer(Container):
             self._is_stopped = True
 
     # only used with concurrent stages
-    def pop_into_queue(self):
-        item = self._get_next_item()
-        if not self._stop_sent:
-            self._out_queue.put(item, block=True)
-        if isinstance(item, Stop):
-            self._stop_sent = True
+    def pop_into_queue(self, as_possible=False):
+        """
+        Pop from the source but put the item in the queue that will be read from the first stage of the pipeline
+        :param as_possible: If True, don't put just one item but as many items as the source can supply
+        """
+        while True:
+            item = self._get_next_item()
+            if item is None or self._stop_sent:
+                break
+            else:
+                self._out_queue.put(item, block=True)
+            if isinstance(item, Stop):
+                self._stop_sent = True
+                break
 
     # only used for processing single items
     def prepend_item(self, item: DataItem):
@@ -145,13 +152,13 @@ def _process_batch(stage: BatchStage, items: Sequence[DataItem], error_manager: 
     try:
         processed = stage.process_batch(list(to_process.values()))
     except Exception as e:
-        spent = ((time.time() - time1) * 1000.) / len(to_process)
+        spent = ((time.time() - time1) * 1000.) / (len(to_process) or 1.)
         for i, item in to_process.items():
             item.set_timing(stage.name, spent)
             error_manager.handle(e, stage, item)
             ret[i] = item
         return ret
-    spent = ((time.time() - time1) * 1000.) / len(to_process)
+    spent = ((time.time() - time1) * 1000.) / (len(to_process) or 1.)
     for n, i in enumerate(to_process.keys()):
         item = processed[n]
         item.set_timing(stage.name, spent)
@@ -182,15 +189,8 @@ def _stage_processor(stage, in_queue, out_queue, error_manager, terminated):
 
 
 def _batch_stage_processor(stage: BatchStage, in_queue, out_queue, error_manager, terminated):
-    stop_item = None
     while True:
-        is_terminated = terminated.is_set()
-        if stop_item is not None:
-            out_queue.put(stop_item, block=True)
-            in_queue.task_done()
-            if not is_terminated:
-                continue
-        if is_terminated:
+        if terminated.is_set():
             return
         items = []
         try:
@@ -198,17 +198,16 @@ def _batch_stage_processor(stage: BatchStage, in_queue, out_queue, error_manager
                 item = in_queue.get(block=True, timeout=stage.timeout())
                 if item is not None:
                     items.append(item)
+                in_queue.task_done()
         except queue.Empty:
             if not any(items):
                 continue
-        end_index = -1
+        stop_item = None
         for i, item in enumerate(items):
             if isinstance(item, Stop):
-                stop_item = item
-                end_index = i
-                break
-        if end_index > -1:
-            items = items[:end_index]
+                if stop_item is None:
+                    stop_item = item
+                del items[i]
         if any(items):
             try:
                 items = _process_batch(stage, items, error_manager)
@@ -217,8 +216,8 @@ def _batch_stage_processor(stage: BatchStage, in_queue, out_queue, error_manager
             else:
                 for item in items:
                     out_queue.put(item, block=True)
-            finally:
-                in_queue.task_done()
+        if stop_item:
+            out_queue.put(stop_item, block=True)
 
 
 class StageContainer(Container):
@@ -290,40 +289,57 @@ class StageContainer(Container):
 
 
 class BatchStageContainer(StageContainer):
+    def __init__(self, name: str, stage: BaseStage, error_manager: ErrorManager):
+        super().__init__(name, stage, error_manager)
+        self.__result_queue = queue.Queue()
 
     def process(self) -> Sequence[DataItem]:
         prev = self._previous.get_processed()
+        items = []
         if isinstance(prev, Sequence):
             items = prev
-        else:
+        elif prev is not None:
             items = [prev]
         for _ in range(self.stage.size() - 1):
             item = self._previous.get_processed()
             if item is not None:
                 items.append(item)
-        if any(isinstance(item, Stop) for item in items):
-            self._is_stopped = True
-        if any(items):
-            items = _process_batch(self.stage, items, self._error_manager)
-        # the processed item is set as current output of this stage
+        stop_item = None
+        if not self._is_stopped:
+            for i, item in enumerate(items):
+                if isinstance(item, Stop):
+                    self._is_stopped = True
+                    if stop_item is None:
+                        stop_item = item
+                    del items[i]
+            if any(items):
+                items = _process_batch(self.stage, items, self._error_manager)
+        if stop_item is not None:
+            items.append(stop_item)
         self._put_item(items)
         return items
 
     def get_processed(self, block=True):
-        ret = self._last_processed
-        self._last_processed = None
         if self._out_queue is not None:
-            ret = []
             try:
                 for _ in range(self.stage.size()):
                     item = self._out_queue.get(block=block, timeout=self.stage.timeout())
                     if item is not None:
-                        ret.append(item)
+                        self.__result_queue.put_nowait(item)
+                    self._out_queue.task_done()
             except queue.Empty:
-                return ret or []
-            finally:
-                self._out_queue.task_done()
-        return ret
+                try:
+                    return self.__result_queue.get_nowait()
+                except queue.Empty:
+                    return None
+        elif self._last_processed:
+            for item in self._last_processed:
+                self.__result_queue.put_nowait(item)
+            self._last_processed = None
+        try:
+            return self.__result_queue.get_nowait()
+        except queue.Empty:
+            return None
 
     def _put_item(self, items: Sequence[DataItem]):
         self._last_processed = items
