@@ -202,12 +202,8 @@ def _batch_stage_processor(stage: BatchStage, in_queue, out_queue, error_manager
         except queue.Empty:
             if not any(items):
                 continue
-        stop_item = None
-        for i, item in enumerate(items):
-            if isinstance(item, Stop):
-                if stop_item is None:
-                    stop_item = item
-                del items[i]
+        stop_items = [item for item in items if isinstance(item, Stop)]
+        items = [item for item in items if not isinstance(item, Stop)]
         if any(items):
             try:
                 items = _process_batch(stage, items, error_manager)
@@ -216,8 +212,9 @@ def _batch_stage_processor(stage: BatchStage, in_queue, out_queue, error_manager
             else:
                 for item in items:
                     out_queue.put(item, block=True)
-        if stop_item:
-            out_queue.put(stop_item, block=True)
+        if stop_items:
+            for stop_item in stop_items:
+                out_queue.put(stop_item, block=True)
 
 
 class StageContainer(Container):
@@ -305,18 +302,14 @@ class BatchStageContainer(StageContainer):
             if item is None:
                 break
             items.append(item)
-        stop_item = None
-        if not self._is_stopped:
-            for i, item in enumerate(items):
-                if isinstance(item, Stop):
-                    self._is_stopped = True
-                    if stop_item is None:
-                        stop_item = item
-                    del items[i]
-            if any(items):
-                items = _process_batch(self.stage, items, self._error_manager)
-        if stop_item is not None:
-            items.append(stop_item)
+        stop_items = [item for item in items if isinstance(item, Stop)]
+        if stop_items:
+            self._is_stopped = True
+        items = [item for item in items if not isinstance(item, Stop)]
+        if any(items):
+            items = _process_batch(self.stage, items, self._error_manager)
+        if stop_items is not None:
+            items.extend(stop_items)
         self._put_item(items)
         return items
 
