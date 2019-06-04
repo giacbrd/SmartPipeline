@@ -64,6 +64,16 @@ class TextReverser(Stage):
         return item
 
 
+class TextDuplicator(Stage):
+    def __init__(self, cycles=1):
+        self._cycles = cycles
+
+    def process(self, item: DataItem):
+        for _ in range(self._cycles):
+            item.payload['text_' + str(random.randint(1, 1000))] = item.payload['text']
+        return item
+
+
 class BatchTextGenerator(BatchStage):
     def __init__(self, size=10, timeout=.1):
         self._timeout = timeout
@@ -98,16 +108,6 @@ class BatchTextReverser(BatchStage):
 
     def timeout(self) -> float:
         return self._timeout
-
-
-class TextDuplicator(Stage):
-    def __init__(self, cycles=1):
-        self._cycles = cycles
-
-    def process(self, item: DataItem):
-        for _ in range(self._cycles):
-            item.payload['text_' + str(random.randint(1, 1000))] = item.payload['text']
-        return item
 
 
 class BatchTextDuplicator(BatchStage):

@@ -16,7 +16,7 @@ __author__ = 'Giacomo Berardi <giacbrd.com>'
 class Container(ABC):
 
     @abstractmethod
-    def get_processed(self, block=False) -> DataItem:
+    def get_processed(self, block=False, timeout=None) -> DataItem:
         return None
 
     @abstractmethod
@@ -98,9 +98,9 @@ class SourceContainer(Container):
         else:
             self._next_item = item
 
-    def get_processed(self, block=True):
+    def get_processed(self, block=True, timeout=None):
         if self._out_queue is not None:
-            item = self._out_queue.get(block=block)
+            item = self._out_queue.get(block=block, timeout=timeout)
         else:
             item = self._get_next_item()
         return item
@@ -268,13 +268,13 @@ class StageContainer(Container):
     def set_previous_stage(self, container: Container):
         self._previous = container
 
-    def get_processed(self, block=False):
+    def get_processed(self, block=False, timeout=None):
         ret = self._last_processed
         self._last_processed = None
         # if we are in a concurrent stage the items are put in this queue after processing
         if self._out_queue is not None:
             try:
-                ret = self._out_queue.get(block=block)
+                ret = self._out_queue.get(block=block, timeout=timeout)
                 self._out_queue.task_done()
             except queue.Empty:
                 return None
@@ -301,9 +301,10 @@ class BatchStageContainer(StageContainer):
         elif prev is not None:
             items = [prev]
         for _ in range(self.stage.size() - 1):
-            item = self._previous.get_processed()
-            if item is not None:
-                items.append(item)
+            item = self._previous.get_processed(timeout=self.stage.timeout())
+            if item is None:
+                break
+            items.append(item)
         stop_item = None
         if not self._is_stopped:
             for i, item in enumerate(items):
@@ -319,11 +320,11 @@ class BatchStageContainer(StageContainer):
         self._put_item(items)
         return items
 
-    def get_processed(self, block=True):
+    def get_processed(self, block=True, timeout=None):
         if self._out_queue is not None:
             try:
                 for _ in range(self.stage.size()):
-                    item = self._out_queue.get(block=block, timeout=self.stage.timeout())
+                    item = self._out_queue.get(block=False, timeout=timeout)
                     if item is not None:
                         self.__result_queue.put_nowait(item)
                     self._out_queue.task_done()
