@@ -212,7 +212,13 @@ class Pipeline:
             return constructor(name, stage, self._error_manager,
                                         self.new_queue if use_threads else self.new_mp_queue, concurrency, use_threads)
 
+    def get_stage(self, stage_name):
+        return self._stages.get(stage_name).get_stage()
+
     def append_stage(self, name, stage, concurrency=0, use_threads=True):
+        # if concurrency < 1 and isinstance(stage, BatchStage):  #FIXME here we force a BatchStage to run on a thread, we want it on the main thread
+        #     use_threads = True
+        #     concurrency = 1
         self._check_stage_name(name)
         container = self._get_container(name, stage, concurrency, use_threads)
         if concurrency > 0:
@@ -222,10 +228,10 @@ class Pipeline:
         self._stages[name] = container
         return self
 
-    def get_stage(self, stage_name):
-        return self._stages.get(stage_name).get_stage()
-
     def append_stage_concurrently(self, name, stage_class, args=None, kwargs=None, concurrency=0, use_threads=True):
+        # if concurrency < 1 and stage_class == BatchStage:  #FIXME here we force a BatchStage to run on a thread, we want it on the main thread
+        #     use_threads = True
+        #     concurrency = 1
         if kwargs is None:
             kwargs = {}
         if args is None:

@@ -291,13 +291,8 @@ class BatchStageContainer(StageContainer):
         self.__result_queue = queue.Queue()
 
     def process(self) -> Sequence[DataItem]:
-        prev = self._previous.get_processed()
         items = []
-        if isinstance(prev, Sequence):
-            items = prev
-        elif prev is not None:
-            items = [prev]
-        for _ in range(self.stage.size() - 1):
+        for _ in range(self.stage.size()):
             item = self._previous.get_processed(timeout=self.stage.timeout())
             if item is None:
                 break
@@ -374,7 +369,7 @@ class ConcurrentStageContainer(StageContainer):
     def set_previous_stage(self, container: Container):
         super().set_previous_stage(container)
         if isinstance(self._previous, ConcurrentStageContainer) and not self._previous.use_threads:
-            self._previous_queue = self._previous.out_queue  # give priority to the preevious execut queue initializer
+            self._previous_queue = self._previous.out_queue  # give priority to the previous queue initializer
         else:
             self._previous_queue = self._previous.init_queue(self._queue_initializer)
 

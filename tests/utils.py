@@ -111,12 +111,16 @@ class BatchTextReverser(BatchStage):
 
 
 class BatchTextDuplicator(BatchStage):
-    def __init__(self, cycles=1, size=10, timeout=.1):
+    def __init__(self, cycles=1, size=10, timeout=.1, check_batch=False):
+        self._check_batch = check_batch
         self._timeout = timeout
         self._size = size
         self._cycles = cycles
 
     def process_batch(self, items):
+        if self._check_batch:
+            if len(items) != self.size():
+                raise CriticalError('The current batch does not contain {} items'.format(self.size()))
         for item in items:
             for _ in range(self._cycles):
                 item.payload['text_' + str(random.randint(1, 1000))] = item.payload['text']
