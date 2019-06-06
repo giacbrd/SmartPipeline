@@ -32,6 +32,7 @@ def test_run():
 
 def test_error(caplog):
     pipeline = _pipeline()
+    pipeline.set_error_manager(ErrorManager())
     pipeline.set_source(FakeSource(10))
     pipeline.append_stage('reverser', TextReverser())
     pipeline.append_stage('error', ErrorStage())
@@ -44,6 +45,7 @@ def test_error(caplog):
         assert str(error) == 'test pipeline error'
     assert any(caplog.records)
     pipeline = _pipeline()
+    pipeline.set_error_manager(ErrorManager())
     pipeline.set_source(FakeSource(10))
     pipeline.append_stage('reverser', TextReverser())
     pipeline.append_stage('error1', ExceptionStage())
@@ -59,7 +61,6 @@ def test_error(caplog):
     assert any(caplog.records)
     with pytest.raises(Exception):
         pipeline = _pipeline()
-        pipeline.set_error_manager(ErrorManager().raise_on_critical_error())
         pipeline.set_source(FakeSource(10))
         pipeline.append_stage('reverser', TextReverser())
         pipeline.append_stage('error2', ExceptionStage())
@@ -125,7 +126,6 @@ def test_concurrency_errors():
         pipeline.set_source(FakeSource(10))
         pipeline.append_stage('reverser', TextReverser(), concurrency=1)
         pipeline.append_stage('error2', ExceptionStage(), concurrency=1)
-        pipeline.set_error_manager(ErrorManager().raise_on_critical_error())
         for _ in pipeline.run():
             pass
     with pytest.raises(Exception):
@@ -133,7 +133,6 @@ def test_concurrency_errors():
         pipeline.set_source(FakeSource(10))
         pipeline.append_stage('reverser', TextReverser(), concurrency=1, use_threads=False)
         pipeline.append_stage('error2', ExceptionStage(), concurrency=1, use_threads=False)
-        pipeline.set_error_manager(ErrorManager().raise_on_critical_error())
         for _ in pipeline.run():
             pass
 
