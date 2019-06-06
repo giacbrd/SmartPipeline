@@ -2,6 +2,7 @@ import concurrent
 import queue
 import time
 from abc import ABC, abstractmethod
+from concurrent.futures import wait
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from typing import Sequence
@@ -167,7 +168,7 @@ def _process_batch(stage: BatchStage, items: Sequence[DataItem], error_manager: 
 
 def _stage_processor(stage, in_queue, out_queue, error_manager, terminated):
     while True:
-        if terminated.is_set():
+        if terminated.is_set() and in_queue.empty():
             return
         try:
             item = in_queue.get(block=True, timeout=CONCURRENCY_WAIT)
@@ -182,29 +183,28 @@ def _stage_processor(stage, in_queue, out_queue, error_manager, terminated):
             except Exception as e:
                 raise e
             else:
-                out_queue.put(item, block=True)
+                if item is not None:
+                    out_queue.put(item, block=True)
             finally:
                 in_queue.task_done()
 
 
 def _batch_stage_processor(stage: BatchStage, in_queue, out_queue, error_manager, terminated):
     while True:
-        if terminated.is_set():
+        if terminated.is_set() and in_queue.empty():
             return
         items = []
         try:
             for _ in range(stage.size()):
                 item = in_queue.get(block=True, timeout=stage.timeout())
-                if item is not None:
+                if isinstance(item, Stop):
+                    out_queue.put(item, block=True)
+                elif item is not None:
                     items.append(item)
                 in_queue.task_done()
-                if isinstance(item, Stop):
-                    break
         except queue.Empty:
             if not any(items):
                 continue
-        stop_items = [item for item in items if isinstance(item, Stop)]
-        items = [item for item in items if not isinstance(item, Stop)]
         if any(items):
             try:
                 items = _process_batch(stage, items, error_manager)
@@ -212,10 +212,8 @@ def _batch_stage_processor(stage: BatchStage, in_queue, out_queue, error_manager
                 raise e
             else:
                 for item in items:
-                    out_queue.put(item, block=True)
-        if stop_items:
-            for stop_item in stop_items:
-                out_queue.put(stop_item, block=True)
+                    if item is not None:
+                        out_queue.put(item, block=True)
 
 
 class StageContainer(Container):
@@ -298,8 +296,6 @@ class BatchStageContainer(StageContainer):
             if item is None:
                 break
             items.append(item)
-            if isinstance(item, Stop):
-                break
         stop_items = [item for item in items if isinstance(item, Stop)]
         if stop_items:
             self._is_stopped = True
@@ -364,6 +360,7 @@ class ConcurrentStageContainer(StageContainer):
 
     def terminate(self):
         self._terminate_event.set()
+        wait(self._futures)
 
     @property
     def use_threads(self):

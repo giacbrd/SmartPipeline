@@ -118,10 +118,10 @@ class Pipeline:
                                 terminator = Thread(target=self._terminate_all)
                                 terminator.start()
                         break
-            if self._all_empty():
+            if self._all_empty():  # exit the loop only when all items have been returned
                 if terminator is not None:
                     terminator.join()
-                self.shutdown()
+                    self.shutdown()
                 return
 
     def _terminate_all(self, force=False):
@@ -133,7 +133,6 @@ class Pipeline:
                     stage.empty_queues()  # empty the queues, losing pending items
                 while not stage.queues_empty() and not stage.is_terminated():
                     time.sleep(CONCURRENCY_WAIT)
-                    continue
 
     def _all_terminated(self):
         return all(stage.is_terminated() for stage in self._stages.values())

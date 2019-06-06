@@ -164,6 +164,14 @@ def test_stage_container():
     container.shutdown()
 
 
+def _get_items(container, block=False):
+    while True:
+        item = container.get_processed(block)
+        if item is None or isinstance(item, Stop):
+            break
+        yield item
+
+
 def test_batch_stage_container():
     manager = Manager()
     simple_item = DataItem()
@@ -176,14 +184,14 @@ def test_batch_stage_container():
     container.set_previous_stage(previous)
     previous.process()
     items1 = container.process()
-    items2 = container.get_processed()
+    items2 = list(_get_items(container))
     assert all(items1) and all(items2)
     assert all(item.payload.get('text') for item in items1)
     assert all(item.payload.get('text') for item in items2)
     assert items1 == items2
     previous.process()
     items3 = container.process()
-    items4 = container.get_processed()
+    items4 = list(_get_items(container))
     assert all(items3) and all(items4)
     assert all(item.payload.get('text') for item in items3)
     assert all(item.payload.get('text') for item in items4)
@@ -194,7 +202,7 @@ def test_batch_stage_container():
     queue = container.out_queue
     for item in items4:
         queue.put(item)
-    result = container.get_processed()
+    result = list(_get_items(container))
     for i, item in enumerate(items4):
         assert item.payload == result[i].payload
     source = SourceContainer()
@@ -208,10 +216,10 @@ def test_batch_stage_container():
     container.set_previous_stage(previous)
     container.run(manager.Event)
     previous.process()
-    items5 = container.get_processed(block=True)
+    items5 = list(_get_items(container, block=True))
     assert all(items5)
     previous.process()
-    items6 = container.get_processed(block=True)
+    items6 = list(_get_items(container, block=True))
     assert all(items6)
     assert all(item.payload.get('text') for item in items5)
     assert all(item.payload.get('text') for item in items6)
@@ -220,7 +228,7 @@ def test_batch_stage_container():
     queue = container.out_queue
     for item in items6:
         queue.put(item)
-    result = container.get_processed()
+    result = list(_get_items(container))
     for i, item in enumerate(items6):
         assert item.payload == result[i].payload
     container.terminate()
@@ -233,11 +241,11 @@ def test_batch_stage_container():
     container.run(manager.Event)
     for _ in range(10):
         source.pop_into_queue()
-    assert container.get_processed()
+    assert list(_get_items(container))
     source.pop_into_queue()
     stopped = False
     for _ in range(5):
-        stopped = any(isinstance(item, Stop) for item in container.get_processed())
+        stopped = any(isinstance(item, Stop) for item in list(_get_items(container)))
         if stopped:
             break
         time.sleep(1)
