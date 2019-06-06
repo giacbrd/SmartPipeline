@@ -212,31 +212,44 @@ def test_batch_stage_container():
     assert any(isinstance(item, Stop) for item in container.process())
     assert container.is_stopped() and container.is_terminated()
 
-    container = BatchConcurrentStageContainer('test2', BatchTextReverser(), ErrorManager(), manager.Queue)
+
+def test_batch_concurrent_stage_container():
+    manager = Manager()
+    source = SourceContainer()
+    source.set(ListSource([DataItem() for _ in range(200)]))
+    previous = BatchStageContainer('test0', BatchTextGenerator(), ErrorManager())
+    previous.set_previous_stage(source)
+    container = BatchConcurrentStageContainer('test2', BatchTextReverser(timeout=1.), ErrorManager(), manager.Queue)
     container.set_previous_stage(previous)
     container.run(manager.Event)
-    previous.process()
-    items5 = list(_get_items(container, block=True))
-    assert all(items5)
-    previous.process()
-    items6 = list(_get_items(container, block=True))
-    assert all(items6)
+    for _ in range(10):
+        previous.process()
+    items5 = list(_get_items(container))
+    assert items5 and all(items5)
+    for _ in range(11):
+        previous.process()
+    items6 = list(_get_items(container))
+    assert items6 and all(items6)
     assert all(item.payload.get('text') for item in items5)
     assert all(item.payload.get('text') for item in items6)
     assert items5 != items6
     assert not container.is_stopped() and not container.is_terminated()
+    container.empty_queues()
+    container.terminate()
+
+    container = BatchConcurrentStageContainer('test2', BatchTextReverser(timeout=0.), ErrorManager(), manager.Queue)
+    container.run(manager.Event)
     queue = container.out_queue
     for item in items6:
         queue.put(item)
     result = list(_get_items(container))
     for i, item in enumerate(items6):
-        assert item.payload == result[i].payload
+        assert item.payload == result[i].payload, 'On item {}'.format(i)
     container.terminate()
-    container.shutdown()
 
     source = SourceContainer()
     source.set(ListSource([DataItem()] * 10))
-    container = BatchConcurrentStageContainer('test2', BatchTextReverser(), ErrorManager(), manager.Queue)
+    container = BatchConcurrentStageContainer('test3', BatchTextGenerator(), ErrorManager(), manager.Queue)
     container.set_previous_stage(source)
     container.run(manager.Event)
     for _ in range(10):

@@ -288,30 +288,27 @@ class BatchStageContainer(StageContainer):
     def __init__(self, name: str, stage: BaseStage, error_manager: ErrorManager):
         super().__init__(name, stage, error_manager)
         self.__result_queue = queue.Queue()
+        self._last_processed = []
 
     def process(self) -> Sequence[DataItem]:
         items = []
         for _ in range(self.stage.size()):
             item = self._previous.get_processed(timeout=self.stage.timeout())
-            if item is None:
-                break
-            items.append(item)
-        stop_items = [item for item in items if isinstance(item, Stop)]
-        if stop_items:
-            self._is_stopped = True
-        items = [item for item in items if not isinstance(item, Stop)]
+            if isinstance(item, Stop):
+                self._is_stopped = True
+                self._put_item([item])
+            elif item is not None:
+                items.append(item)
         if any(items):
             items = _process_batch(self.stage, items, self._error_manager)
-        if stop_items is not None:
-            items.extend(stop_items)
-        self._put_item(items)
+            self._put_item(items)
         return items
 
-    def get_processed(self, block=True, timeout=None):
+    def get_processed(self, block=False, timeout=None):
         if self._out_queue is not None:
             try:
                 for _ in range(self.stage.size()):
-                    item = self._out_queue.get(block=False, timeout=timeout)
+                    item = self._out_queue.get(block=block, timeout=timeout)
                     if item is not None:
                         self.__result_queue.put_nowait(item)
                     self._out_queue.task_done()
@@ -323,14 +320,14 @@ class BatchStageContainer(StageContainer):
         elif self._last_processed:
             for item in self._last_processed:
                 self.__result_queue.put_nowait(item)
-            self._last_processed = None
+            self._last_processed = []
         try:
             return self.__result_queue.get_nowait()
         except queue.Empty:
             return None
 
     def _put_item(self, items: Sequence[DataItem]):
-        self._last_processed = items
+        self._last_processed.extend(items)
         if self._out_queue is not None and self._last_processed is not None and not self._stop_sent:
             for item in self._last_processed:
                 self._out_queue.put(item, block=True)
