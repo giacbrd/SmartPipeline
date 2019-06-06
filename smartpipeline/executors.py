@@ -72,8 +72,7 @@ class SourceContainer(Container):
     def stop(self):
         if self._source is not None:
             self._source.stop()
-        else:
-            self._is_stopped = True
+        self._is_stopped = True
 
     # only used with concurrent stages
     def pop_into_queue(self, as_possible=False):
@@ -199,6 +198,8 @@ def _batch_stage_processor(stage: BatchStage, in_queue, out_queue, error_manager
                 if item is not None:
                     items.append(item)
                 in_queue.task_done()
+                if isinstance(item, Stop):
+                    break
         except queue.Empty:
             if not any(items):
                 continue
@@ -297,6 +298,8 @@ class BatchStageContainer(StageContainer):
             if item is None:
                 break
             items.append(item)
+            if isinstance(item, Stop):
+                break
         stop_items = [item for item in items if isinstance(item, Stop)]
         if stop_items:
             self._is_stopped = True
