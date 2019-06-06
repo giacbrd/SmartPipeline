@@ -99,7 +99,7 @@ def test_error(caplog):
 
 def _check(items, num):
     diff = frozenset(range(1, num + 1)).difference(item.payload['count'] for item in items)
-    assert not diff, 'Not found items {}'.format(diff)
+    assert not diff, 'Not found items: {}'.format(', '.join(str(x) for x in diff))
 
 
 def test_concurrent_run():
