@@ -164,15 +164,15 @@ def test_stage_container():
     container.shutdown()
 
 
-def _get_items(container, block=False):
+def _get_items(container):
     while True:
-        item = container.get_processed(block)
+        item = container.get_processed()
         if item is None or isinstance(item, Stop):
             break
         yield item
 
 
-def test_batch_stage_container():
+def test_batch_stage_container1():
     manager = Manager()
     simple_item = DataItem()
     simple_item.payload['text'] = 'hello world'
@@ -205,15 +205,24 @@ def test_batch_stage_container():
     result = list(_get_items(container))
     for i, item in enumerate(items4):
         assert item.payload == result[i].payload
+
+
+def test_batch_stage_container2():
     source = SourceContainer()
-    source.set(ListSource([DataItem()] * 10))
+    container = BatchStageContainer('test1', BatchTextReverser(), ErrorManager())
+    items = [DataItem() for _ in range(10)]
+    for item in items:
+        item.payload['text'] = 'something'
+    source.set(ListSource(items))
     container.set_previous_stage(source)
-    assert container.process()
-    assert any(isinstance(item, Stop) for item in container.process())
+    processed = container.process()
+    assert len(processed) == 10 and not any(isinstance(item, Stop) for item in processed)
+    reprocessed = container.process()
+    assert any(isinstance(item, Stop) for item in reprocessed)
     assert container.is_stopped() and container.is_terminated()
 
 
-def test_batch_concurrent_stage_container():
+def test_batch_concurrent_stage_container1():
     manager = Manager()
     source = SourceContainer()
     source.set(ListSource([DataItem() for _ in range(200)]))
@@ -247,22 +256,21 @@ def test_batch_concurrent_stage_container():
         assert item.payload == result[i].payload, 'On item {}'.format(i)
     container.terminate()
 
+
+def test_batch_concurrent_stage_container2():
+    manager = Manager()
     source = SourceContainer()
-    source.set(ListSource([DataItem()] * 10))
+    items = [DataItem() for _ in range(10)]
+    for item in items:
+        item.payload['text'] = 'something'
+    source.set(ListSource(items))
     container = BatchConcurrentStageContainer('test3', BatchTextGenerator(), ErrorManager(), manager.Queue)
     container.set_previous_stage(source)
     container.run(manager.Event)
     for _ in range(10):
         source.pop_into_queue()
+    time.sleep(2)
     assert list(_get_items(container))
-    source.pop_into_queue()
-    stopped = False
-    for _ in range(5):
-        stopped = any(isinstance(item, Stop) for item in list(_get_items(container)))
-        if stopped:
-            break
-        time.sleep(1)
-    assert stopped
     container.terminate()
     source.prepend_item(None)
     time.sleep(1)

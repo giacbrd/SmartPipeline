@@ -292,17 +292,19 @@ class BatchStageContainer(StageContainer):
 
     def process(self) -> Sequence[DataItem]:
         items = []
+        extra_items = []
         for _ in range(self.stage.size()):
             item = self._previous.get_processed(timeout=self.stage.timeout())
             if isinstance(item, Stop):
                 self._is_stopped = True
                 self._put_item([item])
+                extra_items.append(item)
             elif item is not None:
                 items.append(item)
         if any(items):
             items = _process_batch(self.stage, items, self._error_manager)
             self._put_item(items)
-        return items
+        return items + extra_items
 
     def get_processed(self, block=False, timeout=None):
         if self._out_queue is not None:
@@ -314,7 +316,7 @@ class BatchStageContainer(StageContainer):
                     self._out_queue.task_done()
             except queue.Empty:
                 try:
-                    return self.__result_queue.get_nowait()
+                    return self.__result_queue.get(block=block, timeout=timeout)
                 except queue.Empty:
                     return None
         elif self._last_processed:
@@ -322,7 +324,7 @@ class BatchStageContainer(StageContainer):
                 self.__result_queue.put_nowait(item)
             self._last_processed = []
         try:
-            return self.__result_queue.get_nowait()
+            return self.__result_queue.get(block=block, timeout=timeout)
         except queue.Empty:
             return None
 
@@ -341,7 +343,6 @@ class ConcurrentStageContainer(StageContainer):
         super().__init__(name, stage, error_manager)
         self._concurrency = concurrency
         self._use_threads = use_threads
-        self._stage_executor = None
         self._stage_executor = None
         self._queue_initializer = queue_initializer
         self._out_queue = self.init_queue(self._queue_initializer)

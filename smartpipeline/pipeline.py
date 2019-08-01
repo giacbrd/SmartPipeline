@@ -46,7 +46,8 @@ class Pipeline:
             self._sync_manager = Manager()
         return self._sync_manager.Queue()
 
-    def new_queue(self):
+    @staticmethod
+    def new_queue():
         return Queue()
 
     def new_mp_event(self):
@@ -54,7 +55,8 @@ class Pipeline:
             self._sync_manager = Manager()
         return self._sync_manager.Event()
 
-    def new_event(self):
+    @staticmethod
+    def new_event():
         return Event()
 
     def _wait_executors(self):
