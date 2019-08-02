@@ -129,7 +129,7 @@ def test_stage_container():
     container.set_previous_stage(source)
     assert container.process()
     assert isinstance(container.process(), Stop)
-    assert container.is_stopped() and container.is_terminated()
+    assert container.is_stopped() and not container.is_terminated()
 
     container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager(), manager.Queue)
     container.set_previous_stage(previous)
@@ -219,7 +219,7 @@ def test_batch_stage_container2():
     assert len(processed) == 10 and not any(isinstance(item, Stop) for item in processed)
     reprocessed = container.process()
     assert any(isinstance(item, Stop) for item in reprocessed)
-    assert container.is_stopped() and container.is_terminated()
+    assert container.is_stopped() and not container.is_terminated()
 
 
 def test_batch_concurrent_stage_container1():

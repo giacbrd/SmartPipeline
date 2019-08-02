@@ -329,7 +329,10 @@ def test_single_items(items_generator_fx):
     pipeline.append_stage('reverser2', BatchTextReverser())
     pipeline.append_stage('duplicator', BatchTextDuplicator())
     item = next(items_generator_fx)
-    result = pipeline.process(copy.deepcopy(item))
+    for _ in range(88):
+        pipeline.process_async(copy.deepcopy(item))
+    result = pipeline.get_item()
+    pipeline.stop()
     assert result.id == item.id
     assert result.payload['text'] != item.payload['text']
 
@@ -351,11 +354,14 @@ def test_single_items(items_generator_fx):
     pipeline.append_stage_concurrently('reverser2', BatchTextReverser, concurrency=0)
     pipeline.append_stage_concurrently('duplicator', BatchTextDuplicator, args=[10], concurrency=2, use_threads=False)
     item = next(items_generator_fx)
-    pipeline.process_async(item)
-    result = pipeline.get_item()
+    for _ in range(88):
+        pipeline.process_async(item)
+    for _ in range(88):
+        result = pipeline.get_item()
+        assert result.id == item.id
+        assert result.payload['text']
+        assert result.payload['text'] != item.payload['text']
     pipeline.stop()
-    assert result.id == item.id
-    assert result.payload['text'] != item.payload['text']
 
     pipeline = _pipeline()
     pipeline.append_stage('reverser0', BatchTextReverser(), concurrency=0)
