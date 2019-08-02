@@ -226,7 +226,7 @@ class StageContainer(Container):
         self._out_queue = None
         self._previous = None
         self._is_stopped = False
-        self._stop_sent = False
+        self._is_terminated = False
 
     def __str__(self):
         return 'Container {} for stage {}'.format(self._name, self._stage)
@@ -249,7 +249,10 @@ class StageContainer(Container):
         return self._is_stopped
 
     def is_terminated(self):
-        return self.is_stopped()
+        return self._is_terminated
+
+    def terminate(self):
+        self._is_terminated = True
 
     def process(self) -> DataItem:
         item = self._previous.get_processed()
@@ -278,10 +281,8 @@ class StageContainer(Container):
 
     def _put_item(self, item):
         self._last_processed = item
-        if self._out_queue is not None and self._last_processed is not None and not self._stop_sent:
+        if self._out_queue is not None and self._last_processed is not None and not self.is_terminated():
             self._out_queue.put(self._last_processed, block=True)
-        if isinstance(self._last_processed, Stop):
-            self._stop_sent = True
 
 
 class BatchStageContainer(StageContainer):
@@ -330,11 +331,9 @@ class BatchStageContainer(StageContainer):
 
     def _put_item(self, items: Sequence[DataItem]):
         self._last_processed.extend(items)
-        if self._out_queue is not None and self._last_processed is not None and not self._stop_sent:
+        if self._out_queue is not None and self._last_processed is not None and not self.is_terminated():
             for item in self._last_processed:
                 self._out_queue.put(item, block=True)
-        if any(isinstance(item, Stop) for item in self._last_processed):
-            self._stop_sent = True
 
 
 class ConcurrentStageContainer(StageContainer):

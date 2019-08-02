@@ -187,6 +187,7 @@ def test_mixed_concurrent_run():
     pipeline.append_stage('duplicator1', BatchTextDuplicator(check_batch=True), concurrency=0)
     items = list(pipeline.run())
     _check(items, 100)
+    pipeline = _pipeline()
     pipeline.set_source(FakeSource(100))
     pipeline.append_stage('duplicator0', TextDuplicator(), concurrency=2)
     pipeline.append_stage('reverser', TextReverser(), concurrency=2)

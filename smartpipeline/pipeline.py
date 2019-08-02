@@ -129,8 +129,8 @@ class Pipeline:
     def _terminate_all(self, force=False):
         # scroll the pipeline by its order and terminate stages after the relative queues are empty
         for stage in self._stages.values():
+            stage.terminate()
             if isinstance(stage, ConcurrentStageContainer):
-                stage.terminate()
                 if force:
                     stage.empty_queues()  # empty the queues, losing pending items
                 while not stage.queues_empty() and not stage.is_terminated():
