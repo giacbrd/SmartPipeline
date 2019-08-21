@@ -24,6 +24,10 @@ class Container(ABC):
     def is_stopped(self) -> bool:
         return False
 
+    @abstractmethod
+    def count(self):
+        return 0
+
     def init_queue(self, initializer):
         self._out_queue = initializer()
         return self._out_queue
@@ -43,6 +47,7 @@ class SourceContainer(Container):
         self._stop_sent = False
         self._is_stopped = False
         self._queue_initializer = None
+        self._counter = 0
 
     @property
     def _internal_queue(self):
@@ -103,7 +108,12 @@ class SourceContainer(Container):
             item = self._out_queue.get(block=block, timeout=timeout)
         else:
             item = self._get_next_item()
+        if item is not None and not isinstance(item, Stop):
+            self._counter += 1
         return item
+
+    def count(self):
+        return self._counter
 
     def _get_next_item(self):
         ret = self._next_item
@@ -166,7 +176,7 @@ def _process_batch(stage: BatchStage, items: Sequence[DataItem], error_manager: 
     return ret
 
 
-def _stage_processor(stage, in_queue, out_queue, error_manager, terminated):
+def _stage_processor(stage, in_queue, out_queue, error_manager, terminated, counter):
     while True:
         if terminated.is_set() and in_queue.empty():
             return
@@ -185,11 +195,13 @@ def _stage_processor(stage, in_queue, out_queue, error_manager, terminated):
             else:
                 if item is not None:
                     out_queue.put(item, block=True)
+                    if not isinstance(item, Stop):
+                        counter += 1
             finally:
                 in_queue.task_done()
 
 
-def _batch_stage_processor(stage: BatchStage, in_queue, out_queue, error_manager, terminated):
+def _batch_stage_processor(stage: BatchStage, in_queue, out_queue, error_manager, terminated, counter):
     while True:
         if terminated.is_set() and in_queue.empty():
             return
@@ -214,6 +226,8 @@ def _batch_stage_processor(stage: BatchStage, in_queue, out_queue, error_manager
                 for item in items:
                     if item is not None:
                         out_queue.put(item, block=True)
+                        if not isinstance(item, Stop):
+                            counter += 1
 
 
 class StageContainer(Container):
@@ -227,6 +241,7 @@ class StageContainer(Container):
         self._previous = None
         self._is_stopped = False
         self._is_terminated = False
+        self._counter = 0
 
     def __str__(self):
         return 'Container {} for stage {}'.format(self._name, self._stage)
@@ -279,17 +294,23 @@ class StageContainer(Container):
                 return None
         return ret
 
+    def count(self):
+        return self._counter
+
     def _put_item(self, item):
         self._last_processed = item
         if self._out_queue is not None and self._last_processed is not None and not self._is_terminated:
             self._out_queue.put(self._last_processed, block=True)
+        if item is not None and not isinstance(item, Stop):
+            self._counter += 1
 
 
 class BatchStageContainer(StageContainer):
     def __init__(self, name: str, stage: BaseStage, error_manager: ErrorManager):
         super().__init__(name, stage, error_manager)
-        self.__result_queue = queue.Queue()
+        self.__result_queue = queue.SimpleQueue()
         self._last_processed = []
+        self._counter = 0
 
     def process(self) -> Sequence[DataItem]:
         items = []
@@ -329,11 +350,16 @@ class BatchStageContainer(StageContainer):
         except queue.Empty:
             return None
 
+    def count(self):
+        return self._counter
+
     def _put_item(self, items: Sequence[DataItem]):
         self._last_processed.extend(items)
         if self._out_queue is not None and self._last_processed is not None and not self._is_terminated:
             for item in self._last_processed:
                 self._out_queue.put(item, block=True)
+                if item is not None and not isinstance(item, Stop):
+                    self._counter += 1
 
 
 class ConcurrentStageContainer(StageContainer):
@@ -348,6 +374,10 @@ class ConcurrentStageContainer(StageContainer):
         self._previous_queue = None
         self._futures = []
         self._terminate_event = None
+        self._counter = None
+
+    def count(self):
+        return self._counter.value
 
     def _get_stage_executor(self):
         if self._stage_executor is None:
@@ -370,13 +400,14 @@ class ConcurrentStageContainer(StageContainer):
         else:
             self._previous_queue = self._previous.init_queue(self._queue_initializer)
 
-    def run(self, terminate_event_initializer, _processor=_stage_processor):
+    def run(self, terminate_event_initializer, counter_initializer, _processor=_stage_processor):
         ex = self._get_stage_executor()
+        self._counter = counter_initializer()
         self._terminate_event = terminate_event_initializer()
         for _ in range(self._concurrency):
             self._futures.append(
                 ex.submit(_processor, self.stage, self._previous_queue, self._out_queue,
-                                            self._error_manager, self._terminate_event))
+                                            self._error_manager, self._terminate_event, self._counter))
 
     def shutdown(self):
         for future in self._futures:
@@ -400,7 +431,8 @@ class ConcurrentStageContainer(StageContainer):
         return self._previous_queue.empty() and self._out_queue.empty()
 
     def queues_join(self):
-        return self._previous_queue.join() and self._out_queue.join()
+        self._previous_queue.join()
+        self._out_queue.join()
 
     def is_terminated(self):
         return all(future.done() or future.cancelled() for future in self._futures) and self._terminate_event.is_set()
@@ -414,5 +446,5 @@ class ConcurrentStageContainer(StageContainer):
 
 class BatchConcurrentStageContainer(ConcurrentStageContainer, BatchStageContainer):
 
-    def run(self, terminate_event_initializer, _processor=_batch_stage_processor):
-        super().run(terminate_event_initializer, _processor)
+    def run(self, terminate_event_initializer, counter_initializer, _processor=_batch_stage_processor):
+        super().run(terminate_event_initializer, counter_initializer, _processor)

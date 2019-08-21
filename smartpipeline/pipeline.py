@@ -5,14 +5,13 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from multiprocessing import Manager
 from queue import Queue
 from threading import Thread, Event
-from typing import Sequence
 
 from smartpipeline import CONCURRENCY_WAIT
 from smartpipeline.error import ErrorManager
 from smartpipeline.executors import SourceContainer, StageContainer, ConcurrentStageContainer, BatchStageContainer, \
     BatchConcurrentStageContainer
 from smartpipeline.stage import Stop, BatchStage
-from smartpipeline.utils import OrderedDict
+from smartpipeline.utils import OrderedDict, ThreadCounter, ProcessCounter
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -59,6 +58,15 @@ class Pipeline:
     def new_event():
         return Event()
 
+    def new_mp_counter(self):
+        if self._sync_manager is None:
+            self._sync_manager = Manager()
+        return ProcessCounter(self._sync_manager)
+
+    @staticmethod
+    def new_counter():
+        return ThreadCounter()
+
     def _wait_executors(self):
         if self._init_executor is not None:
             self._init_executor.shutdown(wait=True)
@@ -69,9 +77,9 @@ class Pipeline:
         for name, stage in self._stages.items():
             if isinstance(stage, ConcurrentStageContainer):
                 if stage.use_threads:
-                    stage.run(self.new_event)
+                    stage.run(self.new_event, self.new_counter)
                 else:
-                    stage.run(self.new_mp_event)
+                    stage.run(self.new_mp_event, self.new_mp_counter)
 
     def shutdown(self):
         if self._out_queue is not None:
@@ -129,11 +137,16 @@ class Pipeline:
     def _terminate_all(self, force=False):
         # scroll the pipeline by its order and terminate stages after the relative queues are empty
         for stage in self._stages.values():
+            while stage.count() < self._source_container.count():  # ensure the stage has processed all source items
+                time.sleep(CONCURRENCY_WAIT)
             stage.terminate()
             if isinstance(stage, ConcurrentStageContainer):
                 if force:
                     stage.empty_queues()  # empty the queues, losing pending items
-                while not stage.queues_empty() and not stage.is_terminated():
+                while not stage.is_terminated():
+                    time.sleep(CONCURRENCY_WAIT)
+                stage.queues_join()
+                while not stage.queues_empty():
                     time.sleep(CONCURRENCY_WAIT)
 
     def _all_terminated(self):

@@ -121,10 +121,10 @@ class BatchTextDuplicator(BatchStage):
     def process_batch(self, items):
         if self._check_batch:
             if len(items) != self.size():
-                raise CriticalError('The current batch does not contain {} items'.format(self.size()))
+                raise CriticalError('The current batch contains {} items instead of {}'.format(len(items), self.size()))
         for item in items:
-            for _ in range(self._cycles):
-                item.payload['text_b_' + str(random.randint(1, 1000))] = item.payload['text']
+            for c in range(self._cycles):
+                item.payload['text_b_{}_{}'.format(c, random.randint(1, 1000))] = item.payload['text']
         return items
 
     def size(self) -> int:
