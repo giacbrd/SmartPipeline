@@ -8,6 +8,7 @@ from smartpipeline.executors import SourceContainer, StageContainer, ConcurrentS
     BatchConcurrentStageContainer
 from smartpipeline.helpers import FilePathItem
 from smartpipeline.stage import DataItem, Stop
+from smartpipeline.utils import ProcessCounter
 from tests.utils import TextReverser, ListSource, TextGenerator, BatchTextReverser, BatchTextGenerator
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
@@ -133,7 +134,7 @@ def test_stage_container():
 
     container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager(), manager.Queue)
     container.set_previous_stage(previous)
-    container.run(manager.Event)
+    container.run(manager.Event, lambda: ProcessCounter(manager))
     previous.process()
     item5 = container.get_processed(block=True)
     assert item5
@@ -152,7 +153,7 @@ def test_stage_container():
     source.set(ListSource([simple_item]))
     container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager(), manager.Queue)
     container.set_previous_stage(source)
-    container.run(manager.Event)
+    container.run(manager.Event, lambda: ProcessCounter(manager))
     source.pop_into_queue()
     assert container.get_processed(block=True)
     source.pop_into_queue()
@@ -230,7 +231,7 @@ def test_batch_concurrent_stage_container1():
     previous.set_previous_stage(source)
     container = BatchConcurrentStageContainer('test2', BatchTextReverser(timeout=1.), ErrorManager(), manager.Queue)
     container.set_previous_stage(previous)
-    container.run(manager.Event)
+    container.run(manager.Event, lambda: ProcessCounter(manager))
     for _ in range(10):
         previous.process()
     items5 = list(_get_items(container))
@@ -247,7 +248,7 @@ def test_batch_concurrent_stage_container1():
     container.terminate()
 
     container = BatchConcurrentStageContainer('test2', BatchTextReverser(timeout=0.), ErrorManager(), manager.Queue)
-    container.run(manager.Event)
+    container.run(manager.Event, lambda: ProcessCounter(manager))
     queue = container.out_queue
     for item in items6:
         queue.put(item)
@@ -266,7 +267,7 @@ def test_batch_concurrent_stage_container2():
     source.set(ListSource(items))
     container = BatchConcurrentStageContainer('test3', BatchTextGenerator(), ErrorManager(), manager.Queue)
     container.set_previous_stage(source)
-    container.run(manager.Event)
+    container.run(manager.Event, lambda: ProcessCounter(manager))
     for _ in range(10):
         source.pop_into_queue()
     time.sleep(2)
