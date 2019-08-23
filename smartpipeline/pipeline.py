@@ -97,6 +97,7 @@ class Pipeline:
         self.shutdown()
 
     def run(self):
+        counter = 0
         self._wait_executors()
         if not self._source_container.is_set():
             raise ValueError("Set the data source for this pipeline")
@@ -123,12 +124,14 @@ class Pipeline:
                         if item is not None:
                             if not isinstance(item, Stop):
                                 yield item
-                                continue
+                                counter += 1
                             elif not self._all_terminated() and terminator is None:
                                 terminator = Thread(target=self._terminate_all)
                                 terminator.start()
-                        break
-            if self._all_empty():  # exit the loop only when all items have been returned
+                        else:
+                            break
+            # exit the loop only when all items have been returned
+            if self._all_empty() and counter >= self._source_container.count():
                 if terminator is not None:
                     terminator.join()
                     self.shutdown()
@@ -137,8 +140,9 @@ class Pipeline:
     def _terminate_all(self, force=False):
         # scroll the pipeline by its order and terminate stages after the relative queues are empty
         for stage in self._stages.values():
-            while stage.count() < self._source_container.count():  # ensure the stage has processed all source items
-                time.sleep(CONCURRENCY_WAIT)
+            if not force:
+                while stage.count() < self._source_container.count():  # ensure the stage has processed all source items
+                    time.sleep(CONCURRENCY_WAIT)
             stage.terminate()
             if isinstance(stage, ConcurrentStageContainer):
                 if force:
@@ -243,7 +247,7 @@ class Pipeline:
         return self
 
     def append_stage_concurrently(self, name, stage_class, args=None, kwargs=None, concurrency=0, use_threads=True):
-        if concurrency < 1 and stage_class == BatchStage:  #FIXME here we force a BatchStage to run on a thread, but we would it on the main thread
+        if concurrency < 1 and issubclass(stage_class, BatchStage):  #FIXME here we force a BatchStage to run on a thread, but we would it on the main thread
             use_threads = True
             concurrency = 1
         if kwargs is None:

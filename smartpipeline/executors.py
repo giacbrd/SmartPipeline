@@ -92,6 +92,8 @@ class SourceContainer(Container):
                 break
             else:
                 self._out_queue.put(item, block=True)
+                if not isinstance(item, Stop):
+                    self._counter += 1
             if isinstance(item, Stop):
                 self._stop_sent = True
                 break
@@ -108,8 +110,8 @@ class SourceContainer(Container):
             item = self._out_queue.get(block=block, timeout=timeout)
         else:
             item = self._get_next_item()
-        if item is not None and not isinstance(item, Stop):
-            self._counter += 1
+            if item is not None and not isinstance(item, Stop):
+                self._counter += 1
         return item
 
     def count(self):
@@ -244,7 +246,7 @@ class StageContainer(Container):
         self._counter = 0
 
     def __str__(self):
-        return 'Container {} for stage {}'.format(self._name, self._stage)
+        return 'Container for stage {}'.format(self._stage)
 
     def set_error_manager(self, error_manager):
         self._error_manager = error_manager
@@ -438,10 +440,13 @@ class ConcurrentStageContainer(StageContainer):
         return all(future.done() or future.cancelled() for future in self._futures) and self._terminate_event.is_set()
 
     def empty_queues(self):
-        for queue in (self._previous_queue, self._out_queue):
-            while not queue.empty():
-                queue.get_nowait()
-                queue.task_done()
+        for q in (self._previous_queue, self._out_queue):
+            while True:
+                try:
+                    q.get_nowait()
+                    q.task_done()
+                except queue.Empty:
+                    break
 
 
 class BatchConcurrentStageContainer(ConcurrentStageContainer, BatchStageContainer):

@@ -11,7 +11,6 @@ from tests.utils import FakeSource, TextDuplicator, TextReverser, ErrorStage, Cr
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
-
 logger = logging.getLogger(__name__)
 
 
