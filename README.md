@@ -1,6 +1,6 @@
 ## SmartPipeline
 
-A framework for developing simple data pipelines.
+A framework for developing data pipelines following a simple design pattern
 
 ![pipeline comic](https://imgs.xkcd.com/comics/data_pipeline.png "A pipeline comic")
 

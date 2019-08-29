@@ -4,7 +4,7 @@ from datetime import datetime
 from time import sleep
 
 from smartpipeline.error import Error, CriticalError
-from smartpipeline.stage import Source, DataItem, Stage
+from smartpipeline.stage import Source, DataItem, Stage, BatchStage
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -31,6 +31,7 @@ class FakeSource(Source):
         self.counter += 1
         if self.counter > self.total:
             self.stop()
+            return
         item = DataItem()
         item.payload.update({'text': random_text(), 'count': self.counter})
         return item
@@ -72,6 +73,65 @@ class TextDuplicator(Stage):
         for _ in range(self._cycles):
             item.payload['text_' + str(random.randint(1, 1000))] = item.payload['text']
         return item
+
+
+class BatchTextGenerator(BatchStage):
+    def __init__(self, size=10, timeout=.1):
+        self._timeout = timeout
+        self._size = size
+
+    def process_batch(self, items):
+        for item in items:
+            item.payload['text'] = random_text()
+        return items
+
+    def timeout(self):
+        return self._timeout
+
+    def size(self) -> int:
+        return self._size
+
+
+class BatchTextReverser(BatchStage):
+    def __init__(self, cycles=1, size=10, timeout=.1):
+        self._timeout = timeout
+        self._size = size
+        self._cycles = cycles
+
+    def process_batch(self, items):
+        for item in items:
+            for _ in range(self._cycles):
+                item.payload['text'] = item.payload['text'][::-1]
+        return items
+
+    def size(self) -> int:
+        return self._size
+
+    def timeout(self) -> float:
+        return self._timeout
+
+
+class BatchTextDuplicator(BatchStage):
+    def __init__(self, cycles=1, size=10, timeout=.1, check_batch=False):
+        self._check_batch = check_batch
+        self._timeout = timeout
+        self._size = size
+        self._cycles = cycles
+
+    def process_batch(self, items):
+        if self._check_batch:
+            if len(items) != self.size():
+                raise CriticalError('The current batch contains {} items instead of {}'.format(len(items), self.size()))
+        for item in items:
+            for c in range(self._cycles):
+                item.payload['text_b_{}_{}'.format(c, random.randint(1, 1000))] = item.payload['text']
+        return items
+
+    def size(self) -> int:
+        return self._size
+
+    def timeout(self) -> float:
+        return self._timeout
 
 
 class TimeWaster(Stage):
