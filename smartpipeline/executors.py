@@ -360,8 +360,9 @@ class BatchStageContainer(StageContainer):
         if self._out_queue is not None and self._last_processed is not None and not self._is_terminated:
             for item in self._last_processed:
                 self._out_queue.put(item, block=True)
-                if item is not None and not isinstance(item, Stop):
-                    self._counter += 1
+        for item in self._last_processed:
+            if item is not None and not isinstance(item, Stop):
+                self._counter += 1
 
 
 class ConcurrentStageContainer(StageContainer):

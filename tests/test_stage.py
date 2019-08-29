@@ -110,13 +110,16 @@ def test_stage_container():
     container = StageContainer('test1', TextReverser(), ErrorManager())
     container.set_previous_stage(previous)
     previous.process()
+    assert container.count() == 0
     item1 = container.process()
     item2 = container.get_processed()
     assert item1 and item2
     assert item1 == item2
+    assert container.count() == 1
     previous.process()
     item3 = container.process()
     item4 = container.get_processed()
+    assert container.count() == 2
     assert item3 and item4
     assert item1 != item3
     assert item3 == item4
@@ -185,6 +188,7 @@ def test_batch_stage_container1():
     container.set_previous_stage(previous)
     previous.process()
     items1 = container.process()
+    assert len(items1) == container.count()
     items2 = list(_get_items(container))
     assert all(items1) and all(items2)
     assert all(item.payload.get('text') for item in items1)
@@ -236,6 +240,7 @@ def test_batch_concurrent_stage_container1():
         previous.process()
     items5 = list(_get_items(container))
     assert items5 and all(items5)
+    assert container.count() == len(items5)
     for _ in range(11):
         previous.process()
     items6 = list(_get_items(container))
