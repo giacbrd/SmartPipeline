@@ -21,4 +21,5 @@ def items_generator_fx():
             item.payload['id'] = i
             item.payload['text'] = random_text()
             yield item
+
     yield _generator()

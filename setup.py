@@ -12,19 +12,23 @@ def readfile(fname):
 
 setup(
     name='SmartPipeline',
-    version='0.1.0',
+    version='0.2.0',
     description='A framework for developing simple data pipelines',
     long_description=readfile('README.md'),
     classifiers=[
+        'Topic :: Scientific/Engineering',
+        'Intended Audience :: Developers',
         'Intended Audience :: Science/Research',
         'License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)',
         'Operating System :: OS Independent',
-        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
+        'Development Status :: 4 - Beta'
     ],
     url='https://github.com/giacbrd/SmartPipeline',
     author='Giacomo Berardi',
     author_email='barnets@gmail.com',
     packages=['smartpipeline'],
     tests_require=['pytest'],
-    python_requires='>=3'
+    python_requires='>=3.7'
 )
