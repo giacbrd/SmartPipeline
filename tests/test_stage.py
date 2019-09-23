@@ -57,7 +57,7 @@ def test_source_container():
     manager = Manager()
     data = [DataItem() for _ in range(100)]
     for i, item in enumerate(data):
-        item.set_metadata('id', i+1)
+        item.set_metadata('id', i + 1)
     container = SourceContainer()
     assert not container.is_set()
     source = ListSource(data)

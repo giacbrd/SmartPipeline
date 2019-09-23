@@ -6,7 +6,7 @@ import pytest
 
 from smartpipeline.error import ErrorManager
 from smartpipeline.pipeline import Pipeline
-from tests.utils import FakeSource, TextDuplicator, TextReverser, ErrorStage, CriticalErrorStage, ExceptionStage, \
+from tests.utils import FakeSource, TextDuplicator, TextReverser, ErrorStage, ExceptionStage, \
     TimeWaster
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
@@ -68,7 +68,7 @@ def test_error(caplog):
 
 
 def _check(items, num):
-    diff = frozenset(range(1, num+1)).difference(item.payload['count'] for item in items)
+    diff = frozenset(range(1, num + 1)).difference(item.payload['count'] for item in items)
     assert not diff, 'Not found items: {}'.format(', '.join(str(x) for x in diff))
 
 

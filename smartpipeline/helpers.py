@@ -1,4 +1,5 @@
 import os
+
 from smartpipeline.stage import Source, DataItem
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'

@@ -115,7 +115,7 @@ class Pipeline:
                         stage.check_errors()
                     except Exception as e:
                         self.stop()
-                        self._terminate_all(force=True)  #TODO in case of errors we lost pending items!
+                        self._terminate_all(force=True)  # TODO in case of errors we lost pending items!
                         self.shutdown()
                         raise e
                 if name == last_stage_name:
@@ -228,13 +228,14 @@ class Pipeline:
         else:
             constructor = BatchConcurrentStageContainer if isinstance(stage, BatchStage) else ConcurrentStageContainer
             return constructor(name, stage, self._error_manager,
-                                        self.new_queue if use_threads else self.new_mp_queue, concurrency, use_threads)
+                               self.new_queue if use_threads else self.new_mp_queue, concurrency, use_threads)
 
     def get_stage(self, stage_name):
         return self._stages.get(stage_name).get_stage()
 
     def append_stage(self, name, stage, concurrency=0, use_threads=True):
-        if concurrency < 1 and isinstance(stage, BatchStage):  #FIXME here we force a BatchStage to run on a thread, but we would it on the main thread
+        if concurrency < 1 and isinstance(stage,
+                                          BatchStage):  # FIXME here we force a BatchStage to run on a thread, but we would it on the main thread
             use_threads = True
             concurrency = 1
         self._check_stage_name(name)
@@ -247,7 +248,8 @@ class Pipeline:
         return self
 
     def append_stage_concurrently(self, name, stage_class, args=None, kwargs=None, concurrency=0, use_threads=True):
-        if concurrency < 1 and issubclass(stage_class, BatchStage):  #FIXME here we force a BatchStage to run on a thread, but we would it on the main thread
+        if concurrency < 1 and issubclass(stage_class,
+                                          BatchStage):  # FIXME here we force a BatchStage to run on a thread, but we would it on the main thread
             use_threads = True
             concurrency = 1
         if kwargs is None:

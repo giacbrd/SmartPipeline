@@ -1,6 +1,5 @@
 import threading
 from collections import OrderedDict as ODict
-from multiprocessing import Lock
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 

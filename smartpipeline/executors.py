@@ -385,7 +385,8 @@ class ConcurrentStageContainer(StageContainer):
     def _get_stage_executor(self):
         if self._stage_executor is None:
             executor = ThreadPoolExecutor if self._use_threads else ProcessPoolExecutor
-            self._stage_executor = executor(max_workers=self._concurrency)  # TODO one executor per stage? why max_workers are equivalent to concurrency?
+            self._stage_executor = executor(
+                max_workers=self._concurrency)  # TODO one executor per stage? why max_workers are equivalent to concurrency?
         return self._stage_executor
 
     def terminate(self):
@@ -410,7 +411,7 @@ class ConcurrentStageContainer(StageContainer):
         for _ in range(self._concurrency):
             self._futures.append(
                 ex.submit(_processor, self.stage, self._previous_queue, self._out_queue,
-                                            self._error_manager, self._terminate_event, self._counter))
+                          self._error_manager, self._terminate_event, self._counter))
 
     def shutdown(self):
         for future in self._futures:

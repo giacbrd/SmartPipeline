@@ -37,7 +37,7 @@ they have to be explicitly raised.
 A `CriticalError` is raised for any non captured exception, or explicitly, 
 it stops the processing of an item so the pipeline starts with the next one.
 
-Soon the Long Documentation!
+Soon the complete documentation!
 
 #### Install
 

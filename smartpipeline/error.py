@@ -2,7 +2,6 @@ import logging
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
-
 logger = logging.getLogger(__name__)
 
 
