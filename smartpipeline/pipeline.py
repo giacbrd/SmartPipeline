@@ -234,8 +234,8 @@ class Pipeline:
         return self._stages.get(stage_name).get_stage()
 
     def append_stage(self, name, stage, concurrency=0, use_threads=True):
-        if concurrency < 1 and isinstance(stage,
-                                          BatchStage):  # FIXME here we force a BatchStage to run on a thread, but we would it on the main thread
+        # FIXME here we force a BatchStage to run on a thread, but we would it on the main thread
+        if concurrency < 1 and isinstance(stage, BatchStage):
             use_threads = True
             concurrency = 1
         self._check_stage_name(name)
@@ -248,8 +248,8 @@ class Pipeline:
         return self
 
     def append_stage_concurrently(self, name, stage_class, args=None, kwargs=None, concurrency=0, use_threads=True):
-        if concurrency < 1 and issubclass(stage_class,
-                                          BatchStage):  # FIXME here we force a BatchStage to run on a thread, but we would it on the main thread
+        # FIXME here we force a BatchStage to run on a thread, but we would it on the main thread
+        if concurrency < 1 and issubclass(stage_class, BatchStage):
             use_threads = True
             concurrency = 1
         if kwargs is None:

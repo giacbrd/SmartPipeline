@@ -41,7 +41,7 @@ Soon the complete documentation!
 
 #### Install
 
-Install the source files directly, soon on PyPI:
+Install the source files directly (soon on PyPI):
 
 ```bash
 pip install -e git://github.com/giacbrd/SmartPipeline.git#egg=smartpipeline
@@ -62,7 +62,7 @@ from elasticsearch import Elasticsearch
 import logging, re
 
 class ESErrorLogger(ErrorManager):
-    """An error manager that logs errors into an Elasticsearch index"""
+    """An error manager that write error info into an Elasticsearch index"""
     def __init__(self, es_host, es_index):
         super().__init__()
         self.es_client = Elasticsearch(es_host)
