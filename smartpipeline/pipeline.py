@@ -231,7 +231,7 @@ class Pipeline:
                                self.new_queue if use_threads else self.new_mp_queue, concurrency, use_threads)
 
     def get_stage(self, stage_name):
-        return self._stages.get(stage_name).get_stage()
+        return self._stages.get(stage_name).stage
 
     def append_stage(self, name, stage, concurrency=0, use_threads=True):
         # FIXME here we force a BatchStage to run on a thread, but we would it on the main thread

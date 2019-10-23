@@ -259,9 +259,6 @@ class StageContainer(Container):
     def stage(self):
         return self._stage
 
-    def get_stage(self):
-        return self._stage
-
     def is_stopped(self):
         return self._is_stopped
 
@@ -451,6 +448,7 @@ class ConcurrentStageContainer(StageContainer):
                     break
 
 
+#FIXME use mixins here?
 class BatchConcurrentStageContainer(ConcurrentStageContainer, BatchStageContainer):
 
     def run(self, terminate_event_initializer, counter_initializer, _processor=_batch_stage_processor):

@@ -2,8 +2,6 @@ import logging
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
-logger = logging.getLogger(__name__)
-
 
 class Error(Exception):
 
@@ -34,6 +32,7 @@ class ErrorManager:
     def __init__(self):
         self._raise_on_critical = False
         self._skip_on_critical = True
+        self._logger = logging.getLogger(self.__class__.__name__)
 
     def raise_on_critical_error(self):
         self._raise_on_critical = True
@@ -58,7 +57,7 @@ class ErrorManager:
             # any exception is a critical error
             item.add_critical_error(stage, error)
         exc_info = (type(error), error, error.__traceback__)
-        logger.exception(self._generate_message(stage, item), exc_info=exc_info)
+        self._logger.exception(self._generate_message(stage, item), exc_info=exc_info)
         return self.check_errors(item)
 
     def _generate_message(self, stage, item):

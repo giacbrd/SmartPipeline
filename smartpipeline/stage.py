@@ -98,7 +98,7 @@ class DataItem:
         if self._callback_fun is not None:
             self._callback_fun(self)
 
-
+#FIXME refactor stages with mixins? one for `name`, one for `process`
 class BaseStage(ABC):
 
     def set_name(self, name: str):
@@ -106,10 +106,7 @@ class BaseStage(ABC):
 
     @property
     def name(self):
-        return getattr(self, '_name', '<undefined>')
-
-    def __str__(self):
-        return 'Stage {}'.format(self.name)
+        return getattr(self, '_name', f'{self.__class__.name}_{id(self)}')
 
 
 class Stage(BaseStage):
@@ -117,6 +114,9 @@ class Stage(BaseStage):
     @abstractmethod
     def process(self, item: DataItem) -> DataItem:
         return item
+
+    def __str__(self):
+        return 'Stage {}'.format(self.name)
 
 
 class BatchStage(BaseStage):
