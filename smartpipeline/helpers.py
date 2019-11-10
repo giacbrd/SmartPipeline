@@ -1,6 +1,7 @@
 import os
 
-from smartpipeline.stage import Source, DataItem
+from smartpipeline.stage import Source
+from smartpipeline.item import DataItem
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -21,6 +22,8 @@ class LocalFilesSource(Source):
         if file_path:
             item = FilePathItem(file_path)
             return item
+        else:
+            self.stop()
 
 
 class FilePathItem(DataItem):
@@ -29,7 +32,7 @@ class FilePathItem(DataItem):
         self.path = path
 
     def __str__(self):
-        return 'Data Item {}, file path {}, with payload {}...'.format(self.id, self.path, str(self._payload)[:100])
+        return f'Data Item {self.id}, file path {self.path}, with payload {self.payload_snippet()}...'
 
     @property
     def id(self):

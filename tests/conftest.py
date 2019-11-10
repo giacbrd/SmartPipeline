@@ -2,7 +2,7 @@ import itertools
 
 import pytest
 
-from smartpipeline.stage import DataItem
+from smartpipeline.item import DataItem
 from tests.utils import TEXT_SAMPLES, random_text
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'

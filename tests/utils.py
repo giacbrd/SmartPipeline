@@ -4,7 +4,8 @@ from datetime import datetime
 from time import sleep
 
 from smartpipeline.error import Error, CriticalError
-from smartpipeline.stage import Source, DataItem, Stage, BatchStage
+from smartpipeline.stage import Source, Stage, BatchStage
+from smartpipeline.item import DataItem
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 

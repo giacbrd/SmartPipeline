@@ -1,5 +1,5 @@
 from smartpipeline.error import ErrorManager, Error, CriticalError
-from smartpipeline.stage import DataItem
+from smartpipeline.item import DataItem
 from tests.utils import TextReverser
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
