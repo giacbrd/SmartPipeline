@@ -1,4 +1,5 @@
 import threading
+from abc import ABC, abstractmethod
 from collections import OrderedDict as ODict
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
@@ -10,7 +11,18 @@ class OrderedDict(ODict):
         return next(reversed(self.keys()))
 
 
-class ThreadCounter:
+class ConcurrentCounter(ABC):
+
+    @abstractmethod
+    def __iadd__(self, incr):
+        return self
+
+    @abstractmethod
+    def value(self):
+        return 0
+
+
+class ThreadCounter(ConcurrentCounter):
     def __init__(self):
         self._value = 0
         self._lock = threading.Lock()
@@ -26,7 +38,7 @@ class ThreadCounter:
             return self._value
 
 
-class ProcessCounter:
+class ProcessCounter(ConcurrentCounter):
     def __init__(self, manager):
         self._value = manager.Value('i', 0)
         self._lock = manager.Lock()

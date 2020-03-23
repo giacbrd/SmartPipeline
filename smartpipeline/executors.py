@@ -1,13 +1,16 @@
 import queue
 import time
-from typing import Sequence
+from threading import Event
+from typing import Sequence, Callable, Union
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error import ErrorManager
 from smartpipeline.item import DataItem, Stop
-from smartpipeline.stage import Stage, BatchStage
+from smartpipeline.stage import Stage, BatchStage, ItemsQueue
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
+
+from smartpipeline.utils import ConcurrentCounter
 
 
 def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataItem:
@@ -51,7 +54,8 @@ def process_batch(stage: BatchStage, items: Sequence[DataItem], error_manager: E
     return ret
 
 
-def stage_executor(stage, in_queue, out_queue, error_manager, terminated, counter):
+def stage_executor(stage: Stage, in_queue: ItemsQueue, out_queue: ItemsQueue, error_manager: ErrorManager,
+                   terminated: Event, counter: ConcurrentCounter):
     while True:
         if terminated.is_set() and in_queue.empty():
             return
@@ -76,7 +80,8 @@ def stage_executor(stage, in_queue, out_queue, error_manager, terminated, counte
                 in_queue.task_done()
 
 
-def batch_stage_executor(stage: BatchStage, in_queue, out_queue, error_manager, terminated, counter):
+def batch_stage_executor(stage: BatchStage, in_queue: ItemsQueue, out_queue: ItemsQueue, error_manager: ErrorManager,
+                         terminated: Event, counter: ConcurrentCounter):
     while True:
         if terminated.is_set() and in_queue.empty():
             return
@@ -103,3 +108,7 @@ def batch_stage_executor(stage: BatchStage, in_queue, out_queue, error_manager, 
                         out_queue.put(item, block=True)
                         if not isinstance(item, Stop):
                             counter += 1
+
+
+StageExecutor = Callable[
+    [Union[Stage, BatchStage], ItemsQueue, ItemsQueue, ErrorManager, Event, ConcurrentCounter], None]

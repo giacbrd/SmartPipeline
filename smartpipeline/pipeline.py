@@ -103,7 +103,7 @@ class Pipeline:
         terminator = None
         while True:
             if self._enqueue_source:  # in the case the first stage is concurrent
-                self._source_container.pop_into_queue(as_possible=True)
+                self._source_container.pop_into_queue()
             for name, container in self._containers.items():
                 # concurrent stages run by themself in threads/processes
                 if not isinstance(container, (ConcurrentStageContainer, BatchConcurrentStageContainer)):
@@ -113,7 +113,7 @@ class Pipeline:
                         container.check_errors()
                     except Exception as e:
                         self.stop()
-                        self._terminate_all(force=True)  # TODO in case of errors we lost pending items!
+                        self._terminate_all(force=True)  # TODO in case of errors we loose pending items!
                         self.shutdown()
                         raise e
                 if name == last_stage_name:
@@ -139,12 +139,13 @@ class Pipeline:
         # scroll the pipeline by its order and terminate stages after the relative queues are empty
         for container in self._containers.values():
             if not force:
-                while container.count() < self._source_container.count():  # ensure the stage has processed all source items
+                # ensure the stage has processed all source items
+                while container.count() < self._source_container.count():
                     time.sleep(wait_seconds)
             container.terminate()
             if isinstance(container, ConcurrentStageContainer):
-                if force:
-                    container.empty_queues()  # empty the queues, losing pending items
+                if force:  # empty the queues, losing pending items
+                    container.empty_queues()
                 while not container.is_terminated():
                     time.sleep(wait_seconds)
                 container.queues_join()
@@ -237,7 +238,7 @@ class Pipeline:
         return self._containers.get(stage_name).stage
 
     def append_stage(self, name, stage, concurrency=0, use_threads=True):
-        # FIXME here we force a BatchStage to run on a thread, but we would it on the main thread
+        # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and isinstance(stage, BatchStage):
             use_threads = True
             concurrency = 1
@@ -251,7 +252,7 @@ class Pipeline:
         return self
 
     def append_stage_concurrently(self, name, stage_class, args=None, kwargs=None, concurrency=0, use_threads=True):
-        # FIXME here we force a BatchStage to run on a thread, but we would it on the main thread
+        # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and issubclass(stage_class, BatchStage):
             use_threads = True
             concurrency = 1

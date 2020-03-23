@@ -1,5 +1,4 @@
-Contributing
-============
+# Contributing
 
 - We follow the Git Flow scheme
 - Anyone can contribute through Pull Requests

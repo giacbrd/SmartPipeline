@@ -54,14 +54,14 @@ class ErrorManager:
         elif type(error) is CriticalError:
             item.add_critical_error(stage, error)
         else:
-            # any exception is a critical error
+            # any unmanaged exception is a critical error
             item.add_critical_error(stage, error)
         exc_info = (type(error), error, error.__traceback__)
         self._logger.exception(self._generate_message(stage, item), exc_info=exc_info)
         return self.check_errors(item)
 
     def _generate_message(self, stage, item):
-        return 'The stage {} ha generated an error on item {}'.format(stage, item)
+        return 'The stage {} has generated an error on item {}'.format(stage, item)
 
     def check_errors(self, item):
         if item.has_critical_errors():

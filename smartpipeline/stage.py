@@ -1,3 +1,4 @@
+from queue import Queue
 from abc import ABC, abstractmethod
 from typing import Sequence
 
@@ -66,3 +67,6 @@ class Source(ABC):
     @property
     def is_stopped(self):
         return getattr(self, '_is_stopped', False)
+
+
+ItemsQueue = "Queue[DataItem]"

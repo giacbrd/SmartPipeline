@@ -14,7 +14,7 @@ in which tasks are sequentially encapsulated in pipeline stages.
 
 It also give you a lot of features more, like concurrency and parallelization on pipeline stages.
 
-An optimal solution for fast data analysis prototypes, which can be immediately ready for production too.
+An optimal solution for fast data analysis prototypes that can be immediately ready for production.
 
 ##### API
 
@@ -49,7 +49,8 @@ pip install -e git://github.com/giacbrd/SmartPipeline.git#egg=smartpipeline
 
 #### Examples
 
-Example of a pipeline that processes local files, extracts texts and finds VAT codes occurrences.
+Example of a pipeline that processes local files contained in a `document_files` directory, 
+extracts texts and finds VAT codes occurrences.
 Finally it indexes the result in an Elasticsearch cluster.
 Errors are eventually logged in the Elasticsearch cluster.
 
@@ -62,7 +63,7 @@ from elasticsearch import Elasticsearch
 import logging, re
 
 class ESErrorLogger(ErrorManager):
-    """An error manager that write error info into an Elasticsearch index"""
+    """An error manager that writes error info into an Elasticsearch index"""
     def __init__(self, es_host, es_index):
         super().__init__()
         self.es_client = Elasticsearch(es_host)
@@ -80,6 +81,7 @@ class ESErrorLogger(ErrorManager):
         })
 
 class TextExtractor(Stage):
+    """Read the text content of files"""
     def process(self, item: FilePathItem) -> DataItem:
         try:
             with open(item.path) as f:
@@ -89,6 +91,7 @@ class TextExtractor(Stage):
         return item
 
 class VatFinder(Stage):
+    """Identify Italian VAT codes in texts"""
     def __init__(self):
         self.regex = re.compile('^[A-Za-z]{2,4}(?=.{2,12}$)[-_\s0-9]*(?:[a-zA-Z][-_\s0-9]*){0,2}$')
 
@@ -100,6 +103,7 @@ class VatFinder(Stage):
         return item
 
 class Indexer(Stage):
+    """Write item payloads into an Elasticsearch index"""
     def __init__(self, es_host, es_index):
         self.es_client = Elasticsearch(es_host)
         self.es_index = es_index
@@ -111,7 +115,7 @@ class Indexer(Stage):
 pipeline = Pipeline().set_error_manager(
     ESErrorLogger(es_host='localhost:9200', es_index='error_logs').raise_on_critical_error()
     ).set_source(
-        LocalFilesSource('./document_files', postfix='.pdf')
+        LocalFilesSource('./document_files', postfix='.html')
     ).append_stage(
         'text_extractor', 
         TextExtractor(), concurrency=2
