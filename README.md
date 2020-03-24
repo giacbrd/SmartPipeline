@@ -6,6 +6,8 @@ A framework for developing data pipelines following a simple design pattern
 
 <sub><sup>from https://xkcd.com</sup></sub>
 
+[![Documentation Status](https://readthedocs.org/projects/pip/badge/?version=stable)](http://pip.pypa.io/en/stable/?badge=stable)
+
 #### Short Documentation
 
 Imagine you have to perform several processes on data, a typical *Task Queues* application.
