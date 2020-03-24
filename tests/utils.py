@@ -3,7 +3,7 @@ import time
 from datetime import datetime
 from time import sleep
 
-from smartpipeline.error import Error, CriticalError
+from smartpipeline.exceptions import Error, CriticalError
 from smartpipeline.stage import Source, Stage, BatchStage
 from smartpipeline.item import DataItem
 

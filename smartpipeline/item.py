@@ -1,7 +1,8 @@
-from typing import Union
+from __future__ import annotations
 
+from typing import Union, Generator, Any, KeysView, Callable, Dict
 from smartpipeline.defaults import PAYLOAD_SNIPPET_SIZE
-from smartpipeline.error import Error, CriticalError
+from smartpipeline.exceptions import Error, CriticalError
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -15,28 +16,28 @@ class DataItem:
         self._timings = {}
         self._callback_fun = None
 
-    def payload_snippet(self, max_size=PAYLOAD_SNIPPET_SIZE):
+    def payload_snippet(self, max_size: int = PAYLOAD_SNIPPET_SIZE):
         return str(self.payload)[:max_size]
 
-    def has_errors(self):
+    def has_errors(self) -> bool:
         return any(self._errors)
 
-    def has_critical_errors(self):
+    def has_critical_errors(self) -> bool:
         return any(self._critical_errors)
 
-    def errors(self):
+    def errors(self) -> Generator[Error, None, None]:
         for e in self._errors:
             yield e
 
-    def critical_errors(self):
+    def critical_errors(self) -> Generator[CriticalError, None, None]:
         for e in self._critical_errors:
             yield e
 
     @property
-    def payload(self):
+    def payload(self) -> Dict[str, Any]:
         return self._payload
 
-    def add_error(self, stage, exception: Union[Error, Exception]):
+    def add_error(self, stage: str, exception: Union[Error, Exception]):
         if hasattr(exception, 'set_stage'):
             if not type(exception) is Error:
                 raise ValueError("Add a pipeline error or a generic exception.")
@@ -48,7 +49,7 @@ class DataItem:
             error.set_stage(stage)
             self._errors.append(error)
 
-    def add_critical_error(self, stage, exception: Union[Error, Exception]):
+    def add_critical_error(self, stage: str, exception: Union[Error, Exception]):
         if hasattr(exception, 'set_stage'):
             if not type(exception) is CriticalError:
                 raise ValueError("Add a critical pipeline error or a generic exception.")
@@ -60,30 +61,30 @@ class DataItem:
             error.set_stage(stage)
             self._critical_errors.append(error)
 
-    def set_metadata(self, field: str, value):
+    def set_metadata(self, field: str, value: Any) -> DataItem:
         self._meta[field] = value
         return self
 
-    def get_metadata(self, field: str):
+    def get_metadata(self, field: str) -> Any:
         return self._meta.get(field)
 
     @property
-    def metadata_fields(self):
+    def metadata_fields(self) -> KeysView[str]:
         return self._meta.keys()
 
-    def set_timing(self, stage: str, ms: float):
+    def set_timing(self, stage: str, ms: float) -> DataItem:
         self._timings[stage] = ms
         return self
 
-    def get_timing(self, stage: str):
+    def get_timing(self, stage: str) -> float:
         return self._timings.get(stage)
 
     @property
-    def timed_stages(self):
+    def timed_stages(self) -> KeysView[str]:
         return self._timings.keys()
 
     @property
-    def id(self):
+    def id(self) -> Any:
         ret = self._payload.get('id')
         if ret is None:
             ret = self._meta.get('id')
@@ -91,17 +92,17 @@ class DataItem:
                 ret = id(self)
         return ret
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f'Data Item {self.id} with payload {self.payload_snippet()}...'
 
-    def set_callback(self, fun):
+    def set_callback(self, fun: Callable):
         self._callback_fun = fun
 
-    def callback(self):
+    def callback(self) -> Any:
         if self._callback_fun is not None:
             self._callback_fun(self)
 
 
 class Stop(DataItem):
-    def __str__(self):
+    def __str__(self) -> str:
         return 'Stop signal {}'.format(self.id)

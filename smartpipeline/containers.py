@@ -162,7 +162,7 @@ class SourceContainer(BaseContainer):
                 self._stop_sent = True
                 break
 
-    def prepend_item(self, item: DataItem):
+    def prepend_item(self, item: Optional[DataItem]):
         """Only used for processing single items"""
         if self._next_item is not None:
             self._internal_queue.put(item)

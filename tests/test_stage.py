@@ -3,7 +3,8 @@ from multiprocessing import Manager
 
 import pytest
 
-from smartpipeline.error import CriticalError, Error, ErrorManager
+from smartpipeline.error import ErrorManager
+from smartpipeline.exceptions import Error, CriticalError
 from smartpipeline.containers import SourceContainer, StageContainer, ConcurrentStageContainer, BatchStageContainer, \
     BatchConcurrentStageContainer
 from smartpipeline.helpers import FilePathItem
@@ -30,20 +31,20 @@ def test_data():
 def test_error():
     item = DataItem()
     stage = TextReverser()
-    item.add_error(stage, ValueError('value error'))
-    item.add_error(stage, KeyError('key error'))
-    item.add_critical_error(stage, KeyError('key error'))
+    item.add_error(stage.name, ValueError('value error'))
+    item.add_error(stage.name, KeyError('key error'))
+    item.add_critical_error(stage.name, KeyError('key error'))
     assert item.has_critical_errors()
     assert item.has_errors()
     assert len(list(item.errors())) == 2
     assert len(list(item.critical_errors())) == 1
     stage = TextReverser()
-    item.add_error(stage, Error())
-    item.add_critical_error(stage, CriticalError())
+    item.add_error(stage.name, Error())
+    item.add_critical_error(stage.name, CriticalError())
     with pytest.raises(ValueError):
-        item.add_error(stage, CriticalError())
+        item.add_error(stage.name, CriticalError())
     with pytest.raises(ValueError):
-        item.add_critical_error(stage, Error())
+        item.add_critical_error(stage.name, Error())
 
 
 def test_fileitem():

@@ -1,4 +1,5 @@
 import os
+from typing import Generator, Optional, Any, IO
 
 from smartpipeline.stage import Source
 from smartpipeline.item import DataItem
@@ -7,17 +8,17 @@ __author__ = 'Giacomo Berardi <giacbrd.com>'
 
 
 class LocalFilesSource(Source):
-    def __init__(self, dir_path, postfix=''):
+    def __init__(self, dir_path: str, postfix: str = ''):
         self.postfix = postfix
         self.dir_path = dir_path
         self._iterator = self._iter_files()
 
-    def _iter_files(self):
+    def _iter_files(self) -> Generator[str, None, None]:
         for fname in os.listdir(self.dir_path):
             if fname.endswith(self.postfix) and not fname.startswith('.'):
                 yield os.path.join(self.dir_path, fname)
 
-    def pop(self):
+    def pop(self) -> Optional[DataItem]:
         file_path = next(self._iterator, None)
         if file_path:
             item = FilePathItem(file_path)
@@ -27,19 +28,19 @@ class LocalFilesSource(Source):
 
 
 class FilePathItem(DataItem):
-    def __init__(self, path):
+    def __init__(self, path: str):
         super().__init__()
         self.path = path
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f'Data Item {self.id}, file path {self.path}, with payload {self.payload_snippet()}...'
 
     @property
-    def id(self):
+    def id(self) -> Any:
         return os.path.basename(self.path) or super().id()
 
 
 class FileObjItem(FilePathItem):
-    def __init__(self, file):
+    def __init__(self, file: IO):
         super().__init__(file.name)
         self.file = file

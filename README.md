@@ -57,7 +57,8 @@ Errors are eventually logged in the Elasticsearch cluster.
 ```python
 from smartpipeline.pipeline import Pipeline
 from smartpipeline.stage import Stage
-from smartpipeline.error import ErrorManager, Error
+from smartpipeline.error import ErrorManager
+from smartpipeline.exceptions import Error
 from smartpipeline.helpers import LocalFilesSource, FilePathItem
 from elasticsearch import Elasticsearch
 import logging, re

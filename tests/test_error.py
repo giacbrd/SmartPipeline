@@ -1,4 +1,5 @@
-from smartpipeline.error import ErrorManager, Error, CriticalError
+from smartpipeline.error import ErrorManager
+from smartpipeline.exceptions import Error, CriticalError
 from smartpipeline.item import DataItem
 from tests.utils import TextReverser
 
