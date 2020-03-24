@@ -186,14 +186,25 @@ def test_concurrent_initialization():
 def test_huge_run():
     pipeline = _pipeline()
     pipeline.set_source(FakeSource(200))
+    pipeline.append_stage('reverser0', TextReverser(10000), concurrency=3, use_threads=False)
+    pipeline.append_stage('reverser1', TextReverser(10000), concurrency=3, use_threads=False)
+    pipeline.append_stage('reverser2', TextReverser(10000), concurrency=3, use_threads=False)
+    pipeline.append_stage('duplicator', TextDuplicator(10000), concurrency=3, use_threads=False)
+    start_time = time.time()
+    items = list(pipeline.run())
+    elasped1 = time.time() - start_time
+    logger.debug('Time for strongly parallel: {}'.format(elasped1))
+    _check(items, 200)
+    pipeline = _pipeline()
+    pipeline.set_source(FakeSource(200))
     pipeline.append_stage('reverser0', TextReverser(10000), concurrency=2, use_threads=False)
     pipeline.append_stage('reverser1', TextReverser(10000), concurrency=3, use_threads=False)
     pipeline.append_stage('reverser2', TextReverser(10000), concurrency=1, use_threads=False)
     pipeline.append_stage('duplicator', TextDuplicator(10000), concurrency=2, use_threads=False)
     start_time = time.time()
     items = list(pipeline.run())
-    elasped1 = time.time() - start_time
-    logger.debug('Time for parallel: {}'.format(elasped1))
+    elasped2 = time.time() - start_time
+    logger.debug('Time for mildly parallel: {}'.format(elasped2))
     _check(items, 200)
     pipeline = _pipeline()
     pipeline.set_source(FakeSource(200))
@@ -203,10 +214,10 @@ def test_huge_run():
     pipeline.append_stage('duplicator', TextDuplicator(10000), concurrency=0)
     start_time = time.time()
     items = list(pipeline.run())
-    elasped2 = time.time() - start_time
-    logger.debug('Time for sequential: {}'.format(elasped2))
+    elasped3 = time.time() - start_time
+    logger.debug('Time for sequential: {}'.format(elasped3))
     _check(items, 200)
-    assert elasped2 > elasped1
+    assert elasped3 > elasped2 > elasped1
 
 
 def test_run_times():
