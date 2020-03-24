@@ -6,7 +6,7 @@ A framework for developing data pipelines following a simple design pattern
 
 <sub><sup>from https://xkcd.com</sup></sub>
 
-[![Documentation Status](https://readthedocs.org/projects/pip/badge/?version=stable)](http://pip.pypa.io/en/stable/?badge=stable)
+[![Documentation Status](https://readthedocs.org/projects/smartpipeline/badge/?version=stable)](https://smartpipeline.readthedocs.io/en/stable/?badge=stable)
 
 #### Short Documentation
 
