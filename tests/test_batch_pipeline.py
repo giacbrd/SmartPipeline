@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from smartpipeline.error import ErrorManager
+from smartpipeline.error.handling import ErrorManager
 from smartpipeline.pipeline import Pipeline
 from tests.utils import FakeSource, TextDuplicator, TextReverser, ErrorStage, ExceptionStage, \
     BatchTextReverser, BatchTextDuplicator

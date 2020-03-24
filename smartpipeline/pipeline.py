@@ -1,27 +1,31 @@
+from __future__ import annotations
+
 import time
 import uuid
+from concurrent.futures._base import Future, Executor
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from multiprocessing import Manager
 from queue import Queue
 from threading import Thread, Event
+from typing import Generator, Optional, Callable, Union, Sequence, Mapping
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
-from smartpipeline.error import ErrorManager
+from smartpipeline.error.handling import ErrorManager
 from smartpipeline.containers import SourceContainer, StageContainer, ConcurrentStageContainer, BatchStageContainer, \
-    BatchConcurrentStageContainer
-from smartpipeline.stage import BatchStage
-from smartpipeline.item import Stop
+    BatchConcurrentStageContainer, BaseContainer, ConnectedStageMixin
+from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage, StageType
+from smartpipeline.item import Stop, DataItem
 from smartpipeline.utils import OrderedDict, ThreadCounter, ProcessCounter
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
 
 class FakeContainer:
-    def __init__(self, item):
+    def __init__(self, item: DataItem):
         self._item = item
 
-    def get_item(self):
+    def get_item(self) -> DataItem:
         return self._item
 
 
@@ -41,34 +45,34 @@ class Pipeline:
         self._sync_manager = None
         self._source_container = SourceContainer()  # an empty source, on which we can only occasionally send items
 
-    def _new_mp_queue(self):
+    def _new_mp_queue(self) -> ItemsQueue:
         if self._sync_manager is None:
             self._sync_manager = Manager()
         return self._sync_manager.Queue()
 
     @staticmethod
-    def _new_queue():
+    def _new_queue() -> ItemsQueue:
         return Queue()
 
-    def _new_mp_event(self):
+    def _new_mp_event(self) -> Event:
         if self._sync_manager is None:
             self._sync_manager = Manager()
         return self._sync_manager.Event()
 
     @staticmethod
-    def _new_event():
+    def _new_event() -> Event:
         return Event()
 
-    def _new_mp_counter(self):
+    def _new_mp_counter(self) -> ProcessCounter:
         if self._sync_manager is None:
             self._sync_manager = Manager()
         return ProcessCounter(self._sync_manager)
 
     @staticmethod
-    def _new_counter():
+    def _new_counter() -> ThreadCounter:
         return ThreadCounter()
 
-    def _wait_executors(self, wait_seconds=CONCURRENCY_WAIT):
+    def _wait_executors(self, wait_seconds: int = CONCURRENCY_WAIT):
         if self._init_executor is not None:
             self._init_executor.shutdown(wait=True)
             self._init_executor = None
@@ -94,7 +98,7 @@ class Pipeline:
     def __del__(self):
         self.shutdown()
 
-    def run(self):
+    def run(self) -> Generator[DataItem, None, None]:
         counter = 0
         self._wait_executors()
         if not self._source_container.is_set():
@@ -117,7 +121,7 @@ class Pipeline:
                         self.shutdown()
                         raise e
                 if name == last_stage_name:
-                    for _ in range(container.stage.size() if isinstance(container, BatchStageContainer) else 1):
+                    for _ in range(container.size() if isinstance(container, BatchStageContainer) else 1):
                         item = container.get_processed()
                         if item is not None:
                             if not isinstance(item, Stop):
@@ -135,7 +139,7 @@ class Pipeline:
                     self.shutdown()
                 return
 
-    def _terminate_all(self, force=False, wait_seconds=CONCURRENCY_WAIT):
+    def _terminate_all(self, force: bool = False, wait_seconds: int = CONCURRENCY_WAIT):
         # scroll the pipeline by its order and terminate stages after the relative queues are empty
         for container in self._containers.values():
             if not force:
@@ -152,15 +156,15 @@ class Pipeline:
                 while not container.queues_empty():
                     time.sleep(wait_seconds)
 
-    def _all_terminated(self):
+    def _all_terminated(self) -> bool:
         return all(container.is_terminated() for container in self._containers.values())
 
-    def _all_empty(self):
+    def _all_empty(self) -> bool:
         return self._all_terminated() and all(
             container.queues_empty() for container in self._containers.values()
                 if isinstance(container, (ConcurrentStageContainer, BatchConcurrentStageContainer)))
 
-    def process(self, item):
+    def process(self, item: DataItem) -> DataItem:
         last_stage_name = self._containers.last_key()
         self._source_container.prepend_item(item)
         for name, container in self._containers.items():
@@ -168,7 +172,7 @@ class Pipeline:
             if name == last_stage_name:
                 return container.get_processed(block=True)
 
-    def process_async(self, item, callback=None):
+    def process_async(self, item: DataItem, callback: Optional[Callable] = None):
         item.set_callback(callback)
         self._source_container.prepend_item(item)
         self._start_pipeline_executor()
@@ -176,7 +180,7 @@ class Pipeline:
     def stop(self):
         self._source_container.stop()
 
-    def get_item(self, block=True):
+    def get_item(self, block: bool = True) -> DataItem:
         if self._out_queue is not None:
             item = self._out_queue.get(block)
             self._out_queue.task_done()
@@ -184,32 +188,32 @@ class Pipeline:
         else:
             raise ValueError('No pipeline is running asynchronously, not item can be retrieved from the output queue')
 
-    def set_source(self, source):
+    def set_source(self, source: Source) -> Pipeline:
         self._source_container.set(source)
         self._source_name = uuid.uuid4()
         return self
 
-    def set_error_manager(self, error_manager):
+    def set_error_manager(self, error_manager: ErrorManager) -> Pipeline:
         self._error_manager = error_manager
         for container in self._containers.values():
             container.set_error_manager(self._error_manager)
         return self
 
-    def set_max_init_workers(self, max_workers):
+    def set_max_init_workers(self, max_workers: int) -> Pipeline:
         self._max_init_workers = max_workers
         return self
 
-    def _last_stage_name(self):
+    def _last_stage_name(self) -> str:
         if self._containers:
             return self._containers.last_key()
 
-    def _last_stage(self):
+    def _last_container(self) -> BaseContainer:
         if self._containers:
             return self._containers[self._last_stage_name()]
         else:
             return self._source_container
 
-    def _wait_for_previous(self, container, last_stage_name, wait_seconds=CONCURRENCY_WAIT):
+    def _wait_for_previous(self, container: ConnectedStageMixin, last_stage_name: str, wait_seconds: int = CONCURRENCY_WAIT):
         def _waiter():
             if last_stage_name is not None:
                 while self._containers[last_stage_name] is None:
@@ -221,7 +225,7 @@ class Pipeline:
         executor = self._get_wait_previous_executor()
         executor.submit(_waiter)
 
-    def _get_container(self, name, stage, concurrency, use_threads):
+    def _get_container(self, name: str, stage: StageType, concurrency: int, use_threads: bool) -> BaseContainer:
         if concurrency <= 0:
             constructor = BatchStageContainer if isinstance(stage, BatchStage) else StageContainer
             return constructor(name, stage, self._error_manager)
@@ -234,10 +238,10 @@ class Pipeline:
                 return constructor(name, stage, self._error_manager, self._new_mp_queue,
                                    self._new_mp_counter, self._new_mp_event, concurrency, use_threads)
 
-    def get_stage(self, stage_name):
-        return self._containers.get(stage_name).stage
+    def get_stage(self, name: str) -> StageType:
+        return self._containers.get(name).stage
 
-    def append_stage(self, name, stage, concurrency=0, use_threads=True):
+    def append_stage(self, name: str, stage: StageType, concurrency: int = 0, use_threads: bool = True) -> Pipeline:
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and isinstance(stage, BatchStage):
             use_threads = True
@@ -251,7 +255,7 @@ class Pipeline:
         self._containers[name] = container
         return self
 
-    def append_stage_concurrently(self, name, stage_class, args=None, kwargs=None, concurrency=0, use_threads=True):
+    def append_stage_concurrently(self, name: str, stage_class: Callable, args: Sequence = None, kwargs: Mapping = None, concurrency: int = 0, use_threads: bool = True) -> Pipeline:
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and issubclass(stage_class, BatchStage):
             use_threads = True
@@ -267,7 +271,7 @@ class Pipeline:
         self._containers[name] = None  # so the order of the calls of this method is followed in `_containers`
         future = self._get_init_executor(use_threads).submit(stage_class, *args, **kwargs)
 
-        def append_stage(stage_future):
+        def append_stage(stage_future: Future):
             stage = stage_future.result()
             container = self._get_container(name, stage, concurrency, use_threads)
             self._wait_for_previous(container, last_stage_name)
@@ -276,18 +280,18 @@ class Pipeline:
         future.add_done_callback(append_stage)
         return self
 
-    def _get_init_executor(self, use_threads=True):
+    def _get_init_executor(self, use_threads: bool = True) -> Executor:
         if self._init_executor is None:
             executor = ThreadPoolExecutor if use_threads else ProcessPoolExecutor
             self._init_executor = executor(max_workers=self._max_init_workers)
         return self._init_executor
 
-    def _get_wait_previous_executor(self):
+    def _get_wait_previous_executor(self) -> Executor:
         if self._wait_previous_executor is None:
             self._wait_previous_executor = ThreadPoolExecutor()
         return self._wait_previous_executor
 
-    def _start_pipeline_executor(self):
+    def _start_pipeline_executor(self) -> Thread:
         if self._pipeline_executor is None:
             self._init_out_queue()
 
@@ -300,7 +304,7 @@ class Pipeline:
             self._pipeline_executor.start()
         return self._pipeline_executor
 
-    def _check_stage_name(self, name):
+    def _check_stage_name(self, name: str):
         if name in self._containers:
             raise ValueError(f'The stage name {name} is already used in this pipeline')
 

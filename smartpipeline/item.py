@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Union, Generator, Any, KeysView, Callable, Dict
 from smartpipeline.defaults import PAYLOAD_SNIPPET_SIZE
-from smartpipeline.exceptions import Error, CriticalError
+from smartpipeline.error.exceptions import Error, CriticalError
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -100,7 +100,7 @@ class DataItem:
 
     def callback(self) -> Any:
         if self._callback_fun is not None:
-            self._callback_fun(self)
+            return self._callback_fun(self)
 
 
 class Stop(DataItem):

@@ -1,6 +1,7 @@
+
 from queue import Queue
 from abc import ABC, abstractmethod
-from typing import Sequence
+from typing import Sequence, Union
 
 from smartpipeline.item import DataItem
 
@@ -76,3 +77,4 @@ class Source(ABC):
 
 
 ItemsQueue = "Queue[DataItem]"
+StageType = Union[Stage, BatchStage]

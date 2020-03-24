@@ -3,8 +3,8 @@ from multiprocessing import Manager
 
 import pytest
 
-from smartpipeline.error import ErrorManager
-from smartpipeline.exceptions import Error, CriticalError
+from smartpipeline.error.handling import ErrorManager
+from smartpipeline.error.exceptions import Error, CriticalError
 from smartpipeline.containers import SourceContainer, StageContainer, ConcurrentStageContainer, BatchStageContainer, \
     BatchConcurrentStageContainer
 from smartpipeline.helpers import FilePathItem

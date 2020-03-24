@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from smartpipeline.exceptions import Error, CriticalError
+from smartpipeline.error.exceptions import Error, CriticalError
 from smartpipeline.item import DataItem
 from smartpipeline.stage import NameMixin
 

@@ -4,9 +4,9 @@ from threading import Event
 from typing import Sequence, Callable, Union
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
-from smartpipeline.error import ErrorManager
+from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import DataItem, Stop
-from smartpipeline.stage import Stage, BatchStage, ItemsQueue
+from smartpipeline.stage import Stage, BatchStage, ItemsQueue, StageType
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -113,4 +113,4 @@ def batch_stage_executor(stage: BatchStage, in_queue: ItemsQueue, out_queue: Ite
 
 
 StageExecutor = Callable[
-    [Union[Stage, BatchStage], ItemsQueue, ItemsQueue, ErrorManager, Event, ConcurrentCounter], None]
+    [StageType, ItemsQueue, ItemsQueue, ErrorManager, Event, ConcurrentCounter], None]

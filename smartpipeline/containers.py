@@ -7,9 +7,9 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event
 from typing import Sequence, Union, Optional, Callable
 
-from smartpipeline.error import ErrorManager
+from smartpipeline.error.handling import ErrorManager
 from smartpipeline.executors import process, process_batch, stage_executor, batch_stage_executor, StageExecutor
-from smartpipeline.stage import Stage, BatchStage, Source, ItemsQueue
+from smartpipeline.stage import Stage, BatchStage, Source, ItemsQueue, StageType
 from smartpipeline.item import DataItem, Stop
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
@@ -293,6 +293,9 @@ class BatchStageContainer(BaseContainer, NamedStageMixin, FallibleMixin, Connect
             if item is not None and not isinstance(item, Stop):
                 self.increase_count()
 
+    def size(self) -> int:
+        return self.stage.size()
+
 
 class ConcurrencyMixin(InQueued, ConnectedStageMixin):
 
@@ -372,7 +375,7 @@ class ConcurrencyMixin(InQueued, ConnectedStageMixin):
     def is_terminated(self) -> bool:
         return all(future.done() or future.cancelled() for future in self._futures) and self._terminate_event.is_set()
 
-    def _run(self, stage: Union[Stage, BatchStage], _executor: StageExecutor, in_queue: ItemsQueue,
+    def _run(self, stage: StageType, _executor: StageExecutor, in_queue: ItemsQueue,
              out_queue: ItemsQueue, error_manager: ErrorManager):
         ex = self._get_stage_executor()
         self._counter = self._counter_initializer()
