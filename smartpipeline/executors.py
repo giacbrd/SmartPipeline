@@ -1,7 +1,7 @@
 import queue
 import time
 from threading import Event
-from typing import Sequence, Callable, Union
+from typing import Sequence, Callable, Union, Optional, List
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.handling import ErrorManager
@@ -28,7 +28,7 @@ def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataIt
     return ret
 
 
-def process_batch(stage: BatchStage, items: Sequence[DataItem], error_manager: ErrorManager) -> Sequence[DataItem]:
+def process_batch(stage: BatchStage, items: Sequence[DataItem], error_manager: ErrorManager) -> List[Optional[DataItem]]:
     ret = [None] * len(items)
     to_process = {}
     for i, item in enumerate(items):
