@@ -1,4 +1,6 @@
 import itertools
+import os
+from tempfile import TemporaryDirectory
 
 import pytest
 
@@ -23,3 +25,12 @@ def items_generator_fx():
             yield item
 
     yield _generator()
+
+
+@pytest.fixture
+def file_directory_source_fx():
+    with TemporaryDirectory() as temp:
+        for text in TEXT_SAMPLES:
+            with open(os.path.join(temp, str(hash(text))), 'w') as f:
+                f.write(text)
+        yield temp

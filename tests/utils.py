@@ -4,6 +4,7 @@ from datetime import datetime
 from time import sleep
 
 from smartpipeline.error.exceptions import Error, CriticalError
+from smartpipeline.helpers import FilePathItem
 from smartpipeline.stage import Source, Stage, BatchStage
 from smartpipeline.item import DataItem
 
@@ -73,6 +74,14 @@ class TextDuplicator(Stage):
     def process(self, item: DataItem):
         for _ in range(self._cycles):
             item.payload['text_' + str(random.randint(1, 1000))] = item.payload['text']
+        return item
+
+
+class TextExtractor(Stage):
+
+    def process(self, item: FilePathItem):
+        with open(item.path) as f:
+            item.payload['text'] = f.read()
         return item
 
 
