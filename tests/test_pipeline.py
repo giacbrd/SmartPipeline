@@ -7,7 +7,7 @@ import pytest
 from smartpipeline.error import ErrorManager
 from smartpipeline.pipeline import Pipeline
 from tests.utils import FakeSource, TextDuplicator, TextReverser, ErrorStage, ExceptionStage, \
-    TimeWaster
+    TimeWaster, SerializableStage
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
@@ -124,16 +124,27 @@ def test_concurrency_errors():
         pipeline = _pipeline()
         pipeline.set_source(FakeSource(10))
         pipeline.append_stage('reverser', TextReverser(), concurrency=1)
-        pipeline.append_stage('error2', ExceptionStage(), concurrency=1)
+        pipeline.append_stage('error', ExceptionStage(), concurrency=1)
         for _ in pipeline.run():
             pass
     with pytest.raises(Exception):
         pipeline = _pipeline()
         pipeline.set_source(FakeSource(10))
         pipeline.append_stage('reverser', TextReverser(), concurrency=1, use_threads=False)
-        pipeline.append_stage('error2', ExceptionStage(), concurrency=1, use_threads=False)
+        pipeline.append_stage('error', ExceptionStage(), concurrency=1, use_threads=False)
         for _ in pipeline.run():
             pass
+
+
+def test_concurrent_initializations():
+    """test `on_fork` method"""
+    pipeline = _pipeline()
+    pipeline.set_source(FakeSource(10))
+    pipeline.append_stage('reverser1', TextReverser(), concurrency=1, use_threads=False)
+    pipeline.append_stage('error', SerializableStage(), concurrency=2, use_threads=False)
+    pipeline.append_stage('reverser2', TextReverser(), concurrency=1, use_threads=False)
+    for item in pipeline.run():
+        assert item.payload.get('file')
 
 
 def test_concurrent_initialization():

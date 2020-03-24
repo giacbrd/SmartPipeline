@@ -17,6 +17,12 @@ class NameMixin:
         return getattr(self, '_name', f'{self.__class__.name}_{id(self)}')
 
 
+class ConcurrentMixin:
+
+    def on_fork(self):
+        return
+
+
 class Processor(ABC):
 
     @abstractmethod
@@ -31,13 +37,13 @@ class BatchProcessor(ABC):
         return items
 
 
-class Stage(NameMixin, Processor):
+class Stage(NameMixin, ConcurrentMixin, Processor):
 
     def __str__(self):
         return 'Stage {}'.format(self.name)
 
 
-class BatchStage(NameMixin, BatchProcessor):
+class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):
 
     def __str__(self):
         return 'Batch stage {}'.format(self.name)

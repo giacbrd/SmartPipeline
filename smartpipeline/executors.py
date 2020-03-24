@@ -56,6 +56,7 @@ def process_batch(stage: BatchStage, items: Sequence[DataItem], error_manager: E
 
 def stage_executor(stage: Stage, in_queue: ItemsQueue, out_queue: ItemsQueue, error_manager: ErrorManager,
                    terminated: Event, counter: ConcurrentCounter):
+    stage.on_fork()
     while True:
         if terminated.is_set() and in_queue.empty():
             return
@@ -82,6 +83,7 @@ def stage_executor(stage: Stage, in_queue: ItemsQueue, out_queue: ItemsQueue, er
 
 def batch_stage_executor(stage: BatchStage, in_queue: ItemsQueue, out_queue: ItemsQueue, error_manager: ErrorManager,
                          terminated: Event, counter: ConcurrentCounter):
+    stage.on_fork()
     while True:
         if terminated.is_set() and in_queue.empty():
             return

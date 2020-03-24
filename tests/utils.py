@@ -160,6 +160,19 @@ class CriticalErrorStage(Stage):
         raise CriticalError('test pipeline critical error')
 
 
+class SerializableStage(Stage):
+    def __init__(self):
+        self._file = None
+
+    def on_fork(self):
+        self._file = open(__file__)
+
+    def process(self, item: DataItem):
+        if self._file is not None and self._file.name == __file__:
+            item.payload['file'] = self._file.name
+        return item
+
+
 def wait_service(timeout, predicate, args):
     start = datetime.now()
     while not predicate(*args):
