@@ -44,6 +44,7 @@ class Pipeline:
         self._enqueue_source = False
         self._sync_manager = None
         self._source_container = SourceContainer()  # an empty source, on which we can only occasionally send items
+        self._count = 0
 
     def _new_mp_queue(self) -> ItemsQueue:
         if self._sync_manager is None:
@@ -109,7 +110,7 @@ class Pipeline:
             if self._enqueue_source:  # in the case the first stage is concurrent
                 self._source_container.pop_into_queue()
             for name, container in self._containers.items():
-                # concurrent stages run by themself in threads/processes
+                # concurrent stages run by themselves in threads/processes
                 if not isinstance(container, (ConcurrentStageContainer, BatchConcurrentStageContainer)):
                     container.process()
                 else:
@@ -119,6 +120,7 @@ class Pipeline:
                         self.stop()
                         self._terminate_all(force=True)  # TODO in case of errors we loose pending items!
                         self.shutdown()
+                        self._count += 1
                         raise e
                 if name == last_stage_name:
                     for _ in range(container.size() if isinstance(container, BatchStageContainer) else 1):
@@ -127,6 +129,7 @@ class Pipeline:
                             if not isinstance(item, Stop):
                                 yield item
                                 counter += 1
+                                self._count += 1
                             elif not self._all_terminated() and terminator is None:
                                 terminator = Thread(target=self._terminate_all)
                                 terminator.start()
@@ -138,6 +141,14 @@ class Pipeline:
                     terminator.join()
                     self.shutdown()
                 return
+
+    @property
+    def count(self) -> int:
+        """
+        Get the number of processed items by all executed runs, also for items which have failed
+        :return: Count of processed items
+        """
+        return self._count
 
     def _terminate_all(self, force: bool = False, wait_seconds: int = CONCURRENCY_WAIT):
         # scroll the pipeline by its order and terminate stages after the relative queues are empty
