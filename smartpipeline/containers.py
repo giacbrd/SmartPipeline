@@ -152,15 +152,17 @@ class SourceContainer(BaseContainer):
         """
         while True:
             item = self._get_next_item()
-            if item is None or self._stop_sent:
-                break
+            if self._stop_sent:
+                return
+            elif item is None:
+                continue
             else:
                 self.out_queue.put(item, block=True)
                 if not isinstance(item, Stop):
                     self.increase_count()
             if isinstance(item, Stop):
                 self._stop_sent = True
-                break
+                return
 
     def prepend_item(self, item: Optional[DataItem]):
         """Only used for processing single items"""
@@ -184,6 +186,7 @@ class SourceContainer(BaseContainer):
         if ret is not None:
             try:
                 self._next_item = self._internal_queue.get(block=False)
+                self._internal_queue.task_done()
             except queue.Empty:
                 if self.is_stopped():
                     self._next_item = Stop()

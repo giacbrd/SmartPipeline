@@ -106,11 +106,13 @@ class Pipeline:
         if not self._source_container.is_set():
             raise ValueError("Set the data source for this pipeline")
         last_stage_name = self._last_stage_name()
-        terminator = None
+        terminator_thread = None
+        source_thread = None
+        # in case the first stage is concurrent
+        if self._enqueue_source:
+            source_thread = Thread(target=self._source_container.pop_into_queue)
+            source_thread.start()
         while True:
-            # in case the first stage is concurrent
-            if self._enqueue_source:
-                self._source_container.pop_into_queue()
             for name, container in self._containers.items():
                 # concurrent stages run by themselves in threads/processes
                 if not isinstance(container, (ConcurrentStageContainer, BatchConcurrentStageContainer)):
@@ -132,15 +134,17 @@ class Pipeline:
                                 yield item
                                 counter += 1
                                 self._count += 1
-                            elif not self._all_terminated() and terminator is None:
-                                terminator = Thread(target=self._terminate_all)
-                                terminator.start()
+                            elif not self._all_terminated() and terminator_thread is None:
+                                terminator_thread = Thread(target=self._terminate_all)
+                                terminator_thread.start()
                         else:
                             break
             # exit the loop only when all items have been returned
             if self._all_empty() and counter >= self._source_container.count():
-                if terminator is not None:
-                    terminator.join()
+                if source_thread is not None:
+                    source_thread.join()
+                if terminator_thread is not None:
+                    terminator_thread.join()
                     self.shutdown()
                 return
 
