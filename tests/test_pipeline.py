@@ -126,6 +126,41 @@ def test_concurrent_run():
     _check(items, 100, pipeline)
 
 
+def test_queue_sizes():
+    pipeline = _pipeline(max_queues_size=1)
+    pipeline.set_source(FakeSource(100))
+    pipeline.append_stage('reverser0', TextReverser(), concurrency=2)
+    pipeline.append_stage('reverser1', TextReverser(), concurrency=0)
+    pipeline.append_stage('reverser2', TextReverser(), concurrency=1)
+    pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2)
+    items = list(pipeline.run())
+    _check(items, 100, pipeline)
+    pipeline = _pipeline(max_queues_size=1)
+    pipeline.set_source(FakeSource(100))
+    pipeline.append_stage('reverser0', TextReverser(), concurrency=2, use_threads=False)
+    pipeline.append_stage('reverser1', TextReverser(), concurrency=1, use_threads=False)
+    pipeline.append_stage('reverser2', TextReverser(), concurrency=0)
+    pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2, use_threads=False)
+    items = list(pipeline.run())
+    _check(items, 100, pipeline)
+    pipeline = _pipeline(max_queues_size=0)
+    pipeline.set_source(FakeSource(100))
+    pipeline.append_stage('reverser0', TextReverser(), concurrency=2)
+    pipeline.append_stage('reverser1', TextReverser(), concurrency=0)
+    pipeline.append_stage('reverser2', TextReverser(), concurrency=1)
+    pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2)
+    items = list(pipeline.run())
+    _check(items, 100, pipeline)
+    pipeline = _pipeline(max_queues_size=0)
+    pipeline.set_source(FakeSource(100))
+    pipeline.append_stage('reverser0', TextReverser(), concurrency=2, use_threads=False)
+    pipeline.append_stage('reverser1', TextReverser(), concurrency=1, use_threads=False)
+    pipeline.append_stage('reverser2', TextReverser(), concurrency=0)
+    pipeline.append_stage('duplicator', TextDuplicator(), concurrency=2, use_threads=False)
+    items = list(pipeline.run())
+    _check(items, 100, pipeline)
+
+
 def test_concurrency_errors():
     with pytest.raises(Exception):
         pipeline = _pipeline()
