@@ -5,7 +5,7 @@ from concurrent.futures import wait, Executor
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event
-from typing import Sequence, Union, Optional, Callable
+from typing import Sequence, Optional, Callable
 
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.executors import process, process_batch, stage_executor, batch_stage_executor, StageExecutor
@@ -332,7 +332,8 @@ class ConcurrencyMixin(InQueued, ConnectedStageMixin):
         self._previous = container
         if isinstance(self._previous,
                       (ConcurrentStageContainer, BatchConcurrentStageContainer)) and not self._previous.use_threads:
-            self._previous_queue = self._previous.out_queue  # give priority to the previous queue initializer
+            # give priority to the previous queue initializer
+            self._previous_queue = self._previous.out_queue
         else:
             self._previous_queue = self._previous.init_queue(self._queue_initializer)
 

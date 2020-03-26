@@ -10,7 +10,7 @@ from queue import Queue
 from threading import Thread, Event
 from typing import Generator, Optional, Callable, Union, Sequence, Mapping
 
-from smartpipeline.defaults import CONCURRENCY_WAIT
+from smartpipeline.defaults import CONCURRENCY_WAIT, MAX_QUEUES_SIZE
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.containers import SourceContainer, StageContainer, ConcurrentStageContainer, BatchStageContainer, \
     BatchConcurrentStageContainer, BaseContainer, ConnectedStageMixin
@@ -31,29 +31,30 @@ class FakeContainer:
 
 class Pipeline:
 
-    def __init__(self):
+    def __init__(self, max_init_workers: Optional[int] = None, max_queues_size: int = MAX_QUEUES_SIZE):
         self._concurrencies = {}
         self._containers = OrderedDict()
         self._error_manager = ErrorManager()
-        self._max_init_workers = None  # default: number of CPUs
+        self._max_init_workers = max_init_workers  # default: number of CPUs
         self._init_executor = None
         self._wait_previous_executor = None
         self._source_name = None
         self._pipeline_executor = None
+        self._max_queues_size = max_queues_size
         self._out_queue = None
         self._enqueue_source = False
         self._sync_manager = None
-        self._source_container = SourceContainer()  # an empty source, on which we can only occasionally send items
+        # an empty source, on which we can only occasionally send items
+        self._source_container = SourceContainer()
         self._count = 0
 
     def _new_mp_queue(self) -> ItemsQueue:
         if self._sync_manager is None:
             self._sync_manager = Manager()
-        return self._sync_manager.Queue()
+        return self._sync_manager.Queue(maxsize=self._max_queues_size)
 
-    @staticmethod
-    def _new_queue() -> ItemsQueue:
-        return Queue()
+    def _new_queue(self) -> ItemsQueue:
+        return Queue(maxsize=self._max_queues_size)
 
     def _new_mp_event(self) -> Event:
         if self._sync_manager is None:
@@ -73,7 +74,7 @@ class Pipeline:
     def _new_counter() -> ThreadCounter:
         return ThreadCounter()
 
-    def _wait_executors(self, wait_seconds: int = CONCURRENCY_WAIT):
+    def _wait_executors(self, wait_seconds: float = CONCURRENCY_WAIT):
         if self._init_executor is not None:
             self._init_executor.shutdown(wait=True)
             self._init_executor = None
@@ -107,7 +108,8 @@ class Pipeline:
         last_stage_name = self._last_stage_name()
         terminator = None
         while True:
-            if self._enqueue_source:  # in the case the first stage is concurrent
+            # in case the first stage is concurrent
+            if self._enqueue_source:
                 self._source_container.pop_into_queue()
             for name, container in self._containers.items():
                 # concurrent stages run by themselves in threads/processes
@@ -150,7 +152,7 @@ class Pipeline:
         """
         return self._count
 
-    def _terminate_all(self, force: bool = False, wait_seconds: int = CONCURRENCY_WAIT):
+    def _terminate_all(self, force: bool = False, wait_seconds: float = CONCURRENCY_WAIT):
         # scroll the pipeline by its order and terminate stages after the relative queues are empty
         for container in self._containers.values():
             if not force:
@@ -210,10 +212,6 @@ class Pipeline:
             container.set_error_manager(self._error_manager)
         return self
 
-    def set_max_init_workers(self, max_workers: int) -> Pipeline:
-        self._max_init_workers = max_workers
-        return self
-
     def _last_stage_name(self) -> str:
         if self._containers:
             return self._containers.last_key()
@@ -224,7 +222,7 @@ class Pipeline:
         else:
             return self._source_container
 
-    def _wait_for_previous(self, container: ConnectedStageMixin, last_stage_name: str, wait_seconds: int = CONCURRENCY_WAIT):
+    def _wait_for_previous(self, container: ConnectedStageMixin, last_stage_name: str, wait_seconds: float = CONCURRENCY_WAIT):
         def _waiter():
             if last_stage_name is not None:
                 while self._containers[last_stage_name] is None:

@@ -14,8 +14,8 @@ __author__ = 'Giacomo Berardi <giacbrd.com>'
 logger = logging.getLogger(__name__)
 
 
-def _pipeline():
-    return Pipeline().set_error_manager(ErrorManager().raise_on_critical_error())
+def _pipeline(*args, **kwargs):
+    return Pipeline(*args, **kwargs).set_error_manager(ErrorManager().raise_on_critical_error())
 
 
 def test_run():
@@ -260,7 +260,7 @@ def test_concurrent_initialization():
     pipeline.append_stage('duplicator1', BatchTextDuplicator(), concurrency=1)
     items = list(pipeline.run())
     _check(items, 100, pipeline)
-    pipeline = _pipeline().set_max_init_workers(1)
+    pipeline = _pipeline(max_init_workers=1)
     pipeline.set_source(FakeSource(100))
     pipeline.append_stage_concurrently('reverser0', BatchTextReverser, args=[20], concurrency=1, use_threads=False)
     pipeline.append_stage_concurrently('reverser1', BatchTextReverser, args=[20], concurrency=1, use_threads=True)
@@ -405,7 +405,7 @@ def test_single_items(items_generator_fx):
     assert result.id == item.id
     assert result.payload['text'] != item.payload['text']
 
-    pipeline = _pipeline().set_max_init_workers(1)
+    pipeline = _pipeline(max_init_workers=1)
     pipeline.append_stage_concurrently('reverser0', BatchTextReverser, args=[20], concurrency=1, use_threads=False)
     pipeline.append_stage_concurrently('reverser1', BatchTextReverser, args=[20], concurrency=1, use_threads=True)
     pipeline.append_stage_concurrently('duplicator', BatchTextDuplicator, args=[20], concurrency=1, use_threads=False)
