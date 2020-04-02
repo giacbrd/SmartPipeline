@@ -49,6 +49,23 @@ def test_error(caplog):
     pipeline.set_error_manager(ErrorManager())
     pipeline.set_source(FakeSource(10))
     pipeline.append_stage('reverser', TextReverser())
+    pipeline.append_stage('error', ErrorStage())
+    pipeline.append_stage('duplicator', TextDuplicator())
+    for item in pipeline.run():
+        assert item.has_errors()
+        assert item.get_timing('reverser')
+        assert item.get_timing('duplicator')
+        assert any(k.startswith('text_') for k in item.payload.keys())
+        assert item.get_timing('error')
+        error = next(item.errors())
+        assert isinstance(error.get_exception(), Exception)
+        assert str(error) == 'test pipeline error'
+    assert any(caplog.records)
+    assert pipeline.count == 10
+    pipeline = _pipeline()
+    pipeline.set_error_manager(ErrorManager())
+    pipeline.set_source(FakeSource(10))
+    pipeline.append_stage('reverser', TextReverser())
     pipeline.append_stage('error1', ExceptionStage())
     pipeline.append_stage('error2', ErrorStage())
     for item in pipeline.run():
@@ -178,6 +195,20 @@ def test_concurrency_errors():
         for _ in pipeline.run():
             pass
         assert pipeline.count == 1
+    pipeline = _pipeline()
+    pipeline.set_source(FakeSource(10))
+    pipeline.append_stage('reverser', TextReverser(), concurrency=1)
+    pipeline.append_stage('error1', ErrorStage(), concurrency=1, use_threads=False)
+    pipeline.append_stage('error2', ErrorStage(), concurrency=2)
+    pipeline.append_stage('duplicator', TextDuplicator(), concurrency=1, use_threads=False)
+    for item in pipeline.run():
+        assert item.get_timing('reverser')
+        assert item.get_timing('duplicator')
+        assert any(k.startswith('text_') for k in item.payload.keys())
+        assert len(list(item.errors())) == 2
+        assert item.get_timing('error1')
+        assert item.get_timing('error2')
+    assert pipeline.count == 10
 
 
 def test_concurrent_constructions():
@@ -189,6 +220,8 @@ def test_concurrent_constructions():
     pipeline.append_stage('reverser2', TextReverser(), concurrency=1, use_threads=False)
     for item in pipeline.run():
         assert item.payload.get('file')
+        assert item.get_timing('reverser1')
+        assert item.get_timing('reverser2')
     assert pipeline.count == 10
 
 

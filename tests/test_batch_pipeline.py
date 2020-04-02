@@ -78,6 +78,23 @@ def test_error(caplog):
     assert any(caplog.records)
     pipeline = _pipeline()
     pipeline.set_error_manager(ErrorManager())
+    pipeline.set_source(FakeSource(28))
+    pipeline.append_stage('reverser', BatchTextReverser(size=8))
+    pipeline.append_stage('error', ErrorStage())
+    pipeline.append_stage('duplicator', BatchTextDuplicator(size=5))
+    for item in pipeline.run():
+        assert item.has_errors()
+        assert item.get_timing('reverser')
+        assert item.get_timing('duplicator')
+        assert any(k.startswith('text_') for k in item.payload.keys())
+        assert item.get_timing('error')
+        error = next(item.errors())
+        assert isinstance(error.get_exception(), Exception)
+        assert str(error) == 'test pipeline error'
+    assert pipeline.count == 28
+    assert any(caplog.records)
+    pipeline = _pipeline()
+    pipeline.set_error_manager(ErrorManager())
     pipeline.set_source(FakeSource(10))
     pipeline.append_stage('reverser', BatchTextReverser(size=3))
     pipeline.append_stage('error1', ExceptionStage())
@@ -95,7 +112,7 @@ def test_error(caplog):
     with pytest.raises(Exception):
         pipeline = _pipeline()
         pipeline.set_source(FakeSource(10))
-        pipeline.append_stage('reverser', TextReverser())
+        pipeline.append_stage('reverser', BatchTextReverser(size=4))
         pipeline.append_stage('error', ExceptionStage())
         for _ in pipeline.run():
             pass
@@ -241,20 +258,31 @@ def test_mixed_concurrent_run():
 def test_concurrency_errors():
     with pytest.raises(Exception):
         pipeline = _pipeline()
-        pipeline.set_source(FakeSource(10))
-        pipeline.append_stage('reverser', BatchTextReverser(), concurrency=1)
-        pipeline.append_stage('error2', ExceptionStage(), concurrency=1)
+        pipeline.set_source(FakeSource(29))
+        pipeline.append_stage('reverser', BatchTextReverser(size=7), concurrency=1)
+        pipeline.append_stage('error', ExceptionStage(), concurrency=1)
         for _ in pipeline.run():
             pass
         assert pipeline.count == 1
     with pytest.raises(Exception):
         pipeline = _pipeline()
         pipeline.set_source(FakeSource(10))
-        pipeline.append_stage('reverser', BatchTextReverser(), concurrency=1, use_threads=False)
-        pipeline.append_stage('error2', ExceptionStage(), concurrency=1, use_threads=False)
+        pipeline.append_stage('reverser', BatchTextReverser(size=3), concurrency=1, use_threads=False)
+        pipeline.append_stage('error', ExceptionStage(), concurrency=1, use_threads=False)
         for _ in pipeline.run():
             pass
         assert pipeline.count == 1
+    pipeline = _pipeline()
+    pipeline.set_source(FakeSource(29))
+    pipeline.append_stage('reverser', BatchTextReverser(size=3), concurrency=3)
+    pipeline.append_stage('error', ErrorStage(), concurrency=1)
+    pipeline.append_stage('duplicator', BatchTextDuplicator(size=7), concurrency=2)
+    for item in pipeline.run():
+        assert item.get_timing('reverser')
+        assert item.get_timing('duplicator')
+        assert any(k.startswith('text_') for k in item.payload.keys())
+        assert item.get_timing('error')
+    assert pipeline.count == 29
 
 
 def test_concurrent_initialization():

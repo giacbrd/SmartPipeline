@@ -72,12 +72,12 @@ class DataItem:
     def metadata_fields(self) -> KeysView[str]:
         return self._meta.keys()
 
-    def set_timing(self, stage: str, ms: float) -> DataItem:
-        self._timings[stage] = ms
+    def set_timing(self, stage_name: str, ms: float) -> DataItem:
+        self._timings[stage_name] = ms
         return self
 
-    def get_timing(self, stage: str) -> float:
-        return self._timings.get(stage)
+    def get_timing(self, stage_name: str) -> float:
+        return self._timings.get(stage_name)
 
     @property
     def timed_stages(self) -> KeysView[str]:
