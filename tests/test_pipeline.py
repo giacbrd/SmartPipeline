@@ -30,7 +30,7 @@ def test_run():
     assert pipeline.count == 10
 
 
-def test_error(caplog):
+def test_errors(caplog):
     pipeline = _pipeline()
     pipeline.set_error_manager(ErrorManager())
     pipeline.set_source(FakeSource(10))

@@ -115,17 +115,17 @@ class Pipeline:
         while True:
             for name, container in self._containers.items():
                 # concurrent stages run by themselves in threads/processes
-                if not isinstance(container, (ConcurrentStageContainer, BatchConcurrentStageContainer)):
-                    container.process()
-                else:
-                    try:
+                try:
+                    if not isinstance(container, (ConcurrentStageContainer, BatchConcurrentStageContainer)):
+                        container.process()
+                    else:
                         container.check_errors()
-                    except Exception as e:
-                        self.stop()
-                        self._terminate_all(force=True)  # TODO in case of errors we loose pending items!
-                        self.shutdown()
-                        self._count += 1
-                        raise e
+                except Exception as e:
+                    self.stop()
+                    self._terminate_all(force=True)  # TODO in case of errors we loose pending items!
+                    self.shutdown()
+                    self._count += 1
+                    raise e
                 if name == last_stage_name:
                     for _ in range(container.size() if isinstance(container, BatchStageContainer) else 1):
                         item = container.get_processed()
