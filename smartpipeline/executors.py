@@ -1,16 +1,14 @@
 import queue
 import time
 from threading import Event
-from typing import Sequence, Callable, Union, Optional, List
-
+from typing import Sequence, Callable, Optional, List
+from smartpipeline.utils import ConcurrentCounter
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import DataItem, Stop
 from smartpipeline.stage import Stage, BatchStage, ItemsQueue, StageType
 
-__author__ = 'Giacomo Berardi <giacbrd.com>'
-
-from smartpipeline.utils import ConcurrentCounter
+__author__ = "Giacomo Berardi <giacbrd.com>"
 
 
 def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataItem:
@@ -20,15 +18,17 @@ def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataIt
     try:
         ret = stage.process(item)
     except Exception as e:
-        item.set_timing(stage.name, (time.time() - time1) * 1000.)
+        item.set_timing(stage.name, (time.time() - time1) * 1000.0)
         error_manager.handle(e, stage, item)
         return item
     # this can't be in a finally, otherwise it would register the `error_manager.handle` time
-    item.set_timing(stage.name, (time.time() - time1) * 1000.)
+    item.set_timing(stage.name, (time.time() - time1) * 1000.0)
     return ret
 
 
-def process_batch(stage: BatchStage, items: Sequence[DataItem], error_manager: ErrorManager) -> List[Optional[DataItem]]:
+def process_batch(
+    stage: BatchStage, items: Sequence[DataItem], error_manager: ErrorManager
+) -> List[Optional[DataItem]]:
     ret = [None] * len(items)
     to_process = {}
     for i, item in enumerate(items):
@@ -40,13 +40,13 @@ def process_batch(stage: BatchStage, items: Sequence[DataItem], error_manager: E
     try:
         processed = stage.process_batch(list(to_process.values()))
     except Exception as e:
-        spent = ((time.time() - time1) * 1000.) / (len(to_process) or 1.)
+        spent = ((time.time() - time1) * 1000.0) / (len(to_process) or 1.0)
         for i, item in to_process.items():
             item.set_timing(stage.name, spent)
             error_manager.handle(e, stage, item)
             ret[i] = item
         return ret
-    spent = ((time.time() - time1) * 1000.) / (len(to_process) or 1.)
+    spent = ((time.time() - time1) * 1000.0) / (len(to_process) or 1.0)
     for n, i in enumerate(to_process.keys()):
         item = processed[n]
         item.set_timing(stage.name, spent)
@@ -54,8 +54,14 @@ def process_batch(stage: BatchStage, items: Sequence[DataItem], error_manager: E
     return ret
 
 
-def stage_executor(stage: Stage, in_queue: ItemsQueue, out_queue: ItemsQueue, error_manager: ErrorManager,
-                   terminated: Event, counter: ConcurrentCounter):
+def stage_executor(
+    stage: Stage,
+    in_queue: ItemsQueue,
+    out_queue: ItemsQueue,
+    error_manager: ErrorManager,
+    terminated: Event,
+    counter: ConcurrentCounter,
+):
     stage.on_fork()
     while True:
         if terminated.is_set() and in_queue.empty():
@@ -81,8 +87,14 @@ def stage_executor(stage: Stage, in_queue: ItemsQueue, out_queue: ItemsQueue, er
                 in_queue.task_done()
 
 
-def batch_stage_executor(stage: BatchStage, in_queue: ItemsQueue, out_queue: ItemsQueue, error_manager: ErrorManager,
-                         terminated: Event, counter: ConcurrentCounter):
+def batch_stage_executor(
+    stage: BatchStage,
+    in_queue: ItemsQueue,
+    out_queue: ItemsQueue,
+    error_manager: ErrorManager,
+    terminated: Event,
+    counter: ConcurrentCounter,
+):
     stage.on_fork()
     while True:
         if terminated.is_set() and in_queue.empty():
@@ -113,4 +125,5 @@ def batch_stage_executor(stage: BatchStage, in_queue: ItemsQueue, out_queue: Ite
 
 
 StageExecutor = Callable[
-    [StageType, ItemsQueue, ItemsQueue, ErrorManager, Event, ConcurrentCounter], None]
+    [StageType, ItemsQueue, ItemsQueue, ErrorManager, Event, ConcurrentCounter], None
+]

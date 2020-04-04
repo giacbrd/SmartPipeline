@@ -85,8 +85,7 @@ class TextExtractor(Stage):
 
 class BatchTextGenerator(BatchStage):
     def __init__(self, size=10, timeout=0.1):
-        self._timeout = timeout
-        self._size = size
+        super().__init__(size, timeout)
 
     def process_batch(self, items):
         for item in items:
@@ -102,8 +101,7 @@ class BatchTextGenerator(BatchStage):
 
 class BatchTextReverser(BatchStage):
     def __init__(self, cycles=1, size=10, timeout=0.1):
-        self._timeout = timeout
-        self._size = size
+        super().__init__(size, timeout)
         self._cycles = cycles
 
     def process_batch(self, items):
@@ -121,9 +119,8 @@ class BatchTextReverser(BatchStage):
 
 class BatchTextDuplicator(BatchStage):
     def __init__(self, cycles=1, size=10, timeout=0.1, check_batch=False):
+        super().__init__(size, timeout)
         self._check_batch = check_batch
-        self._timeout = timeout
-        self._size = size
         self._cycles = cycles
 
     def process_batch(self, items):
@@ -175,8 +172,7 @@ class CriticalErrorStage(Stage):
 
 class BatchExceptionStage(BatchStage):
     def __init__(self, size=10, timeout=0.1):
-        self._timeout = timeout
-        self._size = size
+        super().__init__(size, timeout)
 
     def size(self) -> int:
         return self._size
@@ -191,8 +187,7 @@ class BatchExceptionStage(BatchStage):
 
 class BatchErrorStage(BatchStage):
     def __init__(self, size=10, timeout=0.1):
-        self._timeout = timeout
-        self._size = size
+        super().__init__(size, timeout)
 
     def size(self) -> int:
         return self._size

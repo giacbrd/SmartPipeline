@@ -6,7 +6,7 @@ from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event
 from typing import Sequence, Optional, Callable
-
+from smartpipeline.utils import ConcurrentCounter
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.executors import process, process_batch, stage_executor, batch_stage_executor, StageExecutor
 from smartpipeline.stage import Stage, BatchStage, Source, ItemsQueue, StageType
@@ -14,7 +14,6 @@ from smartpipeline.item import DataItem, Stop
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
 
-from smartpipeline.utils import ConcurrentCounter
 
 QueueInitializer = Callable[[], ItemsQueue]
 CounterInitializer = Callable[[], ConcurrentCounter]
