@@ -10,7 +10,9 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
 class ErrorManager:
-    """Basic error handling of a pipeline, principally manages Error and CriticalError types"""
+    """
+    Basic error handling of a pipeline, principally manages Error and CriticalError types
+    """
 
     def __init__(self):
         self._raise_on_critical = False

@@ -3,7 +3,9 @@ from typing import Optional
 
 
 class Error(Exception):
-    """Base exception type which usually only provokes the skipping of a stage"""
+    """
+    Base exception type which usually only provokes the skipping of a stage
+    """
 
     def set_stage(self, stage: str):
         self._pipeline_stage = stage
@@ -34,6 +36,8 @@ class Error(Exception):
 
 
 class CriticalError(Error):
-    """A type of exception which usually provokes the skipping of an item in the whole pipeline"""
+    """
+    A type of exception which usually provokes the skipping of an item in the whole pipeline
+    """
 
     pass
