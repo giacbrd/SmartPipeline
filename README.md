@@ -58,22 +58,24 @@ Errors are eventually logged in the Elasticsearch cluster.
 
 ```python
 from smartpipeline.pipeline import Pipeline
-from smartpipeline.stage import Stage
-from smartpipeline.error import ErrorManager
+from smartpipeline.stage import Stage, NameMixin
+from smartpipeline.item import DataItem
+from smartpipeline.error.handling import ErrorManager
 from smartpipeline.error.exceptions import Error
 from smartpipeline.helpers import LocalFilesSource, FilePathItem
 from elasticsearch import Elasticsearch
+from typing import Optional
 import logging, re
+
 
 class ESErrorLogger(ErrorManager):
     """An error manager that writes error info into an Elasticsearch index"""
-    def __init__(self, es_host, es_index):
+    def __init__(self, es_host: str, es_index: str):
         super().__init__()
         self.es_client = Elasticsearch(es_host)
         self.es_index = es_index
 
-    def handle(self, error, stage, item):
-        super(ESErrorLogger, self).handle(error, stage, item)
+    def handle(self, error: Exception, stage: NameMixin, item: DataItem) -> Optional[Exception]:
         if isinstance(error, Error):
             error = error.get_exception()
         self.es_client.index(index=self.es_index, body={
@@ -82,6 +84,8 @@ class ESErrorLogger(ErrorManager):
             'exception': type(error),
             'message': str(error)
         })
+        return super().handle(error, stage, item)
+
 
 class TextExtractor(Stage):
     """Read the text content of files"""
@@ -92,6 +96,7 @@ class TextExtractor(Stage):
         except IOError:
             raise Error(f'Problems in reading file {item.path}')    
         return item
+
 
 class VatFinder(Stage):
     """Identify Italian VAT codes in texts"""
@@ -105,15 +110,17 @@ class VatFinder(Stage):
         item.payload['vat_codes'] = vat_codes    
         return item
 
+
 class Indexer(Stage):
     """Write item payloads into an Elasticsearch index"""
-    def __init__(self, es_host, es_index):
+    def __init__(self, es_host: str, es_index: str):
         self.es_client = Elasticsearch(es_host)
         self.es_index = es_index
     
     def process(self, item: DataItem) -> DataItem:
         self.es_client.index(index=self.es_index, body=item.payload)
         return item
+
 
 pipeline = Pipeline().set_error_manager(
     ESErrorLogger(es_host='localhost:9200', es_index='error_logs').raise_on_critical_error()
@@ -129,6 +136,7 @@ pipeline = Pipeline().set_error_manager(
         'indexer', 
         Indexer(es_host='localhost:9200', es_index='documents')
     )
+
 
 for item in pipeline.run():
     logging.info(f'Processed document: {item}')

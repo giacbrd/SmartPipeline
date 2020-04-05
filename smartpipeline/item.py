@@ -4,7 +4,7 @@ from typing import Union, Generator, Any, KeysView, Callable, Dict
 from smartpipeline.defaults import PAYLOAD_SNIPPET_SIZE
 from smartpipeline.error.exceptions import Error, CriticalError
 
-__author__ = 'Giacomo Berardi <giacbrd.com>'
+__author__ = "Giacomo Berardi <giacbrd.com>"
 
 
 class DataItem:
@@ -37,29 +37,37 @@ class DataItem:
     def payload(self) -> Dict[str, Any]:
         return self._payload
 
-    def add_error(self, stage: str, exception: Union[Error, Exception]):
-        if hasattr(exception, 'set_stage'):
+    def add_error(self, stage: str, exception: Union[Error, Exception]) -> Error:
+        if hasattr(exception, "set_stage"):
             if not type(exception) is Error:
                 raise ValueError("Add a pipeline error or a generic exception.")
             exception.set_stage(stage)
             self._errors.append(exception)
+            return exception
         else:
             error = Error()
             error.with_exception(exception)
             error.set_stage(stage)
             self._errors.append(error)
+            return error
 
-    def add_critical_error(self, stage: str, exception: Union[Error, Exception]):
-        if hasattr(exception, 'set_stage'):
+    def add_critical_error(
+        self, stage: str, exception: Union[CriticalError, Exception]
+    ) -> CriticalError:
+        if hasattr(exception, "set_stage"):
             if not type(exception) is CriticalError:
-                raise ValueError("Add a critical pipeline error or a generic exception.")
+                raise ValueError(
+                    "Add a critical pipeline error or a generic exception."
+                )
             exception.set_stage(stage)
             self._critical_errors.append(exception)
+            return exception
         else:
             error = CriticalError()
             error.with_exception(exception)
             error.set_stage(stage)
             self._critical_errors.append(error)
+            return error
 
     def set_metadata(self, field: str, value: Any) -> DataItem:
         self._meta[field] = value
@@ -85,15 +93,15 @@ class DataItem:
 
     @property
     def id(self) -> Any:
-        ret = self._payload.get('id')
+        ret = self._payload.get("id")
         if ret is None:
-            ret = self._meta.get('id')
+            ret = self._meta.get("id")
             if ret is None:
                 ret = id(self)
         return ret
 
     def __str__(self) -> str:
-        return f'Data Item {self.id} with payload {self.payload_snippet()}...'
+        return f"Data Item {self.id} with payload {self.payload_snippet()}..."
 
     def set_callback(self, fun: Callable):
         self._callback_fun = fun
@@ -105,4 +113,4 @@ class DataItem:
 
 class Stop(DataItem):
     def __str__(self) -> str:
-        return 'Stop signal {}'.format(self.id)
+        return "Stop signal {}".format(self.id)

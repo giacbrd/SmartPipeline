@@ -6,50 +6,78 @@ from smartpipeline.error.exceptions import Error, CriticalError
 from smartpipeline.item import DataItem
 from smartpipeline.stage import NameMixin
 
-__author__ = 'Giacomo Berardi <giacbrd.com>'
+__author__ = "Giacomo Berardi <giacbrd.com>"
 
 
 class ErrorManager:
+    """Basic error handling of a pipeline, principally manages Error and CriticalError types"""
+
     def __init__(self):
         self._raise_on_critical = False
         self._skip_on_critical = True
         self._logger = logging.getLogger(self.__class__.__name__)
 
     def raise_on_critical_error(self) -> ErrorManager:
+        """
+        If a CriticalError ora any non-managed exception is met, raise it externally, kill the pipeline
+        :return:
+        """
         self._raise_on_critical = True
         return self
 
     def no_skip_on_critical_error(self) -> ErrorManager:
+        """
+        Change default behaviour on CriticalError: just skip the current stage .
+        Only if `raise_on_critical_error` is not set
+        :return:
+        """
         self._skip_on_critical = False
         return self
 
-    def handle(self, error: Exception, stage: NameMixin, item: DataItem) -> Optional[Exception]:
+    def handle(
+        self, error: Exception, stage: NameMixin, item: DataItem
+    ) -> Optional[Exception]:
         """
-        Manage errors produced by a stage
-        :param error: it can be a generic exception or an error explicitly thrown by a stage
-        :param stage:
-        :param item:
+        Manage a error produced by a stage
+        :param error: it can be a generic exception or an error explicitly raised by a stage
+        :param stage: stage which raised the exception during process
+        :param item: item which raised the exception when processed
+        :return: An exception which caused a critical error if any
         """
         if type(error) is Error:
-            item.add_error(stage.name, error)
-        elif type(error) is CriticalError:
-            item.add_critical_error(stage.name, error)
+            item_error = item.add_error(stage.name, error)
         else:
-            # any unmanaged exception is a critical error
-            item.add_critical_error(stage.name, error)
+            # any un-managed exception is a potential critical error
+            item_error = item.add_critical_error(stage.name, error)
         exc_info = (type(error), error, error.__traceback__)
         self._logger.exception(self._generate_message(stage, item), exc_info=exc_info)
-        return self.check_errors(item)
+        if isinstance(item_error, CriticalError):
+            return self._check_critical(item_error)
 
-    def _generate_message(self, stage: NameMixin, item: DataItem) -> str:
-        return 'The stage {} has generated an error on item {}'.format(stage, item)
+    @staticmethod
+    def _generate_message(stage: NameMixin, item: DataItem) -> str:
+        return "The stage {} has generated an error on item {}".format(stage, item)
+
+    def _check_critical(self, error: CriticalError) -> Optional[Exception]:
+        """
+        Manage critical errors, usually after an item has been processed by a stage
+        :param error:
+        :return: The exception which caused a critical error if any
+        """
+        ex = error.get_exception()
+        if self._raise_on_critical:
+            raise ex
+        elif self._skip_on_critical:
+            return ex
 
     def check_errors(self, item: DataItem) -> Optional[Exception]:
+        """
+        Check the errors registered for an item
+        :param item:
+        :return:
+        """
         if item.has_critical_errors():
             for er in item.critical_errors():
-                ex = er.get_exception()
-                if self._raise_on_critical:
-                    raise ex
-                elif self._skip_on_critical:
+                ex = self._check_critical(er)
+                if ex:
                     return ex
-        return None
