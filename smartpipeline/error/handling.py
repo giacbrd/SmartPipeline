@@ -22,7 +22,6 @@ class ErrorManager:
     def raise_on_critical_error(self) -> ErrorManager:
         """
         If a CriticalError ora any non-managed exception is met, raise it externally, kill the pipeline
-        :return:
         """
         self._raise_on_critical = True
         return self
@@ -31,7 +30,6 @@ class ErrorManager:
         """
         Change default behaviour on CriticalError: just skip the current stage .
         Only if `raise_on_critical_error` is not set
-        :return:
         """
         self._skip_on_critical = False
         return self
@@ -41,6 +39,7 @@ class ErrorManager:
     ) -> Optional[Exception]:
         """
         Manage a error produced by a stage
+
         :param error: it can be a generic exception or an error explicitly raised by a stage
         :param stage: stage which raised the exception during process
         :param item: item which raised the exception when processed
@@ -62,8 +61,8 @@ class ErrorManager:
 
     def _check_critical(self, error: CriticalError) -> Optional[Exception]:
         """
-        Manage critical errors, usually after an item has been processed by a stage
-        :param error:
+        Manage a critical error, usually after an item has been processed by a stage
+
         :return: The exception which caused a critical error if any
         """
         ex = error.get_exception()
@@ -75,8 +74,6 @@ class ErrorManager:
     def check_errors(self, item: DataItem) -> Optional[Exception]:
         """
         Check the errors registered for an item
-        :param item:
-        :return:
         """
         if item.has_critical_errors():
             for er in item.critical_errors():

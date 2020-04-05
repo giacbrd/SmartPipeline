@@ -47,7 +47,6 @@ class InQueued(ABC):
     def init_queue(self, initializer: QueueInitializer):
         """
         Initialize the output queue with a specific constructor (function)
-        :param initializer:
         """
         pass
 
@@ -69,6 +68,7 @@ class BaseContainer(InQueued):
     ) -> Optional[DataItem]:
         """
         Get the oldest processed item waiting to be retrieved
+
         :param block: Wait for the next item to be processed if no one available
         :param timeout: Time to wait when block is True
         :return: A processed item or None if: no item waiting to be retrieved; timeout expires on a blocked call
@@ -104,7 +104,6 @@ class BaseContainer(InQueued):
     def count(self) -> int:
         """
         Return the number of items that have been seen by this container
-        :return:
         """
         return self._counter
 
@@ -124,14 +123,12 @@ class ConnectedStageMixin:
     def previous(self) -> BaseContainer:
         """
         Get the container from which the current receives items
-        :return:
         """
         return self._previous
 
     def set_previous(self, container: BaseContainer):
         """
         Set the container from which the current will receive items
-        :param container:
         """
         self._previous = container
 
@@ -186,7 +183,6 @@ class SourceContainer(BaseContainer):
     def _internal_queue(self) -> ItemsQueue:
         """
         A special queue through one can "manually" enrich the source with items
-        :return:
         """
         if self._internal_queue_obj is None:
             if self._queue_initializer is None:
@@ -203,14 +199,12 @@ class SourceContainer(BaseContainer):
     def set(self, source: Source):
         """
         Set the actual source for this container
-        :param source:
         """
         self._source = source
 
     def is_set(self) -> bool:
         """
         True if this container is ready to produce items in output
-        :return:
         """
         return (
             self._source is not None
@@ -221,7 +215,6 @@ class SourceContainer(BaseContainer):
     def is_stopped(self) -> bool:
         """
         True if this container has ended the production of items
-        :return:
         """
         if self._source is not None:
             return getattr(self._source, "is_stopped", False)
@@ -279,7 +272,6 @@ class SourceContainer(BaseContainer):
     def _get_next_item(self) -> DataItem:
         """
         Obtain the next item to send to output according to the source status and "manually" added items
-        :return:
         """
         ret = self._next_item
         self._next_item = None
@@ -345,7 +337,6 @@ class StageContainer(
         A processed item is set as next output.
         If we are processing asynchronously (e.g. concurrent stage) it is put in the output queue,
         otherwise a reference to the this last processed item is set
-        :param item:
         """
         self._last_processed = item
         if (
@@ -421,7 +412,6 @@ class BatchStageContainer(
         A batch of processed items are set as next output.
         If we are processing asynchronously (e.g. concurrent stage) they are put in the output queue,
         otherwise a list of last processed items is extended
-        :param items:
         """
         self._last_processed.extend(items)
         if (
@@ -454,6 +444,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
     ):
         """
         Initialization of instance members
+
         :param queue_initializer: Constructor for output, and eventually input, queue
         :param counter_initializer: Constructor for items counter, it counts items seen by concurrent process calls
         :param terminate_event_initializer: Constructor for event for alerting all concurrent stages for termination
@@ -474,7 +465,6 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
     def queues_empty(self) -> bool:
         """
         True of both input and output queues are empty
-        :return:
         """
         return self._previous_queue.empty() and self.out_queue.empty()
 
@@ -511,7 +501,6 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
     def _get_stage_executor(self) -> Executor:
         """
         Get and eventually generate a pool executor where concurrent stages are run
-        :return:
         """
         if self._stage_executor is None:
             executor = ThreadPoolExecutor if self._use_threads else ProcessPoolExecutor
@@ -523,7 +512,6 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
     def use_threads(self) -> bool:
         """
         True if we are using threads, False if we are using multiprocess
-        :return:
         """
         return self._use_threads
 
@@ -564,7 +552,6 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
     def is_terminated(self) -> bool:
         """
         Check if termination has been set and all stages have been terminated
-        :return:
         """
         return (
             all(future.done() or future.cancelled() for future in self._futures)
@@ -582,6 +569,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
+
         :param stage: Stage instance
         :param _executor: Function to run in the executor, which performs the stage process calls
         :param in_queue: Previous stage output queue
@@ -644,6 +632,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
+
         :param _executor: Function to run in the executor, which performs the stage process calls
         """
         super()._run(
@@ -694,6 +683,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
+
         :param _executor: Function to run in the executor, which performs the stage process calls
         """
         super()._run(

@@ -16,8 +16,6 @@ class Error(Exception):
     def with_exception(self, exception: Exception) -> Error:
         """
         Set the original exception (if any) that generated this error
-        :param exception:
-        :return:
         """
         self._pipeline_exception = exception
         return self
@@ -25,7 +23,6 @@ class Error(Exception):
     def get_exception(self) -> Exception:
         """
         Get the original exception (if any) that generated this error
-        :return:
         """
         return getattr(self, "_pipeline_exception", Exception())
 
