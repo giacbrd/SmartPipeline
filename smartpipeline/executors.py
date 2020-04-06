@@ -12,6 +12,9 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
 def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataItem:
+    """
+    Execute the process method of a stage for an item
+    """
     if error_manager.check_errors(item):
         return item
     time1 = time.time()
@@ -29,6 +32,9 @@ def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataIt
 def process_batch(
     stage: BatchStage, items: Sequence[DataItem], error_manager: ErrorManager
 ) -> List[Optional[DataItem]]:
+    """
+    Execute the process method of a batch stage for a batch of items
+    """
     ret = [None] * len(items)
     to_process = {}
     for i, item in enumerate(items):
@@ -62,6 +68,10 @@ def stage_executor(
     terminated: Event,
     counter: ConcurrentCounter,
 ):
+    """
+    Consume items from an input queue, process and put them in a output queue, indefinitely,
+    until a termination event is set
+    """
     stage.on_fork()
     while True:
         if terminated.is_set() and in_queue.empty():
@@ -95,6 +105,10 @@ def batch_stage_executor(
     terminated: Event,
     counter: ConcurrentCounter,
 ):
+    """
+    Consume items in batches from an input queue, process and put them in a output queue, indefinitely,
+    until a termination event is set
+    """
     stage.on_fork()
     while True:
         if terminated.is_set() and in_queue.empty():
@@ -103,6 +117,7 @@ def batch_stage_executor(
         try:
             for _ in range(stage.size()):
                 item = in_queue.get(block=True, timeout=stage.timeout())
+                # give priority to the Stop event item
                 if isinstance(item, Stop):
                     out_queue.put(item, block=True)
                 elif item is not None:

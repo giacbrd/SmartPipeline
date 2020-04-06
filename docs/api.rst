@@ -1,5 +1,5 @@
 Developer Interface
 ===================
 
-.. automodule:: smartpipeline.containers
+.. automodule:: smartpipeline.item
    :members:
