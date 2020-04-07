@@ -8,7 +8,7 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from multiprocessing import Manager
 from queue import Queue
 from threading import Thread, Event
-from typing import Generator, Optional, Callable, Sequence, Mapping
+from typing import Generator, Optional, Callable, Sequence, Mapping, Any
 
 from smartpipeline.defaults import CONCURRENCY_WAIT, MAX_QUEUES_SIZE
 from smartpipeline.error.handling import ErrorManager
@@ -42,10 +42,14 @@ class Pipeline:
         max_init_workers: Optional[int] = None,
         max_queues_size: int = MAX_QUEUES_SIZE,
     ):
+        """
+        :param max_init_workers: Number of workers to use for concurrent initialization of stages, default the number of CPUs
+        :param max_queues_size: Maximum size of any queue instanced for the pipeline (stage input and output queues)
+        """
         self._concurrencies = {}
         self._containers = OrderedDict()
         self._error_manager = ErrorManager()
-        self._max_init_workers = max_init_workers  # default: number of CPUs
+        self._max_init_workers = max_init_workers
         self._init_executor = None
         self._wait_previous_executor = None
         self._source_name = None
@@ -59,32 +63,55 @@ class Pipeline:
         self._count = 0
 
     def _new_mp_queue(self) -> ItemsQueue:
+        """
+        Construct queue for multiprocess communication
+        """
         if self._sync_manager is None:
             self._sync_manager = Manager()
         return self._sync_manager.Queue(maxsize=self._max_queues_size)
 
     def _new_queue(self) -> ItemsQueue:
+        """
+        Construct queue for communication
+        """
         return Queue(maxsize=self._max_queues_size)
 
     def _new_mp_event(self) -> Event:
+        """
+        Construct synchronization event for multiprocess
+        """
         if self._sync_manager is None:
             self._sync_manager = Manager()
         return self._sync_manager.Event()
 
     @staticmethod
     def _new_event() -> Event:
+        """
+        Construct synchronization event
+        """
         return Event()
 
     def _new_mp_counter(self) -> ProcessCounter:
+        """
+        Construct a safe counter for multiprocess
+        """
         if self._sync_manager is None:
             self._sync_manager = Manager()
         return ProcessCounter(self._sync_manager)
 
     @staticmethod
     def _new_counter() -> ThreadCounter:
+        """
+        Construct a safe counter for threads
+        """
         return ThreadCounter()
 
     def _wait_executors(self, wait_seconds: float = CONCURRENCY_WAIT):
+        """
+        Wait for all containers to start
+
+        :param wait_seconds: Recurrently wait these seconds for all stage initializers to finish
+        """
         if self._init_executor is not None:
             self._init_executor.shutdown(wait=True)
             self._init_executor = None
@@ -113,6 +140,11 @@ class Pipeline:
         self.shutdown()
 
     def run(self) -> Generator[DataItem, None, None]:
+        """
+        Run the pipeline given a source and a concatenation of stages, get the sequence of items through iteration
+
+        :return: Iterator over processed items
+        """
         counter = 0
         self._wait_executors()
         if not self._source_container.is_set():
@@ -126,8 +158,8 @@ class Pipeline:
             source_thread.start()
         while True:
             for name, container in self._containers.items():
-                # concurrent stages run by themselves in threads/processes
                 try:
+                    # concurrent stages run by themselves in threads/processes
                     if not isinstance(
                         container,
                         (ConcurrentStageContainer, BatchConcurrentStageContainer),
@@ -137,12 +169,12 @@ class Pipeline:
                         container.check_errors()
                 except Exception as e:
                     self.stop()
-                    self._terminate_all(
-                        force=True
-                    )  # TODO in case of errors we loose pending items!
+                    # TODO in case of errors we loose pending items!
+                    self._terminate_all(force=True)
                     self.shutdown()
                     self._count += 1
                     raise e
+                # retrieve finally processed items from the last stage
                 if name == last_stage_name:
                     for _ in range(
                         container.size()
@@ -155,11 +187,13 @@ class Pipeline:
                                 yield item
                                 counter += 1
                                 self._count += 1
+                            # if a stop is finally signaled, start termination of all containers
                             elif (
                                 not self._all_terminated() and terminator_thread is None
                             ):
                                 terminator_thread = Thread(target=self._terminate_all)
                                 terminator_thread.start()
+                        # an item is None if the final output queue is empty
                         else:
                             break
             # exit the loop only when all items have been returned
@@ -175,6 +209,7 @@ class Pipeline:
     def count(self) -> int:
         """
         Get the number of processed items by all executed runs, also for items which have failed
+
         :return: Count of processed items
         """
         return self._count
@@ -182,6 +217,12 @@ class Pipeline:
     def _terminate_all(
         self, force: bool = False, wait_seconds: float = CONCURRENCY_WAIT
     ):
+        """
+        Terminate all running containers
+
+        :param force: If True do not wait for a container to process all items produced by the source
+        :param wait_seconds: Time to wait before pinging again a container for its termination
+        """
         # scroll the pipeline by its order and terminate stages after the relative queues are empty
         for container in self._containers.values():
             if not force:
@@ -190,7 +231,8 @@ class Pipeline:
                     time.sleep(wait_seconds)
             container.terminate()
             if isinstance(container, ConcurrentStageContainer):
-                if force:  # empty the queues, losing pending items
+                if force:
+                    # empty the queues, losing pending items
                     container.empty_queues()
                 while not container.is_terminated():
                     time.sleep(wait_seconds)
@@ -199,9 +241,15 @@ class Pipeline:
                     time.sleep(wait_seconds)
 
     def _all_terminated(self) -> bool:
+        """
+        Check if all containers have been alerted for termination and are exited
+        """
         return all(container.is_terminated() for container in self._containers.values())
 
     def _all_empty(self) -> bool:
+        """
+        Check if all containers are terminated and there are not items left in the queues
+        """
         return self._all_terminated() and all(
             container.queues_empty()
             for container in self._containers.values()
@@ -211,6 +259,9 @@ class Pipeline:
         )
 
     def process(self, item: DataItem) -> DataItem:
+        """
+        Process a single item synchronously (no concurrency) through the pipeline
+        """
         last_stage_name = self._containers.last_key()
         self._source_container.prepend_item(item)
         for name, container in self._containers.items():
@@ -218,15 +269,31 @@ class Pipeline:
             if name == last_stage_name:
                 return container.get_processed(block=True)
 
-    def process_async(self, item: DataItem, callback: Optional[Callable] = None):
+    def process_async(
+        self, item: DataItem, callback: Optional[Callable[[DataItem], Any]] = None
+    ):
+        """
+        Process a single item asynchronously through the pipeline, stages run concurrently.
+        The call return immediately, processed items are retrieved with :meth:`.Pipeline.get_item`
+
+        :param callback: A function to call after a successful process of the item
+        """
         item.set_callback(callback)
         self._source_container.prepend_item(item)
         self._start_pipeline_executor()
 
     def stop(self):
+        """
+        Tell the source to stop to generate items and consequently the pipeline
+        """
         self._source_container.stop()
 
     def get_item(self, block: bool = True) -> DataItem:
+        """
+        Get a single item from the asynchronous execution of the pipeline on single items from :meth:`.Pipeline.process_async`
+
+        :param block: If True wait indefinitely for the next processed item, otherwise raise :exc:`queue.Empty`
+        """
         if self._out_queue is not None:
             item = self._out_queue.get(block)
             self._out_queue.task_done()
@@ -237,11 +304,17 @@ class Pipeline:
             )
 
     def set_source(self, source: Source) -> Pipeline:
+        """
+        Set the source of the pipeline: a subclass of :class:`.stage.Source`
+        """
         self._source_container.set(source)
         self._source_name = uuid.uuid4()
         return self
 
     def set_error_manager(self, error_manager: ErrorManager) -> Pipeline:
+        """
+        Set the error manager for handling errors from each stage item processing
+        """
         self._error_manager = error_manager
         for container in self._containers.values():
             container.set_error_manager(self._error_manager)
@@ -263,6 +336,14 @@ class Pipeline:
         last_stage_name: str,
         wait_seconds: float = CONCURRENCY_WAIT,
     ):
+        """
+        Given a container we want to append to the pipeline, wait for the last one (added to the pipeline) to be created
+
+        :param container: A container to add to the pipeline
+        :param last_stage_name: Name of the currently last stage in the pipeline
+        :param wait_seconds: Time to recurrently wait the construction of the container relative to the last stage in the pipeline
+        """
+
         def _waiter():
             if last_stage_name is not None:
                 while self._containers[last_stage_name] is None:

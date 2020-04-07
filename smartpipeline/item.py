@@ -28,6 +28,7 @@ class DataItem:
     def payload(self) -> Dict[str, Any]:
         """
         Access to the actual data contained in the item
+
         :return: A dictionary in which organizing data by fields (recommended to be JSON serializable)
         """
         return self._payload
@@ -35,6 +36,7 @@ class DataItem:
     def payload_snippet(self, max_size: int = PAYLOAD_SNIPPET_SIZE):
         """
         A short string representation of the payload (recommended to override this method)
+
         :param max_size: Maximum size of the string representation
         """
         return str(self.payload)[:max_size]
@@ -42,6 +44,7 @@ class DataItem:
     def set_metadata(self, field: str, value: Any) -> DataItem:
         """
         Add a metadata, something we want to remember but keeping it outside the payload
+
         :param field: Name of the metadata variable
         """
         self._meta[field] = value
@@ -50,6 +53,7 @@ class DataItem:
     def get_metadata(self, field: str) -> Any:
         """
         Get a metadata value by its name
+
         :return: A value or None if the metadata does not exist in the item
         """
         return self._meta.get(field)
@@ -71,6 +75,7 @@ class DataItem:
     def get_timing(self, stage_name: str) -> float:
         """
         Get the time spent by a stage (referenced by its name) for processing the item
+
         :return: The time in milliseconds or None if the item has not ben processed by the stage
         """
         return self._timings.get(stage_name)
@@ -97,7 +102,7 @@ class DataItem:
 
     def set_callback(self, fun: Callable[[DataItem], Any]):
         """
-        Set a function to call after a successful asynchronous execution of a pipeline on the item (through `process_async()`)
+        Set a function to call after a successful asynchronous execution of a pipeline on the item (through :meth:`.pipeline.Pipeline.process_async`)
         """
         self._callback_fun = fun
 

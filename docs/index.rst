@@ -12,3 +12,4 @@ SmartPipeline's documentation
    api
 
 .. include:: ../README.rst
+   :start-after: documentation-marker

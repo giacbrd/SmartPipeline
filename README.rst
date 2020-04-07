@@ -12,6 +12,8 @@ A framework for developing data pipelines following a simple design pattern
    :target: https://smartpipeline.readthedocs.io/en/stable/?badge=stable
    :alt: Documentation Status
 
+.. documentation-marker
+
 Short Documentation
 ~~~~~~~~~~~~~~~~~~~
 
