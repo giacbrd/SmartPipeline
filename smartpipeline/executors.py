@@ -35,7 +35,7 @@ def process_batch(
     """
     Execute the process method of a batch stage for a batch of items
     """
-    ret = [None] * len(items)
+    ret: List[Optional[DataItem]] = [None] * len(items)
     to_process = {}
     for i, item in enumerate(items):
         if error_manager.check_errors(item):

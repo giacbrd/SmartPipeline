@@ -9,7 +9,7 @@ from concurrent.futures import wait, Executor
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event
-from typing import Sequence, Optional, Callable, Union
+from typing import Sequence, Optional, Callable
 from smartpipeline.utils import ConcurrentCounter
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.executors import (
@@ -151,7 +151,7 @@ class NamedStageMixin:
     A mixin for containers for defining the actual stage they encapsulate
     """
 
-    def set_stage(self, name: str, stage: Union[Stage, BatchStage]):
+    def set_stage(self, name: str, stage: StageType):
         self._name = name
         self._stage = stage
         self._stage.set_name(name)
@@ -161,7 +161,7 @@ class NamedStageMixin:
         return self._name
 
     @property
-    def stage(self) -> Union[Stage, BatchStage]:
+    def stage(self) -> StageType:
         return self._stage
 
 

@@ -278,7 +278,8 @@ class Pipeline:
 
         :param callback: A function to call after a successful process of the item
         """
-        item.set_callback(callback)
+        if callback is not None:
+            item.set_callback(callback)
         self._source_container.prepend_item(item)
         self._start_pipeline_executor()
 
@@ -358,6 +359,14 @@ class Pipeline:
     def _get_container(
         self, name: str, stage: StageType, concurrency: int, use_threads: bool
     ) -> BaseContainer:
+        """
+        Get a new container instance according to the pipeline configuration
+
+        :param name: Stage name
+        :param stage: A stage instance
+        :param concurrency: Number of concurrent stage executions, if 0 just create the non-concurrent containers
+        :param use_threads: If True use threads, otherwise multiprocessing
+        """
         if concurrency <= 0:
             constructor = (
                 BatchStageContainer if isinstance(stage, BatchStage) else StageContainer
@@ -393,6 +402,9 @@ class Pipeline:
                 )
 
     def get_stage(self, name: str) -> StageType:
+        """
+        Get a stage instance by its name
+        """
         return self._containers.get(name).stage
 
     def append_stage(
@@ -402,6 +414,14 @@ class Pipeline:
         concurrency: int = 0,
         use_threads: bool = True,
     ) -> Pipeline:
+        """
+        Append a stage to the pipeline just after the last one appended or the source if it is the first stage
+
+        :param name: Name for identify the stage in the pipeline, it is also set in the stage and it must unique in the pipeline
+        :param stage: Instance of a stage
+        :param concurrency: Number of concurrent stage executions, if 0 threads/processes won't be involved for this stage
+        :param use_threads: If True use threads, otherwise multiprocessing
+        """
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and isinstance(stage, BatchStage):
             use_threads = True
@@ -409,6 +429,7 @@ class Pipeline:
         self._check_stage_name(name)
         container = self._get_container(name, stage, concurrency, use_threads)
         if concurrency > 0:
+            # if it is concurrent and it is the first stage, make the source working on a output queue
             if not self._containers:
                 self._enqueue_source = True
         self._wait_for_previous(
@@ -426,6 +447,17 @@ class Pipeline:
         concurrency: int = 0,
         use_threads: bool = True,
     ) -> Pipeline:
+        """
+        Append a stage class to the pipeline just after the last one appended or the source if it is the first stage.
+        The stage construction will be executed concurrently respect to the general pipeline construction
+
+        :param name: Name for identify the stage in the pipeline, it is also set in the stage and it must unique in the pipeline
+        :param stage_class: Class of a stage
+        :param args: List of arguments for the stage constructor
+        :param kwargs: Dictionary of keyed arguments for the stage constructor
+        :param concurrency: Number of concurrent stage executions, if 0 threads/processes won't be involved for this stage
+        :param use_threads: If True use threads, otherwise multiprocessing
+        """
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and issubclass(stage_class, BatchStage):
             use_threads = True
@@ -435,14 +467,12 @@ class Pipeline:
         if args is None:
             args = []
         self._check_stage_name(name)
-        if concurrency > 0 and not self._containers:  # first stage added
+        # if it is concurrent and it is the first stage, make the source working on a output queue
+        if concurrency > 0 and not self._containers:
             self._enqueue_source = True
         last_stage_name = self._last_stage_name()
-        self._containers[
-            name
-        ] = (
-            None
-        )  # so the order of the calls of this method is followed in `_containers`
+        # set it immediately so the order of the calls of this method is followed in `_containers`
+        self._containers[name] = None
         future = self._get_init_executor(use_threads).submit(
             stage_class, *args, **kwargs
         )
@@ -457,17 +487,28 @@ class Pipeline:
         return self
 
     def _get_init_executor(self, use_threads: bool = True) -> Executor:
+        """
+        Get a pool executor for concurrent stage initialization
+
+        :param use_threads: True if the executor uses treads, otherwise multiprocessing
+        """
         if self._init_executor is None:
             executor = ThreadPoolExecutor if use_threads else ProcessPoolExecutor
             self._init_executor = executor(max_workers=self._max_init_workers)
         return self._init_executor
 
     def _get_wait_previous_executor(self) -> Executor:
+        """
+        Get a pool executor for the function that will recurrently wait for a container to be ready
+        """
         if self._wait_previous_executor is None:
             self._wait_previous_executor = ThreadPoolExecutor()
         return self._wait_previous_executor
 
     def _start_pipeline_executor(self) -> Thread:
+        """
+        Get a thread where to run a pipeline that accepts single items asynchronous processing
+        """
         if self._pipeline_executor is None:
             self._init_out_queue()
 
@@ -481,8 +522,14 @@ class Pipeline:
         return self._pipeline_executor
 
     def _check_stage_name(self, name: str):
+        """
+        Check if a stage name is not already defined in the pipeline
+        """
         if name in self._containers:
             raise ValueError(f"The stage name {name} is already used in this pipeline")
 
     def _init_out_queue(self):
+        """
+        Get the internal output pipeline for single items asynchronous processing
+        """
         self._out_queue = self._new_queue()
