@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Sequence, Union, Any, Optional
+from queue import Queue
 
 from smartpipeline.item import DataItem
 
@@ -7,6 +8,10 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
 class NameMixin:
+    """
+    Simple mixin for setting a name to an object
+    """
+
     def set_name(self, name: str):
         self._name = name
 
@@ -50,15 +55,23 @@ class BatchProcessor(ABC):
 
 
 class Stage(NameMixin, ConcurrentMixin, Processor):
+    """
+    Subclass this and override :meth:`.Stage.process` for defining a stage
+    """
+
     def __str__(self) -> str:
         return "Stage {}".format(self.name)
 
 
 class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):
+    """
+    Subclass this and override :meth:`.BatchStage.process_batch` for defining a batch stage
+    """
+
     def __init__(self, size: int, timeout: Optional[float] = None):
         """
         :param size: Maximum size of item batches that can be processed together
-        :param timeout: Seconds to wait before flushing a batch (calling :meth:`.BatchProcessor.process_batch` on it)
+        :param timeout: Seconds to wait before flushing a batch (calling :meth:`.BatchStage.process_batch` on it)
         """
         self._size = size
         self._timeout = timeout
@@ -74,12 +87,16 @@ class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):
 
     def timeout(self) -> Optional[float]:
         """
-        Seconds to wait before flushing a batch (calling :meth:`.BatchProcessor.process_batch` on it)
+        Seconds to wait before flushing a batch (calling :meth:`.BatchStage.process_batch` on it)
         """
         return self._timeout
 
 
 class Source(ABC):
+    """
+    Sublass this for defining a pipeline source
+    """
+
     @abstractmethod
     def pop(self) -> Optional[DataItem]:
         """

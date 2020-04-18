@@ -11,7 +11,7 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 class ErrorManager:
     """
-    Basic error handling of a pipeline, principally manages Error and CriticalError types
+    Basic error handling of a pipeline, principally manages :class:`.exceptions.Error` and :class:`.exceptions.CriticalError` types
     """
 
     def __init__(self):
@@ -21,15 +21,15 @@ class ErrorManager:
 
     def raise_on_critical_error(self) -> ErrorManager:
         """
-        If a CriticalError ora any non-managed exception is met, raise it externally, kill the pipeline
+        If a :class:`.exceptions.CriticalError` or any un-managed exception is met, raise it externally, kill the pipeline
         """
         self._raise_on_critical = True
         return self
 
     def no_skip_on_critical_error(self) -> ErrorManager:
         """
-        Change default behaviour on CriticalError: just skip the current stage .
-        Only if `raise_on_critical_error` is not set
+        Change default behaviour on :class:`.exceptions.CriticalError`: just skip the current stage .
+        Valid only if :meth:`.ErrorManager.raise_on_critical_error` is not set
         """
         self._skip_on_critical = False
         return self
@@ -40,9 +40,9 @@ class ErrorManager:
         """
         Manage a error produced by a stage
 
-        :param error: it can be a generic exception or an error explicitly raised by a stage
-        :param stage: stage which raised the exception during process
-        :param item: item which raised the exception when processed
+        :param error: It can be a generic exception or an error explicitly raised by a stage
+        :param stage: Stage which raised the exception during process
+        :param item: Item which raised the exception when processed
         :return: An exception which caused a critical error if any
         """
         if type(error) is Error:
@@ -71,9 +71,9 @@ class ErrorManager:
         elif self._skip_on_critical:
             return ex
 
-    def check_errors(self, item: DataItem) -> Optional[Exception]:
+    def check_critical_errors(self, item: DataItem) -> Optional[Exception]:
         """
-        Check the errors registered for an item
+        Check the critical errors registered for an item
         """
         if item.has_critical_errors():
             for er in item.critical_errors():

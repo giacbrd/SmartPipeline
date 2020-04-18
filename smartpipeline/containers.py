@@ -4,6 +4,7 @@ Containers encapsulate stages and manage their execution
 
 import concurrent
 import queue
+from queue import Queue
 from abc import ABC, abstractmethod
 from concurrent.futures import wait, Executor
 from concurrent.futures.process import ProcessPoolExecutor
@@ -70,7 +71,7 @@ class BaseContainer(InQueued):
         Get the oldest processed item waiting to be retrieved
 
         :param block: Wait for the next item to be processed if no one available
-        :param timeout: Time to wait when block is True
+        :param timeout: Time to wait when `block` is True
         :return: A processed item or None if: no item waiting to be retrieved; timeout expires on a blocked call
         """
         return
@@ -88,7 +89,7 @@ class BaseContainer(InQueued):
 
     def stop(self):
         """
-        Set the relative stage as stopped, usually when the pipeline has ended its work
+        Set the container stage as stopped, usually when the pipeline has ended its work (i.e. the source has called :meth:`.stage.Source.stop`)
         """
         self._is_stopped = True
 
@@ -109,33 +110,33 @@ class BaseContainer(InQueued):
 
     def increase_count(self):
         """
-        Increase the counter for seen items
+        Increase the counter of items "seen" by the container/stage
         """
         self._counter += 1
 
 
 class ConnectedStageMixin:
     """
-    A mixin for containers which encapsulate stages that can be connected to others (i.e. in a pipeline)
+    A mixin for the containers that encapsulate stages that can be connected to others (i.e. in a pipeline)
     """
 
     @property
     def previous(self) -> BaseContainer:
         """
-        Get the container from which the current receives items
+        Get the container from which this container receives items
         """
         return self._previous
 
     def set_previous(self, container: BaseContainer):
         """
-        Set the container from which the current will receive items
+        Set the container from which this container will receive items
         """
         self._previous = container
 
 
 class FallibleMixin:
     """
-    A mixin for containers which encapsulate stage that can be produce errors during processing
+    A mixin for the containers that encapsulate stages that can produce errors during processing
     """
 
     def set_error_manager(self, error_manager: ErrorManager):
@@ -148,7 +149,7 @@ class FallibleMixin:
 
 class NamedStageMixin:
     """
-    A mixin for containers for defining the actual stage they encapsulate
+    A mixin for basic containers of stages
     """
 
     def set_stage(self, name: str, stage: StageType):
@@ -173,7 +174,7 @@ class SourceContainer(BaseContainer):
     def __init__(self):
         super().__init__()
         self._source = None
-        # use the next two attributes jointly so we do not need to use a queue if we only work synchronously
+        # the next two attributes are used jointly for "manually" prepending items
         self._next_item = None
         self._internal_queue_obj = None
         self._stop_sent = False
@@ -182,7 +183,7 @@ class SourceContainer(BaseContainer):
     @property
     def _internal_queue(self) -> ItemsQueue:
         """
-        A special queue through one can "manually" enrich the source with items
+        A special queue used for "manually" enrich the source with items
         """
         if self._internal_queue_obj is None:
             if self._queue_initializer is None:
@@ -194,7 +195,7 @@ class SourceContainer(BaseContainer):
         self._queue_initializer = initializer
 
     def __str__(self) -> str:
-        return "BaseContainer for source {}".format(self._source)
+        return "Base container for source {}".format(self._source)
 
     def set(self, source: Source):
         """
@@ -389,7 +390,6 @@ class BatchStageContainer(
                 for _ in range(self.stage.size()):
                     item = self.out_queue.get(block=block, timeout=timeout)
                     if item is not None:
-                        # FIXME may __result_queue explode?
                         self.__result_queue.put_nowait(item)
                     self.out_queue.task_done()
             except queue.Empty:
@@ -399,7 +399,6 @@ class BatchStageContainer(
                     return None
         elif self._last_processed:
             for item in self._last_processed:
-                # FIXME may __result_queue explode?
                 self.__result_queue.put_nowait(item)
             self._last_processed = []
         try:
@@ -409,7 +408,7 @@ class BatchStageContainer(
 
     def _put_item(self, items: Sequence[DataItem]):
         """
-        A batch of processed items are set as next output.
+        A batch of processed items is set as next output.
         If we are processing asynchronously (e.g. concurrent stage) they are put in the output queue,
         otherwise a list of last processed items is extended
         """

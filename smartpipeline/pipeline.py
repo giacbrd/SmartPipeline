@@ -273,7 +273,7 @@ class Pipeline:
         self, item: DataItem, callback: Optional[Callable[[DataItem], Any]] = None
     ):
         """
-        Process a single item asynchronously through the pipeline, stages run concurrently.
+        Process a single item asynchronously through the pipeline, stages may run concurrently.
         The call return immediately, processed items are retrieved with :meth:`.Pipeline.get_item`
 
         :param callback: A function to call after a successful process of the item
@@ -341,7 +341,7 @@ class Pipeline:
         Given a container we want to append to the pipeline, wait for the last one (added to the pipeline) to be created
 
         :param container: A container to add to the pipeline
-        :param last_stage_name: Name of the currently last stage in the pipeline
+        :param last_stage_name: Name of the last stage currently in the pipeline
         :param wait_seconds: Time to recurrently wait the construction of the container relative to the last stage in the pipeline
         """
 
@@ -507,7 +507,7 @@ class Pipeline:
 
     def _start_pipeline_executor(self) -> Thread:
         """
-        Get a thread where to run a pipeline that accepts single items asynchronous processing
+        Get a thread where to run a pipeline that accepts asynchronous processing of single items
         """
         if self._pipeline_executor is None:
             self._init_out_queue()
@@ -530,6 +530,6 @@ class Pipeline:
 
     def _init_out_queue(self):
         """
-        Get the internal output pipeline for single items asynchronous processing
+        Get the internal output pipeline for asynchronous processing of single items
         """
         self._out_queue = self._new_queue()

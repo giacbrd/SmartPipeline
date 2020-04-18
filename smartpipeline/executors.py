@@ -13,9 +13,9 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataItem:
     """
-    Execute the process method of a stage for an item
+    Execute the :meth:`.stage.Stage.process` method of a stage for an item
     """
-    if error_manager.check_errors(item):
+    if error_manager.check_critical_errors(item):
         return item
     time1 = time.time()
     try:
@@ -33,12 +33,12 @@ def process_batch(
     stage: BatchStage, items: Sequence[DataItem], error_manager: ErrorManager
 ) -> List[Optional[DataItem]]:
     """
-    Execute the process method of a batch stage for a batch of items
+    Execute the :meth:`.stage.BatchStage.process_batch` method of a batch stage for a batch of items
     """
     ret: List[Optional[DataItem]] = [None] * len(items)
     to_process = {}
     for i, item in enumerate(items):
-        if error_manager.check_errors(item):
+        if error_manager.check_critical_errors(item):
             ret[i] = item
         else:
             to_process[i] = item

@@ -4,7 +4,7 @@ from typing import Optional
 
 class Error(Exception):
     """
-    Base exception type which usually only provokes the skipping of a stage
+    Base exception type which usually only provokes skipping a stage for an item
     """
 
     def set_stage(self, stage: str):
@@ -34,7 +34,7 @@ class Error(Exception):
 
 class CriticalError(Error):
     """
-    A type of exception which usually provokes the skipping of an item in the whole pipeline
+    A type of exception which usually provokes skipping the whole pipeline for an item
     """
 
     pass
