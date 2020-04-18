@@ -361,6 +361,7 @@ class BatchStageContainer(
         super().__init__()
         self.set_error_manager(error_manager)
         self.set_stage(name, stage)
+        # TODO next two varibales are for non-concurrent container, that is currently never used, it doesn't work
         self.__result_queue = queue.SimpleQueue()
         self._last_processed = []
 
@@ -384,7 +385,10 @@ class BatchStageContainer(
     def get_processed(
         self, block: bool = False, timeout: Optional[int] = None
     ) -> Optional[DataItem]:
-        if self.out_queue is not None:
+        if (
+            self.out_queue is not None
+            and self.__result_queue.qsize() < self.out_queue.qsize()
+        ):
             try:
                 # let's free the output queue (so this stage con continue processing) and keep the items internally
                 for _ in range(self.stage.size()):
