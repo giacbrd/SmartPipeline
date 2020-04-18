@@ -2,7 +2,7 @@ import queue
 import time
 from threading import Event
 from typing import Sequence, Callable, Optional, List
-from smartpipeline.utils import ConcurrentCounter
+from smartpipeline.utils import ConcurrentCounter, ProcessCounter
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import DataItem, Stop
@@ -72,7 +72,9 @@ def stage_executor(
     Consume items from an input queue, process and put them in a output queue, indefinitely,
     until a termination event is set
     """
-    stage.on_fork()
+    if isinstance(counter, ProcessCounter):
+        # call this only if the stage is a copy of the original, ergo it is executed in a process
+        stage.on_fork()
     while True:
         if terminated.is_set() and in_queue.empty():
             return
@@ -109,7 +111,9 @@ def batch_stage_executor(
     Consume items in batches from an input queue, process and put them in a output queue, indefinitely,
     until a termination event is set
     """
-    stage.on_fork()
+    if isinstance(counter, ProcessCounter):
+        # call this only if the stage is a copy of the original, ergo it is executed in a process
+        stage.on_fork()
     while True:
         if terminated.is_set() and in_queue.empty():
             return

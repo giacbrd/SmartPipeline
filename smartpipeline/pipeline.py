@@ -23,7 +23,7 @@ from smartpipeline.containers import (
 )
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, StageType
 from smartpipeline.item import Stop, DataItem
-from smartpipeline.utils import OrderedDict, ThreadCounter, ProcessCounter
+from smartpipeline.utils import LastOrderedDict, ThreadCounter, ProcessCounter
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -47,7 +47,7 @@ class Pipeline:
         :param max_queues_size: Maximum size of any queue instanced for the pipeline (stage input and output queues)
         """
         self._concurrencies = {}
-        self._containers = OrderedDict()
+        self._containers = LastOrderedDict()
         self._error_manager = ErrorManager()
         self._max_init_workers = max_init_workers
         self._init_executor = None

@@ -1,4 +1,3 @@
-from queue import Queue
 from abc import ABC, abstractmethod
 from typing import Sequence, Union, Any, Optional
 
@@ -18,18 +17,35 @@ class NameMixin:
 
 class ConcurrentMixin:
     def on_fork(self) -> Any:
+        """
+        Called after concurrent stage executor initialization in a process (multiprocess concurrency).
+        The stage in the executor is a copy of the original,
+        by overriding this method one can initialize variables specifically for the copies.
+        """
         return
 
 
 class Processor(ABC):
     @abstractmethod
     def process(self, item: DataItem) -> DataItem:
+        """
+        Process a single item received by the stage.
+        Must be overridden for properly defining a stage
+
+        :return: The same item instance processed and enriched by the stage
+        """
         return item
 
 
 class BatchProcessor(ABC):
     @abstractmethod
     def process_batch(self, items: Sequence[DataItem]) -> Sequence[DataItem]:
+        """
+        Process a batch of items received by the stage.
+        Must be overridden for properly defining a batch stage
+
+        :return: The same batch with items processed and enriched by the stage
+        """
         return items
 
 
@@ -40,6 +56,10 @@ class Stage(NameMixin, ConcurrentMixin, Processor):
 
 class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):
     def __init__(self, size: int, timeout: Optional[float] = None):
+        """
+        :param size: Maximum size of item batches that can be processed together
+        :param timeout: Seconds to wait before flushing a batch (calling :meth:`.BatchProcessor.process_batch` on it)
+        """
         self._size = size
         self._timeout = timeout
 
@@ -47,26 +67,43 @@ class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):
         return "Batch stage {}".format(self.name)
 
     def size(self) -> int:
+        """
+        Get the maximum size of item batches that can be processed together
+        """
         return self._size
 
     def timeout(self) -> Optional[float]:
-        """Seconds to wait before flushing a batch"""
+        """
+        Seconds to wait before flushing a batch (calling :meth:`.BatchProcessor.process_batch` on it)
+        """
         return self._timeout
 
 
 class Source(ABC):
     @abstractmethod
     def pop(self) -> Optional[DataItem]:
+        """
+        Generate items for feeding a pipeline, must be overridden for properly defining a source.
+        Call :meth:`.Source.stop` when item generation is ended
+
+        :return: The generated item, if None it is simply ignored (e.g. after calling :meth:`.Source.stop`)
+        """
         return
 
     def get_item(self, block: bool = False) -> Optional[DataItem]:
         return self.pop()
 
     def stop(self):
+        """
+        Declare the end item generation, this event will be spread through the pipeline
+        """
         self._is_stopped = True
 
     @property
     def is_stopped(self) -> bool:
+        """
+        True if the source as called the stop event
+        """
         return getattr(self, "_is_stopped", False)
 
 
