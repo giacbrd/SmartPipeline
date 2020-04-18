@@ -329,7 +329,9 @@ def test_concurrent_initialization():
     _check(items, 100, pipeline)
 
 
+# TODO test has problems also on dual core machine
 # one core machines can have problems with this test
+@pytest.mark.skip
 def test_huge_run():
     pipeline = _pipeline()
     pipeline.set_source(FakeSource(200))
@@ -383,6 +385,7 @@ def test_huge_run():
     elapsed3 = time.time() - start_time
     logger.debug("Time for sequential: {}".format(elapsed3))
     _check(items, 200)
+    assert elapsed3 > elapsed1
     assert elapsed3 > elapsed2
     assert elapsed2 > elapsed1
 
