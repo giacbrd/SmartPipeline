@@ -696,3 +696,55 @@ def test_single_items(items_generator_fx):
     assert result.id == item.id
     assert result.payload["text"] == item.payload["text"]
     assert len(result.payload.keys()) > len(item.payload.keys())
+
+
+def test_mixed_single_items(items_generator_fx):
+    pipeline = _pipeline()
+    pipeline.append_stage("reverser0", BatchTextReverser())
+    pipeline.append_stage("reverser1", TextReverser())
+    pipeline.append_stage("reverser2", BatchTextReverser())
+    pipeline.append_stage("duplicator", TextDuplicator())
+    item = next(items_generator_fx)
+    for _ in range(88):
+        pipeline.process_async(copy.deepcopy(item))
+    result = pipeline.get_item()
+    pipeline.stop()
+    assert result.id == item.id
+    assert result.payload["text"] != item.payload["text"]
+
+    pipeline = _pipeline()
+    pipeline.append_stage_concurrently(
+        "reverser0", TextReverser, kwargs={"cycles": 3}, concurrency=2
+    )
+    pipeline.append_stage_concurrently(
+        "reverser1", BatchTextReverser, args=[5], concurrency=0
+    )
+    pipeline.append_stage("reverser2", TextReverser(), concurrency=1)
+    pipeline.append_stage("duplicator", BatchTextDuplicator(), concurrency=2)
+    item = next(items_generator_fx)
+    pipeline.process_async(copy.deepcopy(item))
+    result = pipeline.get_item()
+    pipeline.stop()
+    assert result.id == item.id
+    assert result.payload["text"] != item.payload["text"]
+
+    pipeline = _pipeline()
+    pipeline.append_stage_concurrently(
+        "reverser0", TextReverser, concurrency=2, use_threads=False
+    )
+    pipeline.append_stage_concurrently(
+        "reverser1", BatchTextReverser, args=[9], concurrency=1, use_threads=False
+    )
+    pipeline.append_stage_concurrently("reverser2", TextReverser, concurrency=0)
+    pipeline.append_stage_concurrently(
+        "duplicator", BatchTextDuplicator, args=[10], concurrency=2, use_threads=False
+    )
+    item = next(items_generator_fx)
+    for _ in range(88):
+        pipeline.process_async(item)
+    for _ in range(88):
+        result = pipeline.get_item()
+        assert result.id == item.id
+        assert result.payload["text"]
+        assert result.payload["text"] != item.payload["text"]
+    pipeline.stop()
