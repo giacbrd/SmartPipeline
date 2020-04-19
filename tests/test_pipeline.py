@@ -191,6 +191,14 @@ def test_queue_sizes():
     )
     items = list(pipeline.run())
     _check(items, 100, pipeline)
+    pipeline = _pipeline(max_queues_size=3)
+    pipeline.set_source(FakeSource(100))
+    pipeline.append_stage("waster", TimeWaster(0.02), concurrency=2)
+    pipeline.append_stage(
+        "reverser", TimeWaster(0.04), concurrency=1, use_threads=False
+    )
+    items = list(pipeline.run())
+    _check(items, 100, pipeline)
     pipeline = _pipeline(max_queues_size=0)
     pipeline.set_source(FakeSource(100))
     pipeline.append_stage("reverser0", TextReverser(), concurrency=2)

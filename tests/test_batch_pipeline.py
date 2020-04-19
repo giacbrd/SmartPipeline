@@ -16,6 +16,7 @@ from tests.utils import (
     BatchTextDuplicator,
     BatchExceptionStage,
     BatchErrorStage,
+    TimeWaster,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -298,6 +299,16 @@ def test_queue_sizes():
     )
     items = list(pipeline.run())
     _check(items, 79, pipeline)
+    pipeline = _pipeline(max_queues_size=2)
+    pipeline.set_source(FakeSource(131))
+    pipeline.append_stage(
+        "reverser0", BatchTextReverser(), concurrency=2, use_threads=False
+    )
+    pipeline.append_stage("waster1", TimeWaster(0.02), concurrency=2, use_threads=False)
+    pipeline.append_stage("reverser1", BatchTextReverser(), concurrency=0)
+    pipeline.append_stage("waster2", TimeWaster(0.03), concurrency=2)
+    items = list(pipeline.run())
+    _check(items, 131, pipeline)
     pipeline = _pipeline(max_queues_size=0)
     pipeline.set_source(FakeSource(4))
     pipeline.append_stage("reverser0", BatchTextReverser(), concurrency=2)
