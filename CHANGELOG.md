@@ -1,6 +1,6 @@
 # SmartPipeline changelog
 
-## Version 0.3.0 [2020-04-19]
+## Version 0.3.0 [2020-04-20]
 
 - Heavy refactoring
 - Documentation
