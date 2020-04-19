@@ -7,7 +7,7 @@ import pytest
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.pipeline import Pipeline
 from tests.utils import (
-    FakeSource,
+    RandomTextSource,
     TextDuplicator,
     TextReverser,
     ErrorStage,
@@ -29,7 +29,7 @@ def _pipeline(*args, **kwargs):
 
 def test_run():
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(10))
+    pipeline.set_source(RandomTextSource(10))
     pipeline.append_stage("reverser", TextReverser())
     pipeline.append_stage("duplicator", TextDuplicator())
     for item in pipeline.run():
@@ -42,7 +42,7 @@ def test_run():
 def test_errors(caplog):
     pipeline = _pipeline()
     pipeline.set_error_manager(ErrorManager())
-    pipeline.set_source(FakeSource(10))
+    pipeline.set_source(RandomTextSource(10))
     pipeline.append_stage("reverser", TextReverser())
     pipeline.append_stage("error", ErrorStage())
     for item in pipeline.run():
@@ -56,7 +56,7 @@ def test_errors(caplog):
     assert pipeline.count == 10
     pipeline = _pipeline()
     pipeline.set_error_manager(ErrorManager())
-    pipeline.set_source(FakeSource(10))
+    pipeline.set_source(RandomTextSource(10))
     pipeline.append_stage("reverser", TextReverser())
     pipeline.append_stage("error", ErrorStage())
     pipeline.append_stage("duplicator", TextDuplicator())
@@ -73,7 +73,7 @@ def test_errors(caplog):
     assert pipeline.count == 10
     pipeline = _pipeline()
     pipeline.set_error_manager(ErrorManager())
-    pipeline.set_source(FakeSource(10))
+    pipeline.set_source(RandomTextSource(10))
     pipeline.append_stage("reverser", TextReverser())
     pipeline.append_stage("error1", ExceptionStage())
     pipeline.append_stage("error2", ErrorStage())
@@ -92,7 +92,7 @@ def test_errors(caplog):
     assert pipeline.count == 10
     with pytest.raises(Exception):
         pipeline = _pipeline()
-        pipeline.set_source(FakeSource(10))
+        pipeline.set_source(RandomTextSource(10))
         pipeline.append_stage("reverser", TextReverser())
         pipeline.append_stage("error", ExceptionStage())
         for _ in pipeline.run():
@@ -100,7 +100,7 @@ def test_errors(caplog):
         assert pipeline.count == 1
     pipeline = _pipeline()
     pipeline.set_error_manager(ErrorManager().no_skip_on_critical_error())
-    pipeline.set_source(FakeSource(10))
+    pipeline.set_source(RandomTextSource(10))
     pipeline.append_stage("reverser1", TextReverser())
     pipeline.append_stage("error", ExceptionStage())
     pipeline.append_stage("reverser2", TextReverser())
@@ -123,7 +123,7 @@ def _check(items, num, pipeline=None):
 
 def test_concurrent_run():
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage("reverser0", TextReverser(), concurrency=2)
     pipeline.append_stage("reverser1", TextReverser(), concurrency=0)
     pipeline.append_stage("reverser2", TextReverser(), concurrency=1)
@@ -131,7 +131,7 @@ def test_concurrent_run():
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage("reverser0", TextReverser(), concurrency=2, use_threads=False)
     pipeline.append_stage("reverser1", TextReverser(), concurrency=1, use_threads=False)
     pipeline.append_stage("reverser2", TextReverser(), concurrency=0)
@@ -141,14 +141,14 @@ def test_concurrent_run():
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage("reverser0", TextReverser(), concurrency=0)
     pipeline.append_stage("reverser1", TextReverser(), concurrency=1)
     pipeline.append_stage("duplicator", TextDuplicator(), concurrency=0)
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage("reverser0", TextReverser(), concurrency=1, use_threads=False)
     pipeline.append_stage("reverser1", TextReverser(), concurrency=1, use_threads=True)
     pipeline.append_stage(
@@ -157,14 +157,14 @@ def test_concurrent_run():
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage("duplicator0", TextDuplicator(), concurrency=0)
     pipeline.append_stage("reverser", TextReverser(), concurrency=0)
     pipeline.append_stage("duplicator1", TextDuplicator(), concurrency=0)
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage("reverser", TextReverser(), concurrency=0)
     pipeline.append_stage("duplicator0", TextDuplicator(), concurrency=0)
     pipeline.append_stage("duplicator1", TextDuplicator(), concurrency=1)
@@ -174,7 +174,7 @@ def test_concurrent_run():
 
 def test_queue_sizes():
     pipeline = _pipeline(max_queues_size=1)
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage("reverser0", TextReverser(), concurrency=2)
     pipeline.append_stage("reverser1", TextReverser(), concurrency=0)
     pipeline.append_stage("reverser2", TextReverser(), concurrency=1)
@@ -182,7 +182,7 @@ def test_queue_sizes():
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline(max_queues_size=1)
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage("reverser0", TextReverser(), concurrency=2, use_threads=False)
     pipeline.append_stage("reverser1", TextReverser(), concurrency=1, use_threads=False)
     pipeline.append_stage("reverser2", TextReverser(), concurrency=0)
@@ -192,7 +192,7 @@ def test_queue_sizes():
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline(max_queues_size=3)
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage("waster", TimeWaster(0.02), concurrency=2)
     pipeline.append_stage(
         "reverser", TimeWaster(0.04), concurrency=1, use_threads=False
@@ -200,7 +200,7 @@ def test_queue_sizes():
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline(max_queues_size=0)
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage("reverser0", TextReverser(), concurrency=2)
     pipeline.append_stage("reverser1", TextReverser(), concurrency=0)
     pipeline.append_stage("reverser2", TextReverser(), concurrency=1)
@@ -208,7 +208,7 @@ def test_queue_sizes():
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline(max_queues_size=0)
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage("reverser0", TextReverser(), concurrency=2, use_threads=False)
     pipeline.append_stage("reverser1", TextReverser(), concurrency=1, use_threads=False)
     pipeline.append_stage("reverser2", TextReverser(), concurrency=0)
@@ -222,7 +222,7 @@ def test_queue_sizes():
 def test_concurrency_errors():
     with pytest.raises(Exception):
         pipeline = _pipeline()
-        pipeline.set_source(FakeSource(10))
+        pipeline.set_source(RandomTextSource(10))
         pipeline.append_stage("reverser", TextReverser(), concurrency=1)
         pipeline.append_stage("error", ExceptionStage(), concurrency=1)
         for _ in pipeline.run():
@@ -230,7 +230,7 @@ def test_concurrency_errors():
         assert pipeline.count == 1
     with pytest.raises(Exception):
         pipeline = _pipeline()
-        pipeline.set_source(FakeSource(10))
+        pipeline.set_source(RandomTextSource(10))
         pipeline.append_stage(
             "reverser", TextReverser(), concurrency=1, use_threads=False
         )
@@ -241,7 +241,7 @@ def test_concurrency_errors():
             pass
         assert pipeline.count == 1
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(10))
+    pipeline.set_source(RandomTextSource(10))
     pipeline.append_stage("reverser", TextReverser(), concurrency=1)
     pipeline.append_stage("error1", ErrorStage(), concurrency=1, use_threads=False)
     pipeline.append_stage("error2", ErrorStage(), concurrency=2)
@@ -261,7 +261,7 @@ def test_concurrency_errors():
 def test_concurrent_constructions():
     """test `on_fork` method"""
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(10))
+    pipeline.set_source(RandomTextSource(10))
     pipeline.append_stage("reverser1", TextReverser(), concurrency=1, use_threads=False)
     pipeline.append_stage(
         "error", SerializableStage(), concurrency=2, use_threads=False
@@ -276,7 +276,7 @@ def test_concurrent_constructions():
 
 def test_concurrent_initialization():
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage_concurrently(
         "reverser0", TextReverser, kwargs={"cycles": 3}, concurrency=2
     )
@@ -288,7 +288,7 @@ def test_concurrent_initialization():
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage_concurrently(
         "reverser0", TextReverser, concurrency=2, use_threads=False
     )
@@ -302,28 +302,28 @@ def test_concurrent_initialization():
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage("reverser0", TextReverser(), concurrency=0)
     pipeline.append_stage_concurrently("reverser1", TextReverser, concurrency=1)
     pipeline.append_stage("duplicator", TextDuplicator(10), concurrency=0)
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage_concurrently("duplicator0", TextDuplicator, concurrency=0)
     pipeline.append_stage("reverser", TextReverser(), concurrency=0)
     pipeline.append_stage_concurrently("duplicator1", TextDuplicator, concurrency=0)
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage("reverser", TextReverser(12), concurrency=0)
     pipeline.append_stage_concurrently("duplicator0", TextDuplicator, concurrency=0)
     pipeline.append_stage("duplicator1", TextDuplicator(), concurrency=1)
     items = list(pipeline.run())
     _check(items, 100, pipeline)
     pipeline = _pipeline(max_init_workers=1)
-    pipeline.set_source(FakeSource(100))
+    pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage_concurrently(
         "reverser0", TextReverser, args=[20], concurrency=1, use_threads=False
     )
@@ -342,7 +342,7 @@ def test_concurrent_initialization():
 @pytest.mark.skip
 def test_huge_run():
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(200))
+    pipeline.set_source(RandomTextSource(200))
     pipeline.append_stage(
         "reverser0", TextReverser(15000), concurrency=4, use_threads=False
     )
@@ -362,7 +362,7 @@ def test_huge_run():
     logger.debug("Time for strongly parallel: {}".format(elapsed1))
     _check(items, 200)
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(200))
+    pipeline.set_source(RandomTextSource(200))
     pipeline.append_stage(
         "reverser0", TextReverser(15000), concurrency=1, use_threads=False
     )
@@ -382,7 +382,7 @@ def test_huge_run():
     logger.debug("Time for mildly parallel: {}".format(elapsed2))
     _check(items, 200)
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(200))
+    pipeline.set_source(RandomTextSource(200))
     pipeline.append_stage("reverser0", TextReverser(15000), concurrency=0)
     pipeline.append_stage("reverser1", TextReverser(15000), concurrency=0)
     pipeline.append_stage("reverser2", TextReverser(15000), concurrency=0)
@@ -400,7 +400,7 @@ def test_huge_run():
 
 def test_run_times():
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(10))
+    pipeline.set_source(RandomTextSource(10))
     pipeline.append_stage("waster0", TimeWaster(0.2), concurrency=1)
     pipeline.append_stage("waster1", TimeWaster(0.2), concurrency=1)
     pipeline.append_stage("waster2", TimeWaster(0.2), concurrency=1)
@@ -411,7 +411,7 @@ def test_run_times():
     elapsed0 = time.time() - start_time
     logger.debug("Time for multi-threading: {}".format(elapsed0))
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(10))
+    pipeline.set_source(RandomTextSource(10))
     pipeline.append_stage("waster0", TimeWaster(0.2), concurrency=1, use_threads=False)
     pipeline.append_stage("waster1", TimeWaster(0.2), concurrency=1, use_threads=False)
     pipeline.append_stage("waster2", TimeWaster(0.2), concurrency=1, use_threads=False)
@@ -422,7 +422,7 @@ def test_run_times():
     elapsed1 = time.time() - start_time
     logger.debug("Time for multi-process: {}".format(elapsed1))
     pipeline = _pipeline()
-    pipeline.set_source(FakeSource(10))
+    pipeline.set_source(RandomTextSource(10))
     pipeline.append_stage("waster0", TimeWaster(0.2), concurrency=0)
     pipeline.append_stage("waster1", TimeWaster(0.2), concurrency=0)
     pipeline.append_stage("waster2", TimeWaster(0.2), concurrency=0)

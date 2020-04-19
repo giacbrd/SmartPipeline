@@ -144,6 +144,7 @@ class Pipeline:
         Run the pipeline given a source and a concatenation of stages, get the sequence of items through iteration
 
         :return: Iterator over processed items
+        :raises ValueError: When a source has not been set for the pipeline
         """
         counter = 0
         self._wait_executors()
@@ -294,6 +295,7 @@ class Pipeline:
         Get a single item from the asynchronous execution of the pipeline on single items from :meth:`.Pipeline.process_async`
 
         :param block: If True wait indefinitely for the next processed item, otherwise raise :exc:`queue.Empty`
+        :raises ValueError: When there is not output queue set, the pipeline is not running asynchronously
         """
         if self._out_queue is not None:
             item = self._out_queue.get(block)
@@ -524,6 +526,7 @@ class Pipeline:
     def _check_stage_name(self, name: str):
         """
         Check if a stage name is not already defined in the pipeline
+        :raises ValueError: Stage name is already defined in the pipeline
         """
         if name in self._containers:
             raise ValueError(f"The stage name {name} is already used in this pipeline")

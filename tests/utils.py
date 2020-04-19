@@ -24,7 +24,7 @@ def random_text():
     return random.choice(TEXT_SAMPLES)
 
 
-class FakeSource(Source):
+class RandomTextSource(Source):
     def __init__(self, count):
         self.total = count
         self.counter = 0

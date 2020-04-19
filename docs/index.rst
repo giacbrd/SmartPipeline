@@ -4,13 +4,13 @@
    contain the root `toctree` directive.
 
 SmartPipeline's documentation
-=========================================
+=============================
+
+.. include:: ../README.rst
+   :start-after: documentation-marker
 
 .. toctree::
    :maxdepth: 2
 
    usage
    api
-
-.. include:: ../README.rst
-   :start-after: documentation-marker
