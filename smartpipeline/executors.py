@@ -119,8 +119,8 @@ def batch_stage_executor(
             return
         items = []
         try:
-            for _ in range(stage.size()):
-                item = in_queue.get(block=True, timeout=stage.timeout())
+            for _ in range(stage.size):
+                item = in_queue.get(block=True, timeout=stage.timeout)
                 # give priority to the Stop event item
                 if isinstance(item, Stop):
                     out_queue.put(item, block=True)

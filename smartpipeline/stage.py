@@ -56,7 +56,7 @@ class BatchProcessor(ABC):
 
 class Stage(NameMixin, ConcurrentMixin, Processor):
     """
-    Subclass this and override :meth:`.Stage.process` for defining a stage
+    Extend this class and override :meth:`.Stage.process` for defining a stage
     """
 
     def __str__(self) -> str:
@@ -65,7 +65,7 @@ class Stage(NameMixin, ConcurrentMixin, Processor):
 
 class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):
     """
-    Subclass this and override :meth:`.BatchStage.process_batch` for defining a batch stage
+    Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage
     """
 
     def __init__(self, size: int, timeout: Optional[float] = None):
@@ -79,12 +79,14 @@ class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):
     def __str__(self) -> str:
         return "Batch stage {}".format(self.name)
 
+    @property
     def size(self) -> int:
         """
         Get the maximum size of item batches that can be processed together
         """
         return self._size
 
+    @property
     def timeout(self) -> Optional[float]:
         """
         Seconds to wait before flushing a batch (calling :meth:`.BatchStage.process_batch` on it)

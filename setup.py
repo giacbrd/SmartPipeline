@@ -12,8 +12,8 @@ def readfile(fname):
 
 setup(
     name="SmartPipeline",
-    version="0.2.0",
-    description="A framework for developing simple data pipelines",
+    version="0.3.0",
+    description="A framework for fast developing scalable data pipelines following a simple design pattern",
     long_description=readfile("README.rst"),
     classifiers=[
         "Topic :: Scientific/Engineering",

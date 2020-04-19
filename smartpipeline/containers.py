@@ -369,8 +369,8 @@ class BatchStageContainer(
         items = []
         # items that we want to put as last in a batch, ergo in output
         extra_items = []
-        for _ in range(self.stage.size()):
-            item = self.previous.get_processed(timeout=self.stage.timeout())
+        for _ in range(self.stage.size):
+            item = self.previous.get_processed(timeout=self.stage.timeout)
             if isinstance(item, Stop):
                 self.stop()
                 self._put_item([item])
@@ -391,7 +391,7 @@ class BatchStageContainer(
         ):
             try:
                 # let's free the output queue (so this stage con continue processing) and keep the items internally
-                for _ in range(self.stage.size()):
+                for _ in range(self.stage.size):
                     item = self.out_queue.get(block=block, timeout=timeout)
                     if item is not None:
                         self.__result_queue.put_nowait(item)
@@ -428,8 +428,9 @@ class BatchStageContainer(
             if item is not None and not isinstance(item, Stop):
                 self.increase_count()
 
+    @property
     def size(self) -> int:
-        return self.stage.size()
+        return self.stage.size
 
 
 class ConcurrentContainer(InQueued, ConnectedStageMixin):
