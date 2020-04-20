@@ -6,7 +6,7 @@ import concurrent
 import queue
 from queue import Queue
 from abc import ABC, abstractmethod
-from concurrent.futures import wait, Executor
+from concurrent.futures import wait, Executor, Future
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event
@@ -74,7 +74,7 @@ class BaseContainer(InQueued):
         :param timeout: Time to wait when `block` is True
         :return: A processed item or None if: no item waiting to be retrieved; timeout expires on a blocked call
         """
-        return
+        pass
 
     def init_queue(self, initializer: QueueInitializer) -> ItemsQueue:
         self._out_queue = initializer()
@@ -362,8 +362,8 @@ class BatchStageContainer(
         self.set_error_manager(error_manager)
         self.set_stage(name, stage)
         # TODO next two varibales are for non-concurrent container, that is currently never used, it doesn't work
-        self.__result_queue = queue.SimpleQueue()
-        self._last_processed = []
+        self.__result_queue: ItemsQueue = queue.SimpleQueue()
+        self._last_processed: Sequence[DataItem] = []
 
     def process(self) -> Sequence[DataItem]:
         items = []
@@ -459,7 +459,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         self._use_threads = use_threads
         self._stage_executor = None
         self._previous_queue = None
-        self._futures = []
+        self._futures: Sequence[Future] = []
         self._queue_initializer = queue_initializer
         self._out_queue = self._queue_initializer()
         self._counter = counter_initializer()

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-import uuid
 from concurrent.futures._base import Future, Executor
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -46,13 +45,11 @@ class Pipeline:
         :param max_init_workers: Number of workers to use for concurrent initialization of stages, default the number of CPUs
         :param max_queues_size: Maximum size of any queue instanced for the pipeline (stage input and output queues)
         """
-        self._concurrencies = {}
         self._containers = LastOrderedDict()
         self._error_manager = ErrorManager()
         self._max_init_workers = max_init_workers
         self._init_executor = None
         self._wait_previous_executor = None
-        self._source_name = None
         self._pipeline_executor = None
         self._max_queues_size = max_queues_size
         self._out_queue = None
@@ -178,7 +175,7 @@ class Pipeline:
                 # retrieve finally processed items from the last stage
                 if name == last_stage_name:
                     for _ in range(
-                        container.size()
+                        container.size
                         if isinstance(container, BatchStageContainer)
                         else 1
                     ):
@@ -311,7 +308,6 @@ class Pipeline:
         Set the source of the pipeline: a subclass of :class:`.stage.Source`
         """
         self._source_container.set(source)
-        self._source_name = uuid.uuid4()
         return self
 
     def set_error_manager(self, error_manager: ErrorManager) -> Pipeline:

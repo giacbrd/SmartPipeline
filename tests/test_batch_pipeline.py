@@ -563,44 +563,72 @@ def test_huge_run():
 def test_timeouts():
     pipeline = _pipeline()
     pipeline.set_source(RandomTextSource(100))
-    pipeline.append_stage("reverser0", BatchTextReverser(timeout=2), concurrency=0)
-    pipeline.append_stage("reverser1", BatchTextReverser(timeout=2), concurrency=0)
-    pipeline.append_stage("reverser2", BatchTextReverser(timeout=2), concurrency=0)
-    pipeline.append_stage("duplicator", BatchTextDuplicator(timeout=2), concurrency=0)
+    pipeline.append_stage(
+        "reverser0", BatchTextReverser(timeout=1, size=120), concurrency=0
+    )
+    pipeline.append_stage(
+        "reverser1", BatchTextReverser(timeout=1, size=120), concurrency=0
+    )
+    pipeline.append_stage(
+        "reverser2", BatchTextReverser(timeout=0, size=120), concurrency=0
+    )
+    pipeline.append_stage(
+        "duplicator", BatchTextDuplicator(timeout=1, size=120), concurrency=0
+    )
     start_time = time.time()
     items = list(pipeline.run())
-    elapsed0 = time.time() - start_time
-    assert round(elapsed0) <= 8
+    elapsed = time.time() - start_time
+    assert 3 <= round(elapsed)
     _check(items, 100, pipeline)
     pipeline = _pipeline()
     pipeline.set_source(RandomTextSource(100))
-    pipeline.append_stage("reverser0", BatchTextReverser(timeout=2), concurrency=1)
-    pipeline.append_stage("reverser1", BatchTextReverser(timeout=2), concurrency=1)
-    pipeline.append_stage("reverser2", BatchTextReverser(timeout=2), concurrency=1)
-    pipeline.append_stage("duplicator", BatchTextDuplicator(timeout=2), concurrency=1)
+    pipeline.append_stage(
+        "reverser0", BatchTextReverser(timeout=1, size=120), concurrency=1
+    )
+    pipeline.append_stage(
+        "reverser1", BatchTextReverser(timeout=2, size=120), concurrency=1
+    )
+    pipeline.append_stage(
+        "reverser2", BatchTextReverser(timeout=0, size=120), concurrency=1
+    )
+    pipeline.append_stage(
+        "duplicator", BatchTextDuplicator(timeout=1, size=120), concurrency=1
+    )
     start_time = time.time()
     items = list(pipeline.run())
-    elapsed0 = time.time() - start_time
-    assert round(elapsed0) <= 8
+    elapsed = time.time() - start_time
+    assert 4 <= round(elapsed)
     _check(items, 100, pipeline)
     pipeline = _pipeline()
     pipeline.set_source(RandomTextSource(100))
     pipeline.append_stage(
-        "reverser0", BatchTextReverser(timeout=2), concurrency=1, use_threads=False
+        "reverser0",
+        BatchTextReverser(timeout=1, size=120),
+        concurrency=1,
+        use_threads=False,
     )
     pipeline.append_stage(
-        "reverser1", BatchTextReverser(timeout=2), concurrency=1, use_threads=False
+        "reverser1",
+        BatchTextReverser(timeout=0, size=120),
+        concurrency=1,
+        use_threads=False,
     )
     pipeline.append_stage(
-        "reverser2", BatchTextReverser(timeout=2), concurrency=1, use_threads=False
+        "reverser2",
+        BatchTextReverser(timeout=1, size=120),
+        concurrency=1,
+        use_threads=False,
     )
     pipeline.append_stage(
-        "duplicator", BatchTextDuplicator(timeout=2), concurrency=1, use_threads=False
+        "duplicator",
+        BatchTextDuplicator(timeout=0, size=120),
+        concurrency=1,
+        use_threads=False,
     )
     start_time = time.time()
     items = list(pipeline.run())
-    elapsed0 = time.time() - start_time
-    assert round(elapsed0) <= 8
+    elapsed = time.time() - start_time
+    assert 2 <= round(elapsed)
     _check(items, 100, pipeline)
 
 

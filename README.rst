@@ -24,6 +24,7 @@ executions and errors are monitored by the pipeline.
 It is a framework for engineering sequences of data operations:
 an optimal solution for fast and clean data analysis prototypes,
 that can be immediately ready for production.
+No dependencies are required.
 
 Install
 ~~~~~~~
@@ -37,9 +38,16 @@ Install from PyPI, no dependencies will be installed:
 Writing your pipeline
 ~~~~~~~~~~~~~~~~~~~~~
 
-In SmartPipeline you create a ``Pipeline`` object,
-you set the source of data and add custom defined stages for the operations to perform
-sequentially on each data item.
+SmartPipeline is designed to help the developer following best practices,
+as in methodologies like `Twelve-Factor <https://12factor.ne>`_ .
+The design is based on industrial experience on data products.
+
+SmartPipeline focuses on simplicity and efficiency in handling data locally,
+i.e. copies of the data are minimized, with the obvious exception of multiprocessing.
+
+The main point is creating a ``Pipeline`` object,
+setting the source of data and adding custom defined stages,
+which define the operations to perform sequentially on each data item.
 
 - A pipeline can run indefinitely on the source or it can be used to process single items
 - Stages can run concurrently, both on the source or on single asynchronously processed items

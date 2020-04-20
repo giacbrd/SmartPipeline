@@ -27,7 +27,7 @@ class ConcurrentMixin:
         The stage in the executor is a copy of the original,
         by overriding this method one can initialize variables specifically for the copies.
         """
-        return
+        pass
 
 
 class Processor(ABC):
@@ -107,7 +107,7 @@ class Source(ABC):
 
         :return: The generated item, if None it is simply ignored (e.g. after calling :meth:`.Source.stop`)
         """
-        return
+        pass
 
     def get_item(self, block: bool = False) -> Optional[DataItem]:
         return self.pop()

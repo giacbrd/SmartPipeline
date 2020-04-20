@@ -92,12 +92,6 @@ class BatchTextGenerator(BatchStage):
             item.payload["text"] = random_text()
         return items
 
-    def timeout(self):
-        return self._timeout
-
-    def size(self) -> int:
-        return self._size
-
 
 class BatchTextReverser(BatchStage):
     def __init__(self, cycles=1, size=10, timeout=0.1):
@@ -110,12 +104,6 @@ class BatchTextReverser(BatchStage):
                 item.payload["text"] = item.payload["text"][::-1]
         return items
 
-    def size(self) -> int:
-        return self._size
-
-    def timeout(self) -> float:
-        return self._timeout
-
 
 class BatchTextDuplicator(BatchStage):
     def __init__(self, cycles=1, size=10, timeout=0.1, check_batch=False):
@@ -125,10 +113,10 @@ class BatchTextDuplicator(BatchStage):
 
     def process_batch(self, items):
         if self._check_batch:
-            if len(items) != self.size():
+            if len(items) != self.size:
                 raise CriticalError(
                     "The current batch contains {} items instead of {}".format(
-                        len(items), self.size()
+                        len(items), self.size
                     )
                 )
         for item in items:
@@ -137,12 +125,6 @@ class BatchTextDuplicator(BatchStage):
                     "text_b_{}_{}".format(c, random.randint(1, 1000))
                 ] = item.payload["text"]
         return items
-
-    def size(self) -> int:
-        return self._size
-
-    def timeout(self) -> float:
-        return self._timeout
 
 
 class TimeWaster(Stage):
@@ -174,12 +156,6 @@ class BatchExceptionStage(BatchStage):
     def __init__(self, size=10, timeout=0.1):
         super().__init__(size, timeout)
 
-    def size(self) -> int:
-        return self._size
-
-    def timeout(self) -> float:
-        return self._timeout
-
     def process_batch(self, items):
         time.sleep(0.3)
         raise Exception("test exception")
@@ -188,12 +164,6 @@ class BatchExceptionStage(BatchStage):
 class BatchErrorStage(BatchStage):
     def __init__(self, size=10, timeout=0.1):
         super().__init__(size, timeout)
-
-    def size(self) -> int:
-        return self._size
-
-    def timeout(self) -> float:
-        return self._timeout
 
     def process_batch(self, items):
         raise Error("test pipeline error")
