@@ -1,160 +1,131 @@
 from abc import ABC, abstractmethod
-from typing import Union, Sequence
+from typing import Sequence, Union, Any, Optional
+from queue import Queue
 
-from smartpipeline.error import Error, CriticalError
+from smartpipeline.item import DataItem
 
-__author__ = 'Giacomo Berardi <giacbrd.com>'
-
-
-class DataItem:
-    def __init__(self):
-        self._errors = []
-        self._critical_errors = []
-        self._meta = {}
-        self._payload = {}
-        self._timings = {}
-        self._callback_fun = None
-
-    def has_errors(self):
-        return any(self._errors)
-
-    def has_critical_errors(self):
-        return any(self._critical_errors)
-
-    def errors(self):
-        for e in self._errors:
-            yield e
-
-    def critical_errors(self):
-        for e in self._critical_errors:
-            yield e
-
-    @property
-    def payload(self):
-        return self._payload
-
-    def add_error(self, stage, exception: Union[Error, Exception]):
-        if hasattr(exception, 'set_stage'):
-            if not type(exception) is Error:
-                raise ValueError("Add a pipeline error or a generic exception.")
-            exception.set_stage(stage)
-            self._errors.append(exception)
-        else:
-            error = Error()
-            error.with_exception(exception)
-            error.set_stage(stage)
-            self._errors.append(error)
-
-    def add_critical_error(self, stage, exception: Union[Error, Exception]):
-        if hasattr(exception, 'set_stage'):
-            if not type(exception) is CriticalError:
-                raise ValueError("Add a critical pipeline error or a generic exception.")
-            exception.set_stage(stage)
-            self._critical_errors.append(exception)
-        else:
-            error = CriticalError()
-            error.with_exception(exception)
-            error.set_stage(stage)
-            self._critical_errors.append(error)
-
-    def set_metadata(self, field: str, value):
-        self._meta[field] = value
-        return self
-
-    def get_metadata(self, field: str):
-        return self._meta.get(field)
-
-    @property
-    def metadata_fields(self):
-        return self._meta.keys()
-
-    def set_timing(self, stage: str, ms: float):
-        self._timings[stage] = ms
-        return self
-
-    def get_timing(self, stage: str):
-        return self._timings.get(stage)
-
-    @property
-    def timed_stages(self):
-        return self._timings.keys()
-
-    @property
-    def id(self):
-        ret = self._payload.get('id')
-        if ret is None:
-            ret = self._meta.get('id')
-            if ret is None:
-                ret = id(self)
-        return ret
-
-    def __str__(self):
-        return 'Data Item {} with payload {}...'.format(self.id, str(self._payload)[:100])
-
-    def set_callback(self, fun):
-        self._callback_fun = fun
-
-    def callback(self):
-        if self._callback_fun is not None:
-            self._callback_fun(self)
+__author__ = "Giacomo Berardi <giacbrd.com>"
 
 
-class BaseStage(ABC):
+class NameMixin:
+    """
+    Simple mixin for setting a name to an object
+    """
 
     def set_name(self, name: str):
         self._name = name
 
     @property
-    def name(self):
-        return getattr(self, '_name', '<undefined>')
-
-    def __str__(self):
-        return 'Stage {}'.format(self.name)
+    def name(self) -> str:
+        return getattr(self, "_name", f"{self.__class__.name}_{id(self)}")
 
 
-class Stage(BaseStage):
+class ConcurrentMixin:
+    def on_fork(self) -> Any:
+        """
+        Called after concurrent stage executor initialization in a process (multiprocessing concurrency).
+        The stage in the executor is a copy of the original,
+        by overriding this method one can initialize variables specifically for the copies.
+        """
+        pass
 
+
+class Processor(ABC):
     @abstractmethod
     def process(self, item: DataItem) -> DataItem:
+        """
+        Process a single item received by the stage.
+        Must be overridden for properly defining a stage
+
+        :return: The same item instance processed and enriched by the stage
+        """
         return item
 
 
-class BatchStage(BaseStage):
-
+class BatchProcessor(ABC):
     @abstractmethod
     def process_batch(self, items: Sequence[DataItem]) -> Sequence[DataItem]:
+        """
+        Process a batch of items received by the stage.
+        Must be overridden for properly defining a batch stage
+
+        :return: The same batch with items processed and enriched by the stage
+        """
         return items
 
-    def __str__(self):
-        return 'Batch stage {}'.format(self.name)
 
-    @abstractmethod
+class Stage(NameMixin, ConcurrentMixin, Processor):
+    """
+    Extend this class and override :meth:`.Stage.process` for defining a stage
+    """
+
+    def __str__(self) -> str:
+        return "Stage {}".format(self.name)
+
+
+class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):
+    """
+    Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage
+    """
+
+    def __init__(self, size: int, timeout: Optional[float] = None):
+        """
+        :param size: Maximum size of item batches that can be processed together
+        :param timeout: Seconds to wait before flushing a batch (calling :meth:`.BatchStage.process_batch` on it)
+        """
+        self._size = size
+        self._timeout = timeout
+
+    def __str__(self) -> str:
+        return "Batch stage {}".format(self.name)
+
+    @property
     def size(self) -> int:
-        return 0
+        """
+        Get the maximum size of item batches that can be processed together
+        """
+        return self._size
 
-    @abstractmethod
-    def timeout(self) -> float:
-        """Seconds to wait before flushing a batch"""
-        return 0
+    @property
+    def timeout(self) -> Optional[float]:
+        """
+        Seconds to wait before flushing a batch (calling :meth:`.BatchStage.process_batch` on it)
+        """
+        return self._timeout
 
 
 class Source(ABC):
+    """
+    Extend this for defining a pipeline source
+    """
 
     @abstractmethod
-    def pop(self) -> DataItem:
-        return None
+    def pop(self) -> Optional[DataItem]:
+        """
+        Generate items for feeding a pipeline.
+        Must be overridden for properly defining a source.
+        Call :meth:`.Source.stop` when item generation is ended
 
-    def get_item(self, block=False) -> DataItem:
+        :return: The generated item, if None it is simply ignored (e.g. after calling :meth:`.Source.stop`)
+        """
+        pass
+
+    def get_item(self, block: bool = False) -> Optional[DataItem]:
         return self.pop()
 
     def stop(self):
+        """
+        Declare the end item generation, this event will be spread through the pipeline
+        """
         self._is_stopped = True
 
     @property
-    def is_stopped(self):
-        return getattr(self, '_is_stopped', False)
+    def is_stopped(self) -> bool:
+        """
+        True if the source has called the stop event
+        """
+        return getattr(self, "_is_stopped", False)
 
 
-class Stop(DataItem):
-    def __str__(self):
-        return 'Stop signal {}'.format(self.id)
+ItemsQueue = "Queue[DataItem]"
+StageType = Union[Stage, BatchStage]

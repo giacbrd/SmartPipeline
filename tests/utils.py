@@ -3,18 +3,20 @@ import time
 from datetime import datetime
 from time import sleep
 
-from smartpipeline.error import Error, CriticalError
-from smartpipeline.stage import Source, DataItem, Stage, BatchStage
+from smartpipeline.error.exceptions import Error, CriticalError
+from smartpipeline.helpers import FilePathItem
+from smartpipeline.stage import Source, Stage, BatchStage
+from smartpipeline.item import DataItem
 
-__author__ = 'Giacomo Berardi <giacbrd.com>'
+__author__ = "Giacomo Berardi <giacbrd.com>"
 
 TEXT_SAMPLES = (
-    'On the other hand, we denounce with righteous indignation and dislike men who are so beguiled and demoralized by the charms of pleasure of the moment,',
-    'so blinded by desire, that they cannot foresee the pain and trouble that are bound to ensue; and equal blame belongs to those who fail in their duty through weakness of will,',
-    'which is the same as saying through shrinking from toil and pain. These cases are perfectly simple and easy to distinguish.',
-    'In a free hour, when our power of choice is untrammelled and when nothing prevents our being able to do what we like best, every pleasure is to be welcomed and every pain avoided.',
-    'But in certain circumstances and owing to the claims of duty or the obligations of business it will frequently occur that pleasures have to be repudiated and annoyances accepted.',
-    'The wise man therefore always holds in these matters to this principle of selection: he rejects pleasures to secure other greater pleasures, or else he endures pains to avoid worse pains.'
+    "On the other hand, we denounce with righteous indignation and dislike men who are so beguiled and demoralized by the charms of pleasure of the moment,",
+    "so blinded by desire, that they cannot foresee the pain and trouble that are bound to ensue; and equal blame belongs to those who fail in their duty through weakness of will,",
+    "which is the same as saying through shrinking from toil and pain. These cases are perfectly simple and easy to distinguish.",
+    "In a free hour, when our power of choice is untrammelled and when nothing prevents our being able to do what we like best, every pleasure is to be welcomed and every pain avoided.",
+    "But in certain circumstances and owing to the claims of duty or the obligations of business it will frequently occur that pleasures have to be repudiated and annoyances accepted.",
+    "The wise man therefore always holds in these matters to this principle of selection: he rejects pleasures to secure other greater pleasures, or else he endures pains to avoid worse pains.",
 )
 
 
@@ -22,7 +24,7 @@ def random_text():
     return random.choice(TEXT_SAMPLES)
 
 
-class FakeSource(Source):
+class RandomTextSource(Source):
     def __init__(self, count):
         self.total = count
         self.counter = 0
@@ -33,7 +35,7 @@ class FakeSource(Source):
             self.stop()
             return
         item = DataItem()
-        item.payload.update({'text': random_text(), 'count': self.counter})
+        item.payload.update({"text": random_text(), "count": self.counter})
         return item
 
 
@@ -49,9 +51,8 @@ class ListSource(Source):
 
 
 class TextGenerator(Stage):
-
     def process(self, item: DataItem):
-        item.payload['text'] = random_text()
+        item.payload["text"] = random_text()
         return item
 
 
@@ -61,7 +62,7 @@ class TextReverser(Stage):
 
     def process(self, item: DataItem):
         for _ in range(self._cycles):
-            item.payload['text'] = item.payload['text'][::-1]
+            item.payload["text"] = item.payload["text"][::-1]
         return item
 
 
@@ -71,67 +72,59 @@ class TextDuplicator(Stage):
 
     def process(self, item: DataItem):
         for _ in range(self._cycles):
-            item.payload['text_' + str(random.randint(1, 1000))] = item.payload['text']
+            item.payload["text_" + str(random.randint(1, 1000))] = item.payload["text"]
+        return item
+
+
+class TextExtractor(Stage):
+    def process(self, item: FilePathItem):
+        with open(item.path) as f:
+            item.payload["text"] = f.read()
         return item
 
 
 class BatchTextGenerator(BatchStage):
-    def __init__(self, size=10, timeout=.1):
-        self._timeout = timeout
-        self._size = size
+    def __init__(self, size=10, timeout=0.1):
+        super().__init__(size, timeout)
 
     def process_batch(self, items):
         for item in items:
-            item.payload['text'] = random_text()
+            item.payload["text"] = random_text()
         return items
-
-    def timeout(self):
-        return self._timeout
-
-    def size(self) -> int:
-        return self._size
 
 
 class BatchTextReverser(BatchStage):
-    def __init__(self, cycles=1, size=10, timeout=.1):
-        self._timeout = timeout
-        self._size = size
+    def __init__(self, cycles=1, size=10, timeout=0.1):
+        super().__init__(size, timeout)
         self._cycles = cycles
 
     def process_batch(self, items):
         for item in items:
             for _ in range(self._cycles):
-                item.payload['text'] = item.payload['text'][::-1]
+                item.payload["text"] = item.payload["text"][::-1]
         return items
-
-    def size(self) -> int:
-        return self._size
-
-    def timeout(self) -> float:
-        return self._timeout
 
 
 class BatchTextDuplicator(BatchStage):
-    def __init__(self, cycles=1, size=10, timeout=.1, check_batch=False):
+    def __init__(self, cycles=1, size=10, timeout=0.1, check_batch=False):
+        super().__init__(size, timeout)
         self._check_batch = check_batch
-        self._timeout = timeout
-        self._size = size
         self._cycles = cycles
 
     def process_batch(self, items):
         if self._check_batch:
-            if len(items) != self.size():
-                raise CriticalError('The current batch contains {} items instead of {}'.format(len(items), self.size()))
+            if len(items) != self.size:
+                raise CriticalError(
+                    "The current batch contains {} items instead of {}".format(
+                        len(items), self.size
+                    )
+                )
         for item in items:
             for c in range(self._cycles):
-                item.payload['text_b_{}_{}'.format(c, random.randint(1, 1000))] = item.payload['text']
+                item.payload[
+                    "text_b_{}_{}".format(c, random.randint(1, 1000))
+                ] = item.payload["text"]
         return items
-
-    def size(self) -> int:
-        return self._size
-
-    def timeout(self) -> float:
-        return self._timeout
 
 
 class TimeWaster(Stage):
@@ -146,17 +139,47 @@ class TimeWaster(Stage):
 class ExceptionStage(Stage):
     def process(self, item: DataItem):
         time.sleep(0.3)
-        raise Exception('test exception')
+        raise Exception("test exception")
 
 
 class ErrorStage(Stage):
     def process(self, item: DataItem):
-        raise Error('test pipeline error')
+        raise Error("test pipeline error")
 
 
 class CriticalErrorStage(Stage):
     def process(self, item: DataItem):
-        raise CriticalError('test pipeline critical error')
+        raise CriticalError("test pipeline critical error")
+
+
+class BatchExceptionStage(BatchStage):
+    def __init__(self, size=10, timeout=0.1):
+        super().__init__(size, timeout)
+
+    def process_batch(self, items):
+        time.sleep(0.3)
+        raise Exception("test exception")
+
+
+class BatchErrorStage(BatchStage):
+    def __init__(self, size=10, timeout=0.1):
+        super().__init__(size, timeout)
+
+    def process_batch(self, items):
+        raise Error("test pipeline error")
+
+
+class SerializableStage(Stage):
+    def __init__(self):
+        self._file = None
+
+    def on_fork(self):
+        self._file = open(__file__)
+
+    def process(self, item: DataItem):
+        if self._file is not None and self._file.name == __file__:
+            item.payload["file"] = self._file.name
+        return item
 
 
 def wait_service(timeout, predicate, args):

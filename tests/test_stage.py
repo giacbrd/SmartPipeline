@@ -3,11 +3,12 @@ from multiprocessing import Manager
 
 import pytest
 
-from smartpipeline.error import CriticalError, Error, ErrorManager
-from smartpipeline.executors import SourceContainer, StageContainer, ConcurrentStageContainer, BatchStageContainer, \
+from smartpipeline.error.handling import ErrorManager
+from smartpipeline.error.exceptions import Error, CriticalError
+from smartpipeline.containers import SourceContainer, StageContainer, ConcurrentStageContainer, BatchStageContainer, \
     BatchConcurrentStageContainer
 from smartpipeline.helpers import FilePathItem
-from smartpipeline.stage import DataItem, Stop
+from smartpipeline.item import DataItem, Stop
 from smartpipeline.utils import ProcessCounter
 from tests.utils import TextReverser, ListSource, TextGenerator, BatchTextReverser, BatchTextGenerator
 
@@ -30,20 +31,20 @@ def test_data():
 def test_error():
     item = DataItem()
     stage = TextReverser()
-    item.add_error(stage, ValueError('value error'))
-    item.add_error(stage, KeyError('key error'))
-    item.add_critical_error(stage, KeyError('key error'))
+    item.add_error(stage.name, ValueError('value error'))
+    item.add_error(stage.name, KeyError('key error'))
+    item.add_critical_error(stage.name, KeyError('key error'))
     assert item.has_critical_errors()
     assert item.has_errors()
     assert len(list(item.errors())) == 2
     assert len(list(item.critical_errors())) == 1
     stage = TextReverser()
-    item.add_error(stage, Error())
-    item.add_critical_error(stage, CriticalError())
+    item.add_error(stage.name, Error())
+    item.add_critical_error(stage.name, CriticalError())
     with pytest.raises(ValueError):
-        item.add_error(stage, CriticalError())
+        item.add_error(stage.name, CriticalError())
     with pytest.raises(ValueError):
-        item.add_critical_error(stage, Error())
+        item.add_critical_error(stage.name, Error())
 
 
 def test_fileitem():
@@ -106,9 +107,9 @@ def test_stage_container():
     source = SourceContainer()
     source.set(ListSource([DataItem() for _ in range(20)]))
     previous = StageContainer('test0', TextGenerator(), ErrorManager())
-    previous.set_previous_stage(source)
+    previous.set_previous(source)
     container = StageContainer('test1', TextReverser(), ErrorManager())
-    container.set_previous_stage(previous)
+    container.set_previous(previous)
     previous.process()
     assert container.count() == 0
     item1 = container.process()
@@ -130,14 +131,14 @@ def test_stage_container():
     assert item4.payload == container.get_processed().payload
     source = SourceContainer()
     source.set(ListSource([simple_item]))
-    container.set_previous_stage(source)
+    container.set_previous(source)
     assert container.process()
     assert isinstance(container.process(), Stop)
     assert container.is_stopped() and not container.is_terminated()
 
-    container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager(), manager.Queue)
-    container.set_previous_stage(previous)
-    container.run(manager.Event, lambda: ProcessCounter(manager))
+    container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager(), manager.Queue, lambda: ProcessCounter(manager), manager.Event)
+    container.set_previous(previous)
+    container.run()
     previous.process()
     item5 = container.get_processed(block=True)
     assert item5
@@ -154,9 +155,9 @@ def test_stage_container():
 
     source = SourceContainer()
     source.set(ListSource([simple_item]))
-    container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager(), manager.Queue)
-    container.set_previous_stage(source)
-    container.run(manager.Event, lambda: ProcessCounter(manager))
+    container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager(), manager.Queue, lambda: ProcessCounter(manager),  manager.Event)
+    container.set_previous(source)
+    container.run()
     source.pop_into_queue()
     assert container.get_processed(block=True)
     source.pop_into_queue()
@@ -183,9 +184,9 @@ def test_batch_stage_container1():
     source = SourceContainer()
     source.set(ListSource([DataItem() for _ in range(200)]))
     previous = BatchStageContainer('test0', BatchTextGenerator(), ErrorManager())
-    previous.set_previous_stage(source)
+    previous.set_previous(source)
     container = BatchStageContainer('test1', BatchTextReverser(), ErrorManager())
-    container.set_previous_stage(previous)
+    container.set_previous(previous)
     previous.process()
     items1 = container.process()
     assert len(items1) == container.count()
@@ -219,7 +220,7 @@ def test_batch_stage_container2():
     for item in items:
         item.payload['text'] = 'something'
     source.set(ListSource(items))
-    container.set_previous_stage(source)
+    container.set_previous(source)
     processed = container.process()
     assert len(processed) == 10 and not any(isinstance(item, Stop) for item in processed)
     reprocessed = container.process()
@@ -232,10 +233,10 @@ def test_batch_concurrent_stage_container1():
     source = SourceContainer()
     source.set(ListSource([DataItem() for _ in range(200)]))
     previous = BatchStageContainer('test0', BatchTextGenerator(), ErrorManager())
-    previous.set_previous_stage(source)
-    container = BatchConcurrentStageContainer('test2', BatchTextReverser(timeout=1.), ErrorManager(), manager.Queue)
-    container.set_previous_stage(previous)
-    container.run(manager.Event, lambda: ProcessCounter(manager))
+    previous.set_previous(source)
+    container = BatchConcurrentStageContainer('test2', BatchTextReverser(timeout=1.), ErrorManager(), manager.Queue, lambda: ProcessCounter(manager), manager.Event)
+    container.set_previous(previous)
+    container.run()
     for _ in range(10):
         previous.process()
     items5 = list(_get_items(container))
@@ -252,8 +253,8 @@ def test_batch_concurrent_stage_container1():
     container.empty_queues()
     container.terminate()
 
-    container = BatchConcurrentStageContainer('test2', BatchTextReverser(timeout=0.), ErrorManager(), manager.Queue)
-    container.run(manager.Event, lambda: ProcessCounter(manager))
+    container = BatchConcurrentStageContainer('test2', BatchTextReverser(timeout=0.), ErrorManager(), manager.Queue, lambda: ProcessCounter(manager), manager.Event)
+    container.run()
     queue = container.out_queue
     for item in items6:
         queue.put(item)
@@ -270,9 +271,9 @@ def test_batch_concurrent_stage_container2():
     for item in items:
         item.payload['text'] = 'something'
     source.set(ListSource(items))
-    container = BatchConcurrentStageContainer('test3', BatchTextGenerator(), ErrorManager(), manager.Queue)
-    container.set_previous_stage(source)
-    container.run(manager.Event, lambda: ProcessCounter(manager))
+    container = BatchConcurrentStageContainer('test3', BatchTextGenerator(), ErrorManager(), manager.Queue, lambda: ProcessCounter(manager), manager.Event)
+    container.set_previous(source)
+    container.run()
     for _ in range(10):
         source.pop_into_queue()
     time.sleep(2)

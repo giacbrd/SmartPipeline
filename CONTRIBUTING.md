@@ -1,5 +1,4 @@
-Contributing
-============
+# Contributing
 
 - We follow the Git Flow scheme
 - Anyone can contribute through Pull Requests
@@ -7,3 +6,4 @@ Contributing
 - Following the PEP 8 conventions is advisable
 - Starting an *issue* before contributing is advisable
 - Tests must pass, defining unit tests specific to the contribution is mandatory
+- Install pre-commit in order to pass the code through Black and Flake8

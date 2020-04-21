@@ -1,5 +1,12 @@
 # SmartPipeline changelog
 
+## Version 0.3.0 [2020-04-22]
+
+- Heavy refactoring
+- Documentation
+- Pipeline queues size
+- Critical fixes on concurrency
+
 ## Version 0.2.0 [2019-09-24]
 
 - Batch stages

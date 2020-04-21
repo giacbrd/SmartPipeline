@@ -1,8 +1,10 @@
 import itertools
+import os
+from tempfile import TemporaryDirectory
 
 import pytest
 
-from smartpipeline.stage import DataItem
+from smartpipeline.item import DataItem
 from tests.utils import TEXT_SAMPLES, random_text
 
 __author__ = 'Giacomo Berardi <giacbrd.com>'
@@ -23,3 +25,12 @@ def items_generator_fx():
             yield item
 
     yield _generator()
+
+
+@pytest.fixture
+def file_directory_source_fx():
+    with TemporaryDirectory() as temp:
+        for text in TEXT_SAMPLES:
+            with open(os.path.join(temp, str(hash(text))), 'w') as f:
+                f.write(text)
+        yield temp
