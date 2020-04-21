@@ -15,7 +15,9 @@ setup(
     version="0.3.0",
     description="A framework for fast developing scalable data pipelines following a simple design pattern",
     long_description=readfile("README.rst"),
+    long_description_content_type="text/x-rst",
     classifiers=[
+        "Topic :: Software Development",
         "Topic :: Scientific/Engineering",
         "Intended Audience :: Developers",
         "Intended Audience :: Science/Research",
@@ -26,6 +28,17 @@ setup(
         "Development Status :: 4 - Beta",
     ],
     url="https://github.com/giacbrd/SmartPipeline",
+    project_urls={
+        "Documentation": "https://smartpipeline.readthedocs.io",
+        "Source": "https://github.com/giacbrd/SmartPipeline",
+    },
+    keywords=[
+        "data pipeline",
+        "task queue",
+        "data science",
+        "machine learning",
+        "design pattern",
+    ],
     author="Giacomo Berardi",
     author_email="barnets@gmail.com",
     packages=["smartpipeline"],
