@@ -4,7 +4,7 @@ Developer Interface
 Source and Stages
 -----------------
 
-Classes for defining a pipeline source and its stages with specific processing methods
+Base abstract classes for pipeline source and stages
 
 .. autoclass:: smartpipeline.stage.Source
    :inherited-members:

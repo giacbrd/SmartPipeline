@@ -23,7 +23,7 @@ class NameMixin:
 class ConcurrentMixin:
     def on_fork(self) -> Any:
         """
-        Called after concurrent stage executor initialization in a process (multiprocess concurrency).
+        Called after concurrent stage executor initialization in a process (multiprocessing concurrency).
         The stage in the executor is a copy of the original,
         by overriding this method one can initialize variables specifically for the copies.
         """
@@ -96,13 +96,14 @@ class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):
 
 class Source(ABC):
     """
-    Sublass this for defining a pipeline source
+    Extend this for defining a pipeline source
     """
 
     @abstractmethod
     def pop(self) -> Optional[DataItem]:
         """
-        Generate items for feeding a pipeline, must be overridden for properly defining a source.
+        Generate items for feeding a pipeline.
+        Must be overridden for properly defining a source.
         Call :meth:`.Source.stop` when item generation is ended
 
         :return: The generated item, if None it is simply ignored (e.g. after calling :meth:`.Source.stop`)
@@ -121,7 +122,7 @@ class Source(ABC):
     @property
     def is_stopped(self) -> bool:
         """
-        True if the source as called the stop event
+        True if the source has called the stop event
         """
         return getattr(self, "_is_stopped", False)
 

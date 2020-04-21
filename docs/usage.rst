@@ -77,7 +77,7 @@ patterns in the string with a fixed string.
             return item
 
 We also raise a :class:`.Error` in case no modifications are made to the content of the item.
-The :class:`.ErrorManager` will take care of this but the item will be processed by next steps in
+The :class:`.ErrorManager` will take care of this but the item will still be processed by next steps in
 the pipeline.
 By extending :class:`.ErrorManager` you can define custom handling for these kind of "soft" errors,
 but also for all other exceptions.
@@ -91,21 +91,21 @@ it stops the processing of an item so that the pipeline starts with the next one
 Setting and running the pipeline
 --------------------------------
 
-Once you have your set of stages you can add them in sequence in a Pipeline instance.
+Once you have your set of stages you can add them in sequence to a Pipeline instance.
 :meth:`.Pipeline.append_stage` is the main method for adding stages to a pipeline,
 it must define their unique names and eventually their concurrency.
 The ``concurrency`` parameter is default to 0, a stage is concurrent when the value is 1 or greater.
-In case of values greater than 1, and setting ``use_threads`` to ``False``,
-Python multiprocess will be used, stage processing will run in parallel,
-thus stages will be copied in each process.
+In case of values greater than 1, and by setting ``use_threads`` to ``False``,
+Python multiprocess is used: stage concurrent executions will run in parallel,
+thus stage instances will be copied in each process.
 
 Consider using threads when I/O blocking operations are prevalent,
 while using multiprocess when stages execute long computations on data.
-In case of no concurrency the pipeline simply run a chain of :meth:`.Stage.process`,
+In case of no concurrency the pipeline simply runs a chain of :meth:`.Stage.process`,
 while with concurrency Python queues are involved, so items may be serialized.
 
 Another method is :meth:`.Pipeline.append_stage_concurrently`,
-which allows to execute stages creation concurrently with other stages appending.
+which allows to execute stages creation concurrently with other stages appending calls.
 Useful when the creation is slow,
 e.g., the stage carries the construction of big data structures.
 
@@ -166,8 +166,8 @@ extracts texts and finds VAT codes occurrences.
 Finally it indexes the result in an Elasticsearch cluster.
 Errors are eventually logged in the Elasticsearch cluster.
 Here the developer has defined his own custom error manager and obviously the stages.
-The source must be usually defined, here a straightforward ready one (from the library) has been used,
-together with a custom data item type that provide a file reference.
+The source must be usually defined, here a straightforward ready one (from the codebase) has been used,
+together with a custom data item type that provides a file reference.
 
 .. code-block:: python
 

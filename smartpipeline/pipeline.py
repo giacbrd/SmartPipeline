@@ -61,7 +61,7 @@ class Pipeline:
 
     def _new_mp_queue(self) -> ItemsQueue:
         """
-        Construct queue for multiprocess communication
+        Construct queue for multiprocessing communication
         """
         if self._sync_manager is None:
             self._sync_manager = Manager()
@@ -75,7 +75,7 @@ class Pipeline:
 
     def _new_mp_event(self) -> Event:
         """
-        Construct synchronization event for multiprocess
+        Construct synchronization event for multiprocessing
         """
         if self._sync_manager is None:
             self._sync_manager = Manager()
@@ -90,7 +90,7 @@ class Pipeline:
 
     def _new_mp_counter(self) -> ProcessCounter:
         """
-        Construct a safe counter for multiprocess
+        Construct a safe counter for multiprocessing
         """
         if self._sync_manager is None:
             self._sync_manager = Manager()
@@ -138,7 +138,8 @@ class Pipeline:
 
     def run(self) -> Generator[DataItem, None, None]:
         """
-        Run the pipeline given a source and a concatenation of stages, get the sequence of items through iteration
+        Run the pipeline given a source and a concatenation of stages.
+        Get the sequence of items through iteration
 
         :return: Iterator over processed items
         :raises ValueError: When a source has not been set for the pipeline
@@ -206,7 +207,7 @@ class Pipeline:
     @property
     def count(self) -> int:
         """
-        Get the number of processed items by all executed runs, also for items which have failed
+        Get the number of items processed by all executed runs, also for items which have failed
 
         :return: Count of processed items
         """
@@ -272,7 +273,7 @@ class Pipeline:
     ):
         """
         Process a single item asynchronously through the pipeline, stages may run concurrently.
-        The call return immediately, processed items are retrieved with :meth:`.Pipeline.get_item`
+        The call returns immediately, processed items are retrieved with :meth:`.Pipeline.get_item`
 
         :param callback: A function to call after a successful process of the item
         """
@@ -291,8 +292,9 @@ class Pipeline:
         """
         Get a single item from the asynchronous execution of the pipeline on single items from :meth:`.Pipeline.process_async`
 
-        :param block: If True wait indefinitely for the next processed item, otherwise raise :exc:`queue.Empty`
+        :param block: If True wait indefinitely for the next processed item
         :raises ValueError: When there is not output queue set, the pipeline is not running asynchronously
+        :raises queue.Empty: When we do not block and the queue is empty
         """
         if self._out_queue is not None:
             item = self._out_queue.get(block)
@@ -362,7 +364,7 @@ class Pipeline:
 
         :param name: Stage name
         :param stage: A stage instance
-        :param concurrency: Number of concurrent stage executions, if 0 just create the non-concurrent containers
+        :param concurrency: Number of concurrent stage executions, if 0 then just create the non-concurrent containers
         :param use_threads: If True use threads, otherwise multiprocessing
         """
         if concurrency <= 0:
@@ -413,11 +415,11 @@ class Pipeline:
         use_threads: bool = True,
     ) -> Pipeline:
         """
-        Append a stage to the pipeline just after the last one appended or the source if it is the first stage
+        Append a stage to the pipeline just after the last one appended, or after the source if it is the first stage
 
-        :param name: Name for identify the stage in the pipeline, it is also set in the stage and it must unique in the pipeline
+        :param name: Name for identify the stage in the pipeline, it is also set in the stage and it must be unique in the pipeline
         :param stage: Instance of a stage
-        :param concurrency: Number of concurrent stage executions, if 0 threads/processes won't be involved for this stage
+        :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
         :param use_threads: If True use threads, otherwise multiprocessing
         """
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
@@ -446,14 +448,14 @@ class Pipeline:
         use_threads: bool = True,
     ) -> Pipeline:
         """
-        Append a stage class to the pipeline just after the last one appended or the source if it is the first stage.
+        Append a stage class to the pipeline just after the last one appended, or after the source if it is the first stage.
         The stage construction will be executed concurrently respect to the general pipeline construction
 
-        :param name: Name for identify the stage in the pipeline, it is also set in the stage and it must unique in the pipeline
+        :param name: Name for identify the stage in the pipeline, it is also set in the stage and it must be unique in the pipeline
         :param stage_class: Class of a stage
         :param args: List of arguments for the stage constructor
         :param kwargs: Dictionary of keyed arguments for the stage constructor
-        :param concurrency: Number of concurrent stage executions, if 0 threads/processes won't be involved for this stage
+        :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
         :param use_threads: If True use threads, otherwise multiprocessing
         """
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread

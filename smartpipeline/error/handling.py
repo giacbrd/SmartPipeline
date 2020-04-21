@@ -38,10 +38,10 @@ class ErrorManager:
         self, error: Exception, stage: NameMixin, item: DataItem
     ) -> Optional[Exception]:
         """
-        Manage a error produced by a stage
+        Manage an error produced by a stage
 
         :param error: It can be a generic exception or an error explicitly raised by a stage
-        :param stage: Stage which raised the exception during process
+        :param stage: Stage which raised the exception during processing
         :param item: Item which raised the exception when processed
         :return: An exception which caused a critical error if any
         """
