@@ -43,7 +43,7 @@ class DataItem:
 
     def set_metadata(self, field: str, value: Any) -> DataItem:
         """
-        Add a metadata, something we want to remember but keeping it outside the :attr:`.DataItem.payload`
+        Add a metadata, something we want to remember but keep outside the actual data in :attr:`.DataItem.payload`
 
         :param field: Name of the metadata variable
         """

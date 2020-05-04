@@ -56,7 +56,8 @@ A stage receives a single item and returns it after processing.
 Concurrent stages will call the method on different subsets of the data flow, concurrently.
 
 :class:`.DataItem` data is kept in the :attr:`.DataItem.payload`, a read-only serializable dictionary.
-Other methods allow to enrich an item with metadata.
+Other methods allow to enrich an item with metadata, extra stuff as temporary data or descriptors of the item,
+so as to isolate all and only the data the pipeline produces in the payload.
 
 A simple example of a stage that takes the previously generated items and substitute specific
 patterns in the string with a fixed string.
