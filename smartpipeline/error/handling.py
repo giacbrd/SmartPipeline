@@ -36,14 +36,14 @@ class ErrorManager:
 
     def handle(
         self, error: Exception, stage: NameMixin, item: DataItem
-    ) -> Optional[Exception]:
+    ) -> Optional[CriticalError]:
         """
         Manage an error produced by a stage
 
-        :param error: It can be a generic exception or an error explicitly raised by a stage
+        :param error: It can be a generic exception or an error from :mod:`.exceptions` explicitly raised by a stage
         :param stage: Stage which raised the exception during processing
         :param item: Item which raised the exception when processed
-        :return: An exception which caused a critical error if any
+        :return: If the handled error results to be critical return the generated :class:`.exceptions.CriticalError`
         """
         if type(error) is Error:
             item_error = item.add_error(stage.name, error)
@@ -53,7 +53,9 @@ class ErrorManager:
         exc_info = (type(error), error, error.__traceback__)
         self._logger.exception(self._generate_message(stage, item), exc_info=exc_info)
         if isinstance(item_error, CriticalError):
-            return self._check_critical(item_error)
+            exception = self._check_critical(item_error)
+            if exception:
+                return item_error
 
     @staticmethod
     def _generate_message(stage: NameMixin, item: DataItem) -> str:

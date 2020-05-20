@@ -39,8 +39,7 @@ Writing your pipeline
 ~~~~~~~~~~~~~~~~~~~~~
 
 SmartPipeline is designed to help the developer following best practices,
-as in methodologies like `Twelve-Factor <https://12factor.ne>`_ .
-The design is based on industrial experience on data products.
+the design is based on industrial experience on data products.
 
 SmartPipeline focuses on simplicity and efficiency in handling data locally,
 i.e. copies of the data are minimized, with the obvious exception of multiprocessing.
