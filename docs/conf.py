@@ -24,7 +24,7 @@ copyright = "2020, Giacomo Berardi"
 author = "Giacomo Berardi"
 
 # The full version, including alpha/beta/rc tags
-release = "0.3.1"
+release = "0.3.3"
 
 
 # -- General configuration ---------------------------------------------------
