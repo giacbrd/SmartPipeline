@@ -36,10 +36,13 @@ def test_critical_errors(caplog):
     stage = TextReverser()
     manager = ErrorManager()
     item = DataItem()
-    managed_error = manager.handle(CriticalError(), stage, item)
+    managed_critical_error = manager.handle(CriticalError(), stage, item)
     assert not item.has_errors()
     assert item.has_critical_errors()
-    assert type(next(item.critical_errors()).get_exception()) == type(managed_error)
+    assert isinstance(
+        next(item.critical_errors()).get_exception(),
+        type(managed_critical_error.get_exception()),
+    )
     assert any(caplog.records)
     manager = ErrorManager().raise_on_critical_error()
     item = DataItem()
