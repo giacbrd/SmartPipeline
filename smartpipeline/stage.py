@@ -60,7 +60,7 @@ class Stage(NameMixin, ConcurrentMixin, Processor):
     """
 
     def __str__(self) -> str:
-        return "Stage {}".format(self.name)
+        return f"stage {self.name}"
 
 
 class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):
