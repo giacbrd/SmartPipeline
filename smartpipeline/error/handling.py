@@ -45,7 +45,7 @@ class ErrorManager:
         :param item: Item which raised the exception when processed
         :return: If the handled error results to be critical return the generated :class:`.exceptions.CriticalError`
         """
-        if type(error) is Error:
+        if isinstance(error, Error) and type(error) is not CriticalError:
             item_error = item.add_error(stage.name, error)
         else:
             # any un-managed exception is a potential critical error

@@ -145,19 +145,18 @@ class DataItem:
 
         :param exception: It can be an :class:`.error.exceptions.Error` instance or any exception, which will be encapsulated in an :class:`.error.exceptions.Error`
         """
-        # if it is an instance of `Error`
-        if type(exception) is Error:
-            exception.set_stage(stage)
-            self._errors.append(exception)
-            return exception
-        elif isinstance(exception, Exception) and type(exception) is not CriticalError:
-            error = Error()
-            error.with_exception(exception)
-            error.set_stage(stage)
-            self._errors.append(error)
-            return error
-        else:
-            raise ValueError("Add a pipeline Error or a generic exception")
+        if type(exception) is not CriticalError:
+            if isinstance(exception, Error):
+                exception.set_stage(stage)
+                self._errors.append(exception)
+                return exception
+            elif isinstance(exception, Exception):
+                error = Error()
+                error.with_exception(exception)
+                error.set_stage(stage)
+                self._errors.append(error)
+                return error
+        raise ValueError("Add a pipeline Error or a generic exception")
 
     def add_critical_error(
         self, stage: str, exception: Union[CriticalError, Exception]
@@ -167,19 +166,18 @@ class DataItem:
 
         :param exception: It can be a :class:`.error.exceptions.CriticalError` instance or any exception, which will be encapsulated in a :class:`.error.exceptions.CriticalError`
         """
-        # if it is an instance of `CriticalError`
-        if type(exception) is CriticalError:
-            exception.set_stage(stage)
-            self._critical_errors.append(exception)
-            return exception
-        elif isinstance(exception, Exception) and type(exception) is not Error:
-            error = CriticalError()
-            error.with_exception(exception)
-            error.set_stage(stage)
-            self._critical_errors.append(error)
-            return error
-        else:
-            raise ValueError("Add a pipeline CriticalError or a generic exception")
+        if type(exception) is not Error:
+            if isinstance(exception, CriticalError):
+                exception.set_stage(stage)
+                self._critical_errors.append(exception)
+                return exception
+            elif isinstance(exception, Exception):
+                error = CriticalError()
+                error.with_exception(exception)
+                error.set_stage(stage)
+                self._critical_errors.append(error)
+                return error
+        raise ValueError("Add a pipeline CriticalError or a generic exception")
 
 
 class Stop(DataItem):
