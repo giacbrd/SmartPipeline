@@ -65,18 +65,18 @@ class DataItem:
         """
         return self._meta.keys()
 
-    def set_timing(self, stage_name: str, milliseconds: float) -> DataItem:
+    def set_timing(self, stage_name: str, seconds: float) -> DataItem:
         """
         Set the time spent by a stage (referenced by its name) for processing the item
         """
-        self._timings[stage_name] = milliseconds
+        self._timings[stage_name] = seconds
         return self
 
     def get_timing(self, stage_name: str) -> float:
         """
         Get the time spent by a stage (referenced by its name) for processing the item
 
-        :return: The time in milliseconds or None if the item has not ben processed by the stage
+        :return: The time in seconds or None if the item has not ben processed by the stage
         """
         return self._timings.get(stage_name)
 

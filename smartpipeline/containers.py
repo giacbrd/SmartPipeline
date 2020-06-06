@@ -71,7 +71,7 @@ class BaseContainer(InQueued):
         Get the oldest processed item waiting to be retrieved
 
         :param block: Wait for the next item to be processed if no one available
-        :param timeout: Time to wait when `block` is True
+        :param timeout: Time to wait (seconds) when `block` is True
         :return: A processed item or None if: no item waiting to be retrieved; timeout expires on a blocked call
         """
         pass

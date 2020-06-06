@@ -21,11 +21,11 @@ def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataIt
     try:
         ret = stage.process(item)
     except Exception as e:
-        item.set_timing(stage.name, (time.time() - time1) * 1000.0)
+        item.set_timing(stage.name, time.time() - time1)
         error_manager.handle(e, stage, item)
         return item
     # this can't be in a finally, otherwise it would register the `error_manager.handle` time
-    item.set_timing(stage.name, (time.time() - time1) * 1000.0)
+    item.set_timing(stage.name, time.time() - time1)
     return ret
 
 
@@ -46,13 +46,13 @@ def process_batch(
     try:
         processed = stage.process_batch(list(to_process.values()))
     except Exception as e:
-        spent = ((time.time() - time1) * 1000.0) / (len(to_process) or 1.0)
+        spent = (time.time() - time1) / (len(to_process) or 1.0)
         for i, item in to_process.items():
             item.set_timing(stage.name, spent)
             error_manager.handle(e, stage, item)
             ret[i] = item
         return ret
-    spent = ((time.time() - time1) * 1000.0) / (len(to_process) or 1.0)
+    spent = (time.time() - time1) / (len(to_process) or 1.0)
     for n, i in enumerate(to_process.keys()):
         item = processed[n]
         item.set_timing(stage.name, spent)

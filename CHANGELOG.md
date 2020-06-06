@@ -1,5 +1,11 @@
 # SmartPipeline changelog
 
+## Version 0.4.0 [2020-06-22]
+
+- BREAKING CHANGES:
+  - `use_threads` parameter has been substituted with `parallel`, values are inverted
+  - item timings are now in seconds
+
 ## Version 0.3.0 [2020-04-22]
 
 - Heavy refactoring

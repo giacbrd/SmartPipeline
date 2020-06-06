@@ -114,7 +114,7 @@ def test_errors(caplog):
     for item in pipeline.run():
         assert item.has_critical_errors()
         assert item.get_timing("reverser")
-        assert item.get_timing("error1") >= 0.3
+        assert item.get_timing("error1") >= 0.0003
         assert not item.get_timing("error2")
         for error in item.critical_errors():
             assert isinstance(error.get_exception(), Exception)
@@ -186,7 +186,7 @@ def test_batch_errors(caplog):
     for item in pipeline.run():
         assert item.has_critical_errors()
         assert item.get_timing("reverser")
-        assert item.get_timing("error1") >= 0.3
+        assert item.get_timing("error1") >= 0.0003
         assert not item.get_timing("error2")
         for error in item.critical_errors():
             assert isinstance(error.get_exception(), Exception)
