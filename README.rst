@@ -24,7 +24,8 @@ they can process batch of items at once,
 finally executions and errors are monitored by the pipeline.
 
 It is a framework for engineering sequences of data operations:
-an optimal solution for fast and clean data analysis prototypes,
+an optimal solution for fast and clean data analysis prototypes
+(small/medium projects and POC),
 that can be immediately ready for production.
 No dependencies are required.
 
