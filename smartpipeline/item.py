@@ -151,7 +151,7 @@ class DataItem:
                 self._errors.append(exception)
                 return exception
             elif isinstance(exception, Exception):
-                error = Error()
+                error = Error(str(exception))
                 error.with_exception(exception)
                 error.set_stage(stage)
                 self._errors.append(error)
@@ -172,7 +172,7 @@ class DataItem:
                 self._critical_errors.append(exception)
                 return exception
             elif isinstance(exception, Exception):
-                error = CriticalError()
+                error = CriticalError(str(exception))
                 error.with_exception(exception)
                 error.set_stage(stage)
                 self._critical_errors.append(error)

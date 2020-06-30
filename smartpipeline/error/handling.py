@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from typing import Optional
+from typing import Optional, Union
 
 from smartpipeline.error.exceptions import Error, CriticalError
 from smartpipeline.item import DataItem
@@ -44,13 +44,14 @@ class ErrorManager:
         :param stage: Stage which raised the exception during processing
         :param item: Item which raised the exception when processed
         :return: If the handled error results to be critical return the generated :class:`.exceptions.CriticalError`
+        :raises Exception: When a :meth:`.ErrorManager.raise_on_critical_error` has been set and the error is critical
         """
         if isinstance(error, Error) and type(error) is not CriticalError:
             item_error = item.add_error(stage.name, error)
         else:
             # any un-managed exception is a potential critical error
             item_error = item.add_critical_error(stage.name, error)
-        exc_info = (type(error), error, error.__traceback__)
+        exc_info = (type(item_error), item_error, item_error.__traceback__)
         self._logger.exception(self._generate_message(stage, item), exc_info=exc_info)
         if isinstance(item_error, CriticalError):
             exception = self._check_critical(item_error)
@@ -61,17 +62,18 @@ class ErrorManager:
     def _generate_message(stage: NameMixin, item: DataItem) -> str:
         return f"The stage {stage} has generated an error on item {item}"
 
-    def _check_critical(self, error: CriticalError) -> Optional[Exception]:
+    def _check_critical(self, error: CriticalError) -> Union[Exception, CriticalError]:
         """
         Manage a critical error, usually after an item has been processed by a stage
 
-        :return: The exception which caused a critical error if any
+        :return: The exception which caused a critical error if any, otherwise the :class:`.exceptions.CriticalError` itself
+        :raises Exception: When a :meth:`.ErrorManager.raise_on_critical_error` has been set
         """
         ex = error.get_exception()
         if self._raise_on_critical:
-            raise ex
+            raise ex or error
         elif self._skip_on_critical:
-            return ex
+            return ex or error
 
     def check_critical_errors(self, item: DataItem) -> Optional[Exception]:
         """

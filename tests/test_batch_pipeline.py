@@ -84,7 +84,7 @@ def test_errors(caplog):
         assert item.get_timing("reverser")
         assert item.get_timing("error")
         error = next(item.errors())
-        assert isinstance(error.get_exception(), Exception)
+        assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert pipeline.count == 22
     assert any(caplog.records)
@@ -101,7 +101,7 @@ def test_errors(caplog):
         assert any(k.startswith("text_") for k in item.payload.keys())
         assert item.get_timing("error")
         error = next(item.errors())
-        assert isinstance(error.get_exception(), Exception)
+        assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert pipeline.count == 28
     assert any(caplog.records)
@@ -119,8 +119,8 @@ def test_errors(caplog):
         for error in item.critical_errors():
             assert isinstance(error.get_exception(), Exception)
             assert (
-                str(error) == "test pipeline critical error"
-                or str(error) == "test exception"
+                str(error.get_exception()) == "test exception"
+                and str(error) != "test pipeline error"
             )
     assert pipeline.count == 10
     assert any(caplog.records)
@@ -156,7 +156,7 @@ def test_batch_errors(caplog):
         assert item.get_timing("reverser")
         assert item.get_timing("error")
         error = next(item.errors())
-        assert isinstance(error.get_exception(), Exception)
+        assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert pipeline.count == 22
     assert any(caplog.records)
@@ -173,7 +173,7 @@ def test_batch_errors(caplog):
         assert any(k.startswith("text_") for k in item.payload.keys())
         assert item.get_timing("error")
         error = next(item.errors())
-        assert isinstance(error.get_exception(), Exception)
+        assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert pipeline.count == 28
     assert any(caplog.records)
@@ -191,8 +191,8 @@ def test_batch_errors(caplog):
         for error in item.critical_errors():
             assert isinstance(error.get_exception(), Exception)
             assert (
-                str(error) == "test pipeline critical error"
-                or str(error) == "test exception"
+                str(error.get_exception()) == "test exception"
+                and str(error) != "test pipeline error"
             )
     assert pipeline.count == 10
     assert any(caplog.records)

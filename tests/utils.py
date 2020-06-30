@@ -147,9 +147,9 @@ class ErrorStage(Stage):
         raise Error("test pipeline error")
 
 
-class CriticalErrorStage(Stage):
+class CriticalIOErrorStage(Stage):
     def process(self, item: DataItem):
-        raise CriticalError("test pipeline critical error")
+        raise CriticalError("test pipeline critical IO error") from IOError()
 
 
 class BatchExceptionStage(BatchStage):

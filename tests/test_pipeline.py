@@ -14,6 +14,7 @@ from tests.utils import (
     ExceptionStage,
     TimeWaster,
     SerializableStage,
+    CriticalIOErrorStage,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -50,7 +51,7 @@ def test_errors(caplog):
         assert item.get_timing("reverser")
         assert item.get_timing("error")
         error = next(item.errors())
-        assert isinstance(error.get_exception(), Exception)
+        assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert any(caplog.records)
     assert pipeline.count == 10
@@ -67,10 +68,22 @@ def test_errors(caplog):
         assert any(k.startswith("text_") for k in item.payload.keys())
         assert item.get_timing("error")
         error = next(item.errors())
-        assert isinstance(error.get_exception(), Exception)
+        assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert any(caplog.records)
     assert pipeline.count == 10
+    pipeline = _pipeline()
+    pipeline.set_error_manager(ErrorManager())
+    pipeline.set_source(RandomTextSource(10))
+    pipeline.append_stage("reverser", TextReverser())
+    pipeline.append_stage("error1", CriticalIOErrorStage())
+    for item in pipeline.run():
+        assert item.has_critical_errors()
+        assert item.get_timing("reverser")
+        assert item.get_timing("error1")
+        for error in item.critical_errors():
+            assert isinstance(error.get_exception(), IOError)
+            assert str(error) == "test pipeline critical IO error"
     pipeline = _pipeline()
     pipeline.set_error_manager(ErrorManager())
     pipeline.set_source(RandomTextSource(10))
@@ -80,13 +93,14 @@ def test_errors(caplog):
     for item in pipeline.run():
         assert item.has_critical_errors()
         assert item.get_timing("reverser")
-        assert item.get_timing("error1") >= 0.0003
+        assert item.get_timing("error1")
         assert not item.get_timing("error2")
         for error in item.critical_errors():
             assert isinstance(error.get_exception(), Exception)
             assert (
-                str(error) == "test pipeline critical error"
-                or str(error) == "test exception"
+                str(error) == "test exception"
+                and str(error.get_exception()) == "test exception"
+                and str(error) != "test pipeline error"
             )
     assert any(caplog.records)
     assert pipeline.count == 10

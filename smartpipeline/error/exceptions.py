@@ -15,21 +15,18 @@ class Error(Exception):
 
     def with_exception(self, exception: Exception) -> Error:
         """
-        Set the original exception (if any) that has generated this error
+        Set the original exception (if any) that has generated this error,
+        equivalent to `explicit exception chaining <https://www.python.org/dev/peps/pep-3134/#explicit-exception-chaining>`_
         """
-        self._pipeline_exception = exception
+        self.__cause__ = exception
         return self
 
-    def get_exception(self) -> Exception:
+    def get_exception(self) -> Optional[Exception]:
         """
-        Get the original exception (if any) that has generated this error
+        Get the original exception (if any) that has generated this error,
+        equivalent to the `__cause__ <https://www.python.org/dev/peps/pep-3134/#explicit-exception-chaining>`_ attribute
         """
-        return getattr(self, "_pipeline_exception", Exception())
-
-    def __str__(self) -> str:
-        error = super(Error, self).__str__().strip()
-        exception = str(self.get_exception()).strip()
-        return "\n".join((error, exception)).strip()
+        return self.__cause__ or None
 
 
 class CriticalError(Error):
