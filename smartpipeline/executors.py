@@ -19,14 +19,14 @@ def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataIt
         return item
     time1 = time.time()
     try:
-        ret = stage.process(item)
+        processed_item = stage.process(item)
     except Exception as e:
         item.set_timing(stage.name, time.time() - time1)
         error_manager.handle(e, stage, item)
         return item
     # this can't be in a finally, otherwise it would register the `error_manager.handle` time
-    item.set_timing(stage.name, time.time() - time1)
-    return ret
+    processed_item.set_timing(stage.name, time.time() - time1)
+    return processed_item
 
 
 def process_batch(
