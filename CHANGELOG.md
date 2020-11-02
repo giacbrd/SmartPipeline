@@ -5,7 +5,8 @@
 - BREAKING CHANGES:
   - `use_threads` parameter has been substituted with `parallel`, values are inverted
   - item timings are now in seconds
-  - `get_exception` of an Error without associated Exception now returns `None`
+  - `get_exception` of an `Error` without associated Exception now returns `None`
+  - `Error` class is now called `SoftError`
 
 ## Version 0.3.0 [2020-04-22]
 
