@@ -2,7 +2,7 @@ from __future__ import annotations
 import logging
 from typing import Optional, Union
 
-from smartpipeline.error.exceptions import Error, CriticalError
+from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.item import DataItem
 from smartpipeline.stage import NameMixin
 
@@ -11,7 +11,7 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 class ErrorManager:
     """
-    Basic error handling of a pipeline, principally manages :class:`.exceptions.Error` and :class:`.exceptions.CriticalError` types
+    Basic error handling of a pipeline, principally manages :class:`.exceptions.SoftError` and :class:`.exceptions.CriticalError` types
     """
 
     def __init__(self):
@@ -46,8 +46,8 @@ class ErrorManager:
         :return: If the handled error results to be critical return the generated :class:`.exceptions.CriticalError`
         :raises Exception: When a :meth:`.ErrorManager.raise_on_critical_error` has been set and the error is critical
         """
-        if isinstance(error, Error) and type(error) is not CriticalError:
-            item_error = item.add_error(stage.name, error)
+        if isinstance(error, SoftError):
+            item_error = item.add_soft_error(stage.name, error)
         else:
             # any un-managed exception is a potential critical error
             item_error = item.add_critical_error(stage.name, error)
@@ -77,7 +77,7 @@ class ErrorManager:
 
     def check_critical_errors(self, item: DataItem) -> Optional[Exception]:
         """
-        Check the critical errors registered for an item
+        Check the critical soft_errors registered for an item
         """
         if item.has_critical_errors():
             for er in item.critical_errors():

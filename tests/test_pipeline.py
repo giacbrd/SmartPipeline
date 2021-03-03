@@ -50,7 +50,7 @@ def test_errors(caplog):
         assert item.has_errors()
         assert item.get_timing("reverser")
         assert item.get_timing("error")
-        error = next(item.errors())
+        error = next(item.soft_errors())
         assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert any(caplog.records)
@@ -67,7 +67,7 @@ def test_errors(caplog):
         assert item.get_timing("duplicator")
         assert any(k.startswith("text_") for k in item.payload.keys())
         assert item.get_timing("error")
-        error = next(item.errors())
+        error = next(item.soft_errors())
         assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert any(caplog.records)
@@ -266,7 +266,7 @@ def test_concurrency_errors():
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
         assert any(k.startswith("text_") for k in item.payload.keys())
-        assert len(list(item.errors())) == 2
+        assert len(list(item.soft_errors())) == 2
         assert item.get_timing("error1")
         assert item.get_timing("error2")
     assert pipeline.count == 10

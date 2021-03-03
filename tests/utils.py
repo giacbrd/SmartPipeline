@@ -3,7 +3,7 @@ import time
 from datetime import datetime
 from time import sleep
 
-from smartpipeline.error.exceptions import Error, CriticalError
+from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.helpers import FilePathItem
 from smartpipeline.stage import Source, Stage, BatchStage
 from smartpipeline.item import DataItem
@@ -144,7 +144,7 @@ class ExceptionStage(Stage):
 
 class ErrorStage(Stage):
     def process(self, item: DataItem):
-        raise Error("test pipeline error")
+        raise SoftError("test pipeline error")
 
 
 class CriticalIOErrorStage(Stage):
@@ -166,7 +166,7 @@ class BatchErrorStage(BatchStage):
         super().__init__(size, timeout)
 
     def process_batch(self, items):
-        raise Error("test pipeline error")
+        raise SoftError("test pipeline error")
 
 
 class SerializableStage(Stage):

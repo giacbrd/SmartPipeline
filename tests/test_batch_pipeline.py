@@ -83,7 +83,7 @@ def test_errors(caplog):
         assert item.has_errors()
         assert item.get_timing("reverser")
         assert item.get_timing("error")
-        error = next(item.errors())
+        error = next(item.soft_errors())
         assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert pipeline.count == 22
@@ -100,7 +100,7 @@ def test_errors(caplog):
         assert item.get_timing("duplicator")
         assert any(k.startswith("text_") for k in item.payload.keys())
         assert item.get_timing("error")
-        error = next(item.errors())
+        error = next(item.soft_errors())
         assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert pipeline.count == 28
@@ -155,7 +155,7 @@ def test_batch_errors(caplog):
         assert item.has_errors()
         assert item.get_timing("reverser")
         assert item.get_timing("error")
-        error = next(item.errors())
+        error = next(item.soft_errors())
         assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert pipeline.count == 22
@@ -172,7 +172,7 @@ def test_batch_errors(caplog):
         assert item.get_timing("duplicator")
         assert any(k.startswith("text_") for k in item.payload.keys())
         assert item.get_timing("error")
-        error = next(item.errors())
+        error = next(item.soft_errors())
         assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert pipeline.count == 28

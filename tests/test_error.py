@@ -1,7 +1,7 @@
 import pytest
 
 from smartpipeline.error.handling import ErrorManager
-from smartpipeline.error.exceptions import Error, CriticalError
+from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.item import DataItem
 from tests.utils import TextReverser
 
@@ -12,7 +12,7 @@ def test_manager(caplog):
     manager = ErrorManager()
     stage = TextReverser()
     item = DataItem()
-    manager.handle(Error(), stage, item)
+    manager.handle(SoftError(), stage, item)
     assert any(caplog.records)
     assert item.has_errors()
     assert not item.has_critical_errors()

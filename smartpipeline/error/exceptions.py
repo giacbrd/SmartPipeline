@@ -4,7 +4,7 @@ from typing import Optional
 
 class Error(Exception):
     """
-    Base exception type which usually only provokes skipping a stage for an item
+    Base exception type for stages
     """
 
     def set_stage(self, stage: str):
@@ -27,6 +27,14 @@ class Error(Exception):
         equivalent to the `__cause__ <https://www.python.org/dev/peps/pep-3134/#explicit-exception-chaining>`_ attribute
         """
         return self.__cause__ or None
+
+
+class SoftError(Error):
+    """
+    A type of exception which usually only provokes skipping a stage for an item
+    """
+
+    pass
 
 
 class CriticalError(Error):

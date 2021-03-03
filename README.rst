@@ -21,7 +21,7 @@ in which tasks are sequentially encapsulated in pipeline stages.
 SmartPipeline takes a lightweight approach in implementation,
 but stages can run concurrently and scale on heavy tasks,
 they can process batch of items at once,
-finally executions and errors are monitored by the pipeline.
+finally executions and soft_errors are monitored by the pipeline.
 
 It is a framework for engineering sequences of data operations:
 an optimal solution for fast and clean data analysis prototypes

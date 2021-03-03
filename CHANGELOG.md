@@ -7,6 +7,7 @@
   - item timings are now in seconds
   - `get_exception` of an `Error` without associated Exception now returns `None`
   - `Error` class is now called `SoftError`
+  - `build()` must be used at the end of the methods chain in `Pipeline` construction
 
 ## Version 0.3.0 [2020-04-22]
 

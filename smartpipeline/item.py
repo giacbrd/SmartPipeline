@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Union, Generator, Any, KeysView, Callable, Dict
 from smartpipeline.defaults import PAYLOAD_SNIPPET_SIZE
-from smartpipeline.error.exceptions import Error, CriticalError
+from smartpipeline.error.exceptions import CriticalError, SoftError
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -115,7 +115,7 @@ class DataItem:
 
     def has_errors(self) -> bool:
         """
-        True if the item has raised an :class:`.error.exceptions.Error` in some stage processing
+        True if the item has raised an :class:`.error.exceptions.SoftError` in some stage processing
         """
         return any(self._errors)
 
@@ -125,9 +125,9 @@ class DataItem:
         """
         return any(self._critical_errors)
 
-    def errors(self) -> Generator[Error, None, None]:
+    def soft_errors(self) -> Generator[SoftError, None, None]:
         """
-        Iter over :class:`.error.exceptions.Error` instances eventually generated in some stage processing
+        Iter over :class:`.error.exceptions.SoftError` instances eventually generated in some stage processing
         """
         for e in self._errors:
             yield e
@@ -139,24 +139,26 @@ class DataItem:
         for e in self._critical_errors:
             yield e
 
-    def add_error(self, stage: str, exception: Union[Error, Exception]) -> Error:
+    def add_soft_error(
+        self, stage: str, exception: Union[SoftError, Exception]
+    ) -> SoftError:
         """
-        Add an :class:`.error.exceptions.Error` generated in a stage (referenced by its name) for the item
+        Add an :class:`.error.exceptions.SoftError` generated in a stage (referenced by its name) for the item
 
-        :param exception: It can be an :class:`.error.exceptions.Error` instance or any exception, which will be encapsulated in an :class:`.error.exceptions.Error`
+        :param exception: It can be an :class:`.error.exceptions.SoftError` instance or any exception, which will be encapsulated in an :class:`.error.exceptions.SoftError`
         """
         if type(exception) is not CriticalError:
-            if isinstance(exception, Error):
+            if isinstance(exception, SoftError):
                 exception.set_stage(stage)
                 self._errors.append(exception)
                 return exception
             elif isinstance(exception, Exception):
-                error = Error(str(exception))
+                error = SoftError(str(exception))
                 error.with_exception(exception)
                 error.set_stage(stage)
                 self._errors.append(error)
                 return error
-        raise ValueError("Add a pipeline Error or a generic exception")
+        raise ValueError("Add a pipeline SoftError or a generic exception")
 
     def add_critical_error(
         self, stage: str, exception: Union[CriticalError, Exception]
@@ -166,7 +168,7 @@ class DataItem:
 
         :param exception: It can be a :class:`.error.exceptions.CriticalError` instance or any exception, which will be encapsulated in a :class:`.error.exceptions.CriticalError`
         """
-        if type(exception) is not Error:
+        if type(exception) is not SoftError:
             if isinstance(exception, CriticalError):
                 exception.set_stage(stage)
                 self._critical_errors.append(exception)
