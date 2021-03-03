@@ -58,6 +58,7 @@ class Pipeline:
         # an empty source, on which we can only occasionally send items
         self._source_container = SourceContainer()
         self._count = 0
+        self._executors_ready = False
 
     def _new_mp_queue(self) -> ItemsQueue:
         """
@@ -109,6 +110,8 @@ class Pipeline:
 
         :param wait_seconds: Recurrently wait these seconds for all stage initializers to finish
         """
+        if self._executors_ready:
+            return
         if self._init_executor is not None:
             self._init_executor.shutdown(wait=True)
             self._init_executor = None
@@ -120,6 +123,7 @@ class Pipeline:
                 stage, (ConcurrentStageContainer, BatchConcurrentStageContainer)
             ):
                 stage.run()
+        self._executors_ready = True
 
     def shutdown(self):
         if self._out_queue is not None:
@@ -261,6 +265,7 @@ class Pipeline:
         """
         Process a single item synchronously (no concurrency) through the pipeline
         """
+        self._wait_executors()
         last_stage_name = self._containers.last_key()
         self._source_container.prepend_item(item)
         for name, container in self._containers.items():
@@ -277,6 +282,7 @@ class Pipeline:
 
         :param callback: A function to call after a successful process of the item
         """
+        self._wait_executors()
         if callback is not None:
             item.set_callback(callback)
         self._source_container.prepend_item(item)
@@ -422,6 +428,7 @@ class Pipeline:
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
         :param use_threads: If True use threads, otherwise multiprocessing
         """
+        self._executors_ready = False
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and isinstance(stage, BatchStage):
             use_threads = True
@@ -458,6 +465,7 @@ class Pipeline:
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
         :param use_threads: If True use threads, otherwise multiprocessing
         """
+        self._executors_ready = False
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and issubclass(stage_class, BatchStage):
             use_threads = True
