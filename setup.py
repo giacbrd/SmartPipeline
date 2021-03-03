@@ -12,7 +12,7 @@ def readfile(fname):
 
 setup(
     name="SmartPipeline",
-    version="0.3.3",
+    version="0.3.5",
     description="A framework for fast developing scalable data pipelines following a simple design pattern",
     long_description=readfile("README.rst"),
     long_description_content_type="text/x-rst",
