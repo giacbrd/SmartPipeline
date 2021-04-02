@@ -14,7 +14,7 @@ A framework for fast development of scalable data pipelines following a simple d
 
 .. image:: https://github.com/giacbrd/SmartPipeline/actions/workflows/python-package.yml/badge.svg
    :target: https://github.com/giacbrd/SmartPipeline/actions/workflows/python-package.yml
-   :alt: Python package
+   :alt: Tests
 
 .. documentation-marker
 
