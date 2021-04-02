@@ -12,6 +12,10 @@ A framework for fast development of scalable data pipelines following a simple d
    :target: https://smartpipeline.readthedocs.io/en/stable/?badge=stable
    :alt: Documentation Status
 
+.. image:: https://github.com/giacbrd/SmartPipeline/actions/workflows/python-package.yml/badge.svg
+   :target: https://github.com/giacbrd/SmartPipeline/actions/workflows/python-package.yml
+   :alt: Python package
+
 .. documentation-marker
 
 Imagine you have to process data in several independent steps,

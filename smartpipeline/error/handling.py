@@ -28,7 +28,7 @@ class ErrorManager:
 
     def no_skip_on_critical_error(self) -> ErrorManager:
         """
-        Change default behaviour on :class:`.exceptions.CriticalError`: just skip the current stage .
+        Change default behaviour on :class:`.exceptions.CriticalError`: only skip the current stage .
         Valid only if :meth:`.ErrorManager.raise_on_critical_error` is not set
         """
         self._skip_on_critical = False
