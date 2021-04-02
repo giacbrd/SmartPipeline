@@ -140,6 +140,15 @@ class Pipeline:
     def __del__(self):
         self.shutdown()
 
+    def build(self) -> Pipeline:
+        """
+        Pipeline builder method
+        """
+        if not any(self._containers):
+            raise ValueError("Must append at least a stage")
+        self._wait_executors()
+        return self
+
     def run(self) -> Generator[DataItem, None, None]:
         """
         Run the pipeline given a source and a concatenation of stages.
@@ -149,7 +158,6 @@ class Pipeline:
         :raises ValueError: When a source has not been set for the pipeline
         """
         counter = 0
-        self._wait_executors()
         if not self._source_container.is_set():
             raise ValueError("Set the data source for this pipeline")
         last_stage_name = self._last_stage_name()
@@ -265,7 +273,6 @@ class Pipeline:
         """
         Process a single item synchronously (no concurrency) through the pipeline
         """
-        self._wait_executors()
         last_stage_name = self._containers.last_key()
         self._source_container.prepend_item(item)
         for name, container in self._containers.items():
@@ -282,7 +289,6 @@ class Pipeline:
 
         :param callback: A function to call after a successful process of the item
         """
-        self._wait_executors()
         if callback is not None:
             item.set_callback(callback)
         self._source_container.prepend_item(item)

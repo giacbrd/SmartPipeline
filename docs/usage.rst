@@ -99,7 +99,7 @@ when explicitly raising a :class:`.SoftError` or a :class:`.CriticalError` excep
 Setting and running the pipeline
 --------------------------------
 
-Once you have your set of stages you can add them in sequence to a Pipeline instance.
+Once you have your set of stages you can add them in sequence to a Pipeline instance that behave as a "builder".
 :meth:`.Pipeline.append_stage` is the main method for adding stages to a pipeline,
 it must define their unique names and eventually their concurrency.
 The ``concurrency`` parameter is default to 0, a stage is concurrent when the value is 1 or greater.
@@ -109,13 +109,15 @@ thus stage instances will be copied in each process.
 
 Consider using threads when I/O blocking operations are prevalent,
 while using multiprocess when stages execute long computations on data.
-In case of no concurrency the pipeline simply runs a chain of :meth:`.Stage.process`,
+In case of no concurrency the pipeline simply runs a "chain" of :meth:`.Stage.process` on each item,
 while with concurrency Python queues are involved, so items may be serialized.
 
 Another method is :meth:`.Pipeline.append_stage_concurrently`,
 which allows to execute stages creation concurrently with other stages appending calls.
 Useful when the creation is slow,
 e.g., the stage carries the construction of big data structures.
+
+Remember to call :meth:`.Pipeline.build` at the end of stages "concatenation"
 
 Finally, in the example, we define another stage that reduces text size and we run the pipeline
 
@@ -131,6 +133,7 @@ Finally, in the example, we define another stage that reduces text size and we r
         .set_source(RandomTextSource())
         .append_stage("text_replacer", TextReplacer(substitution="XXX"))
         .append_stage("text_reducer", TextReducer())
+        .build()
     )
 
     for item in pipeline.run():
@@ -144,6 +147,7 @@ A different example in which we process 100 single items concurrently with :meth
         Pipeline()
         .append_stage("text_replacer", TextReplacer(substitution="XXX"), concurrency=3)
         .append_stage("text_reducer", TextReducer(), concurrency=1)
+        .build()
     )
     # "manually" send 100 items to the pipeline
     for _ in range(100):
@@ -268,6 +272,7 @@ together with a custom data item type that provides a file reference.
         .append_stage("text_extractor", TextExtractor(), concurrency=2)
         .append_stage("vat_finder", VatFinder())
         .append_stage("indexer", Indexer(es_host="localhost:9200", es_index="documents"))
+        .build()
     )
 
     for item in pipeline.run():
