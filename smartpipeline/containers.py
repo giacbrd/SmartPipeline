@@ -444,7 +444,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         counter_initializer: CounterInitializer,
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
-        use_threads: bool = True,
+        parallel: bool = False,
     ):
         """
         Initialization of instance members
@@ -453,10 +453,10 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         :param counter_initializer: Constructor for items counter, it counts items seen by concurrent stage executions
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
-        :param use_threads: True for using threads for concurrency, otherwise use multiprocess
+        :param parallel: True for using multiprocessing for concurrency, otherwise use threads
         """
         self._concurrency = concurrency
-        self._use_threads = use_threads
+        self._parallel = parallel
         self._stage_executor = None
         self._previous_queue = None
         self._futures: Sequence[Future] = []
@@ -495,7 +495,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
                 self._previous,
                 (ConcurrentStageContainer, BatchConcurrentStageContainer),
             )
-            and not self._previous.use_threads
+            and self._previous.parallel
         ):
             # give priority to the previous queue initializer
             self._previous_queue = self._previous.out_queue
@@ -507,17 +507,17 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         Get and eventually generate a pool executor where concurrent stage executions run
         """
         if self._stage_executor is None:
-            executor = ThreadPoolExecutor if self._use_threads else ProcessPoolExecutor
+            executor = ThreadPoolExecutor if not self._parallel else ProcessPoolExecutor
             # TODO one executor per stage? why max_workers are equivalent to concurrency?
             self._stage_executor = executor(max_workers=self._concurrency)
         return self._stage_executor
 
     @property
-    def use_threads(self) -> bool:
+    def parallel(self) -> bool:
         """
-        True if we are using threads, False if we are using multiprocess
+        True if we are using multiprocessing, False if we are using threads
         """
-        return self._use_threads
+        return self._parallel
 
     def shutdown(self):
         """
@@ -611,7 +611,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         counter_initializer: CounterInitializer,
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
-        use_threads: bool = True,
+        parallel: bool = False,
     ):
         """
         :param name: Stage name
@@ -621,7 +621,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         :param counter_initializer: Constructor for items counter, it counts items seen by concurrent stage executions
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
-        :param use_threads: True for using threads for concurrency, otherwise use multiprocess
+        :param parallel: True for using multiprocessing for concurrency, otherwise use threads
         """
         super().__init__(name, stage, error_manager)
         self.init_concurrency(
@@ -629,7 +629,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
             counter_initializer,
             terminate_event_initializer,
             concurrency,
-            use_threads,
+            parallel,
         )
 
     def run(self, _executor: StageExecutor = stage_executor):
@@ -662,7 +662,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         counter_initializer: CounterInitializer,
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
-        use_threads: bool = True,
+        parallel: bool = False,
     ):
         """
         :param name: Stage name
@@ -672,7 +672,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         :param counter_initializer: Constructor for items counter, it counts items seen by concurrent stage executions
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
-        :param use_threads: True for using threads for concurrency, otherwise use multiprocess
+        :param parallel: True for using multiprocessing for concurrency, otherwise use threads
         """
         super().__init__(name, stage, error_manager)
         self.init_concurrency(
@@ -680,7 +680,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
             counter_initializer,
             terminate_event_initializer,
             concurrency,
-            use_threads,
+            parallel,
         )
 
     def run(self, _executor: StageExecutor = batch_stage_executor):

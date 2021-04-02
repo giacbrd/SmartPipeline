@@ -369,7 +369,7 @@ class Pipeline:
         executor.submit(_waiter)
 
     def _get_container(
-        self, name: str, stage: StageType, concurrency: int, use_threads: bool
+        self, name: str, stage: StageType, concurrency: int, parallel: bool
     ) -> BaseContainer:
         """
         Get a new container instance according to the pipeline configuration
@@ -377,7 +377,7 @@ class Pipeline:
         :param name: Stage name
         :param stage: A stage instance
         :param concurrency: Number of concurrent stage executions, if 0 then just create the non-concurrent containers
-        :param use_threads: If True use threads, otherwise multiprocessing
+        :param parallel: If True use multiprocessing, otherwise threads
         """
         if concurrency <= 0:
             constructor = (
@@ -390,18 +390,7 @@ class Pipeline:
                 if isinstance(stage, BatchStage)
                 else ConcurrentStageContainer
             )
-            if use_threads:
-                return constructor(
-                    name,
-                    stage,
-                    self._error_manager,
-                    self._new_queue,
-                    self._new_counter,
-                    self._new_event,
-                    concurrency,
-                    use_threads,
-                )
-            else:
+            if parallel:
                 return constructor(
                     name,
                     stage,
@@ -410,7 +399,18 @@ class Pipeline:
                     self._new_mp_counter,
                     self._new_mp_event,
                     concurrency,
-                    use_threads,
+                    parallel,
+                )
+            else:
+                return constructor(
+                    name,
+                    stage,
+                    self._error_manager,
+                    self._new_queue,
+                    self._new_counter,
+                    self._new_event,
+                    concurrency,
+                    parallel,
                 )
 
     def get_stage(self, name: str) -> StageType:
@@ -420,11 +420,7 @@ class Pipeline:
         return self._containers.get(name).stage
 
     def append_stage(
-        self,
-        name: str,
-        stage: StageType,
-        concurrency: int = 0,
-        use_threads: bool = True,
+        self, name: str, stage: StageType, concurrency: int = 0, parallel: bool = False,
     ) -> Pipeline:
         """
         Append a stage to the pipeline just after the last one appended, or after the source if it is the first stage
@@ -432,15 +428,15 @@ class Pipeline:
         :param name: Name for identify the stage in the pipeline, it is also set in the stage and it must be unique in the pipeline
         :param stage: Instance of a stage
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
-        :param use_threads: If True use threads, otherwise multiprocessing
+        :param parallel: If True use multiprocessing, otherwise threads
         """
         self._executors_ready = False
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and isinstance(stage, BatchStage):
-            use_threads = True
+            parallel = False
             concurrency = 1
         self._check_stage_name(name)
-        container = self._get_container(name, stage, concurrency, use_threads)
+        container = self._get_container(name, stage, concurrency, parallel)
         if concurrency > 0:
             # if it is concurrent and it is the first stage, make the source working on a output queue
             if not self._containers:
@@ -458,7 +454,7 @@ class Pipeline:
         args: Sequence = None,
         kwargs: Mapping = None,
         concurrency: int = 0,
-        use_threads: bool = True,
+        parallel: bool = False,
     ) -> Pipeline:
         """
         Append a stage class to the pipeline just after the last one appended, or after the source if it is the first stage.
@@ -469,12 +465,12 @@ class Pipeline:
         :param args: List of arguments for the stage constructor
         :param kwargs: Dictionary of keyed arguments for the stage constructor
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
-        :param use_threads: If True use threads, otherwise multiprocessing
+        :param parallel: If True use multiprocessing, otherwise threads
         """
         self._executors_ready = False
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and issubclass(stage_class, BatchStage):
-            use_threads = True
+            parallel = False
             concurrency = 1
         if kwargs is None:
             kwargs = {}
@@ -487,27 +483,25 @@ class Pipeline:
         last_stage_name = self._last_stage_name()
         # set it immediately so the order of the calls of this method is followed in `_containers`
         self._containers[name] = None
-        future = self._get_init_executor(use_threads).submit(
-            stage_class, *args, **kwargs
-        )
+        future = self._get_init_executor(parallel).submit(stage_class, *args, **kwargs)
 
         def append_stage(stage_future: Future):
             stage = stage_future.result()
-            container = self._get_container(name, stage, concurrency, use_threads)
+            container = self._get_container(name, stage, concurrency, parallel)
             self._wait_for_previous(container, last_stage_name)
             self._containers[name] = container
 
         future.add_done_callback(append_stage)
         return self
 
-    def _get_init_executor(self, use_threads: bool = True) -> Executor:
+    def _get_init_executor(self, parallel: bool = False) -> Executor:
         """
         Get a pool executor for concurrent stage initialization
 
-        :param use_threads: True if the executor uses treads, otherwise multiprocessing
+        :param parallel: True if the executor uses multiprocessing, otherwise treads
         """
         if self._init_executor is None:
-            executor = ThreadPoolExecutor if use_threads else ProcessPoolExecutor
+            executor = ThreadPoolExecutor if not parallel else ProcessPoolExecutor
             self._init_executor = executor(max_workers=self._max_init_workers)
         return self._init_executor
 
