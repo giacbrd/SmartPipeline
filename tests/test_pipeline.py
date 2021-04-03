@@ -60,7 +60,10 @@ def test_errors(caplog):
         error = next(item.soft_errors())
         assert error.get_exception() is None
         assert str(error) == "test pipeline error"
-    assert any(caplog.records)
+    assert all(
+        "stage error has generated an error" in str(record.msg)
+        for record in caplog.records
+    )
     assert pipeline.count == 10
     pipeline = (
         _pipeline()
@@ -71,6 +74,7 @@ def test_errors(caplog):
         .append_stage("duplicator", TextDuplicator())
         .build()
     )
+    caplog.clear()
     for item in pipeline.run():
         assert item.has_errors()
         assert item.get_timing("reverser")
@@ -80,7 +84,10 @@ def test_errors(caplog):
         error = next(item.soft_errors())
         assert error.get_exception() is None
         assert str(error) == "test pipeline error"
-    assert any(caplog.records)
+    assert all(
+        "stage error has generated an error" in str(record.msg)
+        for record in caplog.records
+    )
     assert pipeline.count == 10
     pipeline = (
         _pipeline()
@@ -106,6 +113,7 @@ def test_errors(caplog):
         .append_stage("error2", ErrorStage())
         .build()
     )
+    caplog.clear()
     for item in pipeline.run():
         assert item.has_critical_errors()
         assert item.get_timing("reverser")
@@ -118,7 +126,10 @@ def test_errors(caplog):
                 and str(error.get_exception()) == "test exception"
                 and str(error) != "test pipeline error"
             )
-    assert any(caplog.records)
+    assert all(
+        "stage error1 has generated an error" in str(record.msg)
+        for record in caplog.records
+    )
     assert pipeline.count == 10
     with pytest.raises(Exception):
         pipeline = (

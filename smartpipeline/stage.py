@@ -19,6 +19,9 @@ class NameMixin:
     def name(self) -> str:
         return getattr(self, "_name", f"{self.__class__.name}_{id(self)}")
 
+    def __str__(self) -> str:
+        return self.name
+
 
 class ConcurrentMixin:
     def on_fork(self) -> Any:
@@ -60,7 +63,7 @@ class Stage(NameMixin, ConcurrentMixin, Processor):
     """
 
     def __str__(self) -> str:
-        return f"stage {self.name}"
+        return f"Stage {self.name}"
 
 
 class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):

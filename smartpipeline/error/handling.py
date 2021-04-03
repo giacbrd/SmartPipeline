@@ -60,7 +60,7 @@ class ErrorManager:
 
     @staticmethod
     def _generate_message(stage: NameMixin, item: DataItem) -> str:
-        return f"The stage {stage} has generated an error on item {item}"
+        return f"{stage} has generated an error on item {item}"
 
     def _check_critical(self, error: CriticalError) -> Union[Exception, CriticalError]:
         """
