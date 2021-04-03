@@ -1,6 +1,7 @@
 import copy
 import logging
 import time
+import traceback
 
 import pytest
 
@@ -127,8 +128,12 @@ def test_errors(caplog):
             .append_stage("error", ExceptionStage())
             .build()
         )
-        for _ in pipeline.run():
-            pass
+        try:
+            for _ in pipeline.run():
+                pass
+        except Exception:
+            assert 'Exception("test exception")' in traceback.format_exc()
+            raise
         assert pipeline.count == 1
     pipeline = (
         _pipeline()
@@ -286,8 +291,14 @@ def test_concurrency_errors():
             .append_stage("error", ExceptionStage(), concurrency=1)
             .build()
         )
-        for _ in pipeline.run():
-            pass
+        try:
+            for _ in pipeline.run():
+                pass
+        except Exception:
+            tb = traceback.format_exc()
+            assert 'Exception("test exception")' in tb
+            assert "CriticalError" in tb
+            raise
         assert pipeline.count == 1
     with pytest.raises(Exception):
         pipeline = (
@@ -297,8 +308,14 @@ def test_concurrency_errors():
             .append_stage("error", ExceptionStage(), concurrency=1, parallel=True)
             .build()
         )
-        for _ in pipeline.run():
-            pass
+        try:
+            for _ in pipeline.run():
+                pass
+        except Exception:
+            tb = traceback.format_exc()
+            assert 'Exception("test exception")' in tb
+            assert "CriticalError" in tb
+            raise
         assert pipeline.count == 1
     pipeline = (
         _pipeline()
