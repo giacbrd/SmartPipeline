@@ -29,7 +29,7 @@ def test_manager(caplog):
     assert item.has_critical_errors()
     assert len(list(item.critical_errors())) == 3
     for record in caplog.records:
-        assert "stage" in record.message
+        assert "has generated an error" in record.message
 
 
 def test_critical_errors(caplog):
@@ -70,4 +70,4 @@ def test_critical_errors(caplog):
     assert item.has_critical_errors()
     assert len(list(item.critical_errors())) == 3
     for record in caplog.records:
-        assert "stage" in record.message
+        assert "has generated an error" in record.message
