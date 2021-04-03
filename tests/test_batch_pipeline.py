@@ -104,7 +104,7 @@ def test_errors(caplog):
         assert str(error) == "test pipeline error"
     assert pipeline.count == 22
     assert all(
-        "stage error has generated an error" in str(record.msg)
+        "stage error has generated an error" in record.msg.lower()
         for record in caplog.records
     )
     pipeline = (
@@ -116,6 +116,7 @@ def test_errors(caplog):
         .append_stage("duplicator", BatchTextDuplicator(size=5))
         .build()
     )
+    caplog.clear()
     for item in pipeline.run():
         assert item.has_errors()
         assert item.get_timing("reverser")
@@ -136,6 +137,7 @@ def test_errors(caplog):
         .append_stage("error2", ErrorStage())
         .build()
     )
+    caplog.clear()
     for item in pipeline.run():
         assert item.has_critical_errors()
         assert item.get_timing("reverser")

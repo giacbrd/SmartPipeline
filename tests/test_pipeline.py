@@ -61,7 +61,7 @@ def test_errors(caplog):
         assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert all(
-        "stage error has generated an error" in str(record.msg)
+        "stage error has generated an error" in record.msg.lower()
         for record in caplog.records
     )
     assert pipeline.count == 10
@@ -85,7 +85,7 @@ def test_errors(caplog):
         assert error.get_exception() is None
         assert str(error) == "test pipeline error"
     assert all(
-        "stage error has generated an error" in str(record.msg)
+        "stage error has generated an error" in record.msg.lower()
         for record in caplog.records
     )
     assert pipeline.count == 10
@@ -127,7 +127,7 @@ def test_errors(caplog):
                 and str(error) != "test pipeline error"
             )
     assert all(
-        "stage error1 has generated an error" in str(record.msg)
+        "stage error1 has generated an error" in record.msg.lower()
         for record in caplog.records
     )
     assert pipeline.count == 10
