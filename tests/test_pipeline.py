@@ -443,8 +443,8 @@ def test_concurrent_initialization():
     _check(items, 100, pipeline)
 
 
-# TODO test has problems also on dual core machine
 # one core machines can have problems with this test
+# TODO it has problems also on dual core machine
 @pytest.mark.skip
 def test_huge_run():
     pipeline = (
