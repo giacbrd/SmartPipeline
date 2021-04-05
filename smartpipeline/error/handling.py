@@ -8,6 +8,8 @@ from smartpipeline.stage import NameMixin
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
+_logger = logging.getLogger(__name__)
+
 
 class ErrorManager:
     """
@@ -17,7 +19,6 @@ class ErrorManager:
     def __init__(self):
         self._raise_on_critical = False
         self._skip_on_critical = True
-        self._logger = logging.getLogger(self.__class__.__name__)
 
     def raise_on_critical_error(self) -> ErrorManager:
         """
@@ -52,7 +53,7 @@ class ErrorManager:
             # any un-managed exception is a potential critical error
             item_error = item.add_critical_error(stage.name, error)
         exc_info = (type(item_error), item_error, item_error.__traceback__)
-        self._logger.exception(self._generate_message(stage, item), exc_info=exc_info)
+        _logger.exception(self._generate_message(stage, item), exc_info=exc_info)
         if isinstance(item_error, CriticalError):
             exception = self._check_critical(item_error)
             if exception:

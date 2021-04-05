@@ -3,6 +3,7 @@ Containers encapsulate stages and manage their execution
 """
 
 import concurrent
+import logging
 import queue
 from queue import Queue
 from abc import ABC, abstractmethod
@@ -24,6 +25,8 @@ from smartpipeline.stage import Stage, BatchStage, Source, ItemsQueue, StageType
 from smartpipeline.item import DataItem, Stop
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
+
+_logger = logging.getLogger(__name__)
 
 
 QueueInitializer = Callable[[], ItemsQueue]
@@ -226,6 +229,7 @@ class SourceContainer(BaseContainer):
         """
         Stop this source, the container won't produce items anymore
         """
+        _logger.debug("Stopping from the source")
         if self._source is not None:
             self._source.stop()
         self._is_stopped = True
@@ -308,7 +312,7 @@ class StageContainer(
         self._last_processed = None
 
     def __str__(self) -> str:
-        return "Container for stage {}".format(self._stage)
+        return "Container for {}".format(self._stage)
 
     def process(self) -> DataItem:
         item = self.previous.get_processed()

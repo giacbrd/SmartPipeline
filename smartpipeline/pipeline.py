@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from concurrent.futures._base import Future, Executor
 from concurrent.futures.process import ProcessPoolExecutor
@@ -25,6 +26,8 @@ from smartpipeline.item import Stop, DataItem
 from smartpipeline.utils import LastOrderedDict, ThreadCounter, ProcessCounter
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
+
+_logger = logging.getLogger(__name__)
 
 
 class FakeContainer:
@@ -124,6 +127,7 @@ class Pipeline:
             ):
                 stage.run()
         self._executors_ready = True
+        _logger.debug("Pipeline ready to run")
 
     def shutdown(self):
         if self._out_queue is not None:
@@ -146,6 +150,7 @@ class Pipeline:
         """
         if not any(self._containers):
             raise ValueError("Must append at least a stage")
+        _logger.debug(f"Building the pipeline on stages: {self._log_stages()}")
         self._wait_executors()
         return self
 
@@ -157,9 +162,10 @@ class Pipeline:
         :return: Iterator over processed items
         :raises ValueError: When a source has not been set for the pipeline
         """
-        counter = 0
         if not self._source_container.is_set():
             raise ValueError("Set the data source for this pipeline")
+        _logger.debug(f"Running the pipeline on stages: {self._log_stages()}")
+        counter = 0
         last_stage_name = self._last_stage_name()
         terminator_thread = None
         source_thread = None
@@ -234,6 +240,7 @@ class Pipeline:
         :param force: If True do not wait for a container to process all items produced by the source
         :param wait_seconds: Time to wait before pinging again a container for its termination
         """
+        _logger.debug("Terminating the pipeline")
         # scroll the pipeline by its order and terminate stages after the relative queues are empty
         for container in self._containers.values():
             if not force:
@@ -250,6 +257,7 @@ class Pipeline:
                 container.queues_join()
                 while not container.queues_empty():
                     time.sleep(wait_seconds)
+        _logger.debug("Termination done")
 
     def _all_terminated(self) -> bool:
         """
@@ -273,6 +281,7 @@ class Pipeline:
         """
         Process a single item synchronously (no concurrency) through the pipeline
         """
+        _logger.debug(f"Processing {item} on stages: {self._log_stages()}")
         last_stage_name = self._containers.last_key()
         self._source_container.prepend_item(item)
         for name, container in self._containers.items():
@@ -289,6 +298,9 @@ class Pipeline:
 
         :param callback: A function to call after a successful process of the item
         """
+        _logger.debug(
+            f"Processing asynchronously {item} on stages: {self._log_stages()}"
+        )
         if callback is not None:
             item.set_callback(callback)
         self._source_container.prepend_item(item)
@@ -542,3 +554,6 @@ class Pipeline:
         Get the internal output pipeline for asynchronous processing of single items
         """
         self._out_queue = self._new_queue()
+
+    def _log_stages(self):
+        return ", ".join(self._containers.keys())

@@ -63,6 +63,7 @@ def test_errors(caplog):
     assert all(
         "stage error has generated an error" in record.msg.lower()
         for record in caplog.records
+        if record.levelno == logging.ERROR
     )
     assert pipeline.count == 10
     pipeline = (
@@ -87,6 +88,7 @@ def test_errors(caplog):
     assert all(
         "stage error has generated an error" in record.msg.lower()
         for record in caplog.records
+        if record.levelno == logging.ERROR
     )
     assert pipeline.count == 10
     pipeline = (
@@ -129,6 +131,7 @@ def test_errors(caplog):
     assert all(
         "stage error1 has generated an error" in record.msg.lower()
         for record in caplog.records
+        if record.levelno == logging.ERROR
     )
     assert pipeline.count == 10
     with pytest.raises(Exception):

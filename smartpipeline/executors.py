@@ -1,3 +1,4 @@
+import logging
 import queue
 import time
 from threading import Event
@@ -10,6 +11,8 @@ from smartpipeline.stage import Stage, BatchStage, ItemsQueue, StageType
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
+_logger = logging.getLogger(__name__)
+
 
 def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataItem:
     """
@@ -19,8 +22,11 @@ def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataIt
         return item
     time1 = time.time()
     try:
+        _logger.debug(f"{stage} is processing {item}")
         processed_item = stage.process(item)
+        _logger.debug(f"{stage} has finished processing {processed_item}")
     except Exception as e:
+        _logger.debug(f"{stage} has failed processing {item}")
         item.set_timing(stage.name, time.time() - time1)
         error_manager.handle(e, stage, item)
         return item
@@ -41,11 +47,15 @@ def process_batch(
         if error_manager.check_critical_errors(item):
             ret[i] = item
         else:
+            _logger.debug(f"{stage} is going to process {item}")
             to_process[i] = item
     time1 = time.time()
     try:
+        _logger.debug(f"{stage} is processing {len(to_process)} items")
         processed = stage.process_batch(list(to_process.values()))
+        _logger.debug(f"{stage} has finished processing {len(to_process)} items")
     except Exception as e:
+        _logger.debug(f"{stage} had failures in processing {len(to_process)} items")
         spent = (time.time() - time1) / (len(to_process) or 1.0)
         for i, item in to_process.items():
             item.set_timing(stage.name, spent)
