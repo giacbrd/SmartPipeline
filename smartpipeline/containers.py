@@ -287,12 +287,14 @@ class SourceContainer(BaseContainer):
             except queue.Empty:
                 if self.is_stopped():
                     self._next_item = Stop()
+            _logger.debug(f"{ret} produced by the source")
             return ret
         elif self._source is not None:
             ret = self._source.pop()
             if self.is_stopped():
                 return Stop()
             else:
+                _logger.debug(f"{ret} produced by the source")
                 return ret
         elif self.is_stopped():
             return Stop()
