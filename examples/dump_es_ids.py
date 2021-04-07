@@ -71,9 +71,7 @@ def get_pipeline(input_file, output_file, es_client, es_indices):
             concurrency=4,
             parallel=True,
         )
-        .append_stage(
-            "jsonl_dump", JsonlDump(file_obj=output_file), concurrency=4, parallel=True
-        )
+        .append_stage("jsonl_dump", JsonlDump(file_obj=output_file))
         .build()
     )
 
@@ -103,7 +101,7 @@ if __name__ == "__main__":
         help="Output jsonl file, one ES document per line",
         required=True,
     )
-    parser.add_argument("-h", "--hosts", help="ES hosts", required=True)
+    parser.add_argument("-e", "--hosts", help="ES hosts", required=True)
     parser.add_argument(
         "-x", "--indices", help="List of index names separated by comma", default="_all"
     )
