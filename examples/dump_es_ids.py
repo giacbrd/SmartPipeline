@@ -10,6 +10,7 @@ from typing import IO, Optional, Sequence
 
 from elasticsearch import Elasticsearch
 
+from smartpipeline.error.exceptions import SoftError
 from smartpipeline.item import DataItem
 from smartpipeline.pipeline import Pipeline
 from smartpipeline.stage import Source, BatchStage, Stage
@@ -41,15 +42,35 @@ class FileIter(Source):
 class ESRetrieve(BatchStage):
     def __init__(self, es_client: Elasticsearch, es_indices: str):
         super().__init__(size=10, timeout=5)
-        self._es_indices = es_indices
         self._es_client = es_client
+        self._es_indices = es_indices.strip().split(",")
+        if len(self._es_indices) == 1 and not self._es_client.indices.exists_alias(
+            self._es_indices
+        ):
+            self._retrieve = self._mget
+        else:
+            self._retrieve = self._search
 
-    def process_batch(self, items: Sequence[DataItem]) -> Sequence[DataItem]:
+    @staticmethod
+    def _mget(self, items: Sequence[DataItem]) -> Sequence[DataItem]:
         body = {"docs": [{"_id": item.payload["_id"]} for item in items]}
         resp = self._es_client.mget(body=body, index=self._es_indices)
         for i, doc in enumerate(resp["docs"]):
+            if "error" in doc:
+                raise SoftError(f"Error response from Elasticsearch: {json.dumps(doc)}")
             items[i].payload.update(doc)
         return items
+
+    @staticmethod
+    def _search(self, items: Sequence[DataItem]) -> Sequence[DataItem]:
+        query = {"query": {"ids": {"values": [item.payload["_id"] for item in items]}}}
+        resp = self._es_client.search(body=query, index=self._es_indices)
+        for i, doc in enumerate(resp["hits"]["hits"]):
+            items[i].payload.update(doc)
+        return items
+
+    def process_batch(self, items: Sequence[DataItem]) -> Sequence[DataItem]:
+        return self._retrieve(self, items)
 
 
 class JsonlDump(Stage):
@@ -103,7 +124,10 @@ if __name__ == "__main__":
     )
     parser.add_argument("-e", "--hosts", help="ES hosts", required=True)
     parser.add_argument(
-        "-x", "--indices", help="List of index names separated by comma", default="_all"
+        "-x",
+        "--indices",
+        help="List of index names or aliases separated by comma",
+        default="_all",
     )
     args = parser.parse_args()
     main(args)
