@@ -40,10 +40,15 @@ class FileIter(Source):
 
 
 class ESRetrieve(BatchStage):
-    def __init__(self, es_client: Elasticsearch, es_indices: str):
+    def __init__(self, es_hosts: str, es_indices: str):
         super().__init__(size=10, timeout=5)
-        self._es_client = es_client
         self._es_indices = es_indices.strip().split(",")
+        self._es_hosts = es_hosts
+        self._es_client = None
+        self._retrieve = None
+
+    def on_fork(self):
+        self._es_client = Elasticsearch(self._es_hosts)
         if len(self._es_indices) == 1 and not self._es_client.indices.exists_alias(
             self._es_indices
         ):
@@ -82,13 +87,13 @@ class JsonlDump(Stage):
         return item
 
 
-def get_pipeline(input_file, output_file, es_client, es_indices):
+def get_pipeline(input_file, output_file, es_hosts, es_indices):
     return (
         Pipeline()
         .set_source(FileIter(file_obj=input_file))
         .append_stage(
             "es_retrieve",
-            ESRetrieve(es_client=es_client, es_indices=es_indices),
+            ESRetrieve(es_hosts=es_hosts, es_indices=es_indices),
             concurrency=4,
             parallel=True,
         )
@@ -100,11 +105,10 @@ def get_pipeline(input_file, output_file, es_client, es_indices):
 def main(args):
     with open(args.input) as input_file:
         with open(args.output, "w") as output_file:
-            es_client = Elasticsearch(hosts=args.hosts)
             pipeline = get_pipeline(
                 input_file=input_file,
                 output_file=output_file,
-                es_client=es_client,
+                es_hosts=args.hosts,
                 es_indices=args.indices,
             )
             for item in pipeline.run():

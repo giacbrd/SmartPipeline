@@ -114,7 +114,7 @@ while with concurrency Python queues are involved, so items may be serialized.
 
 Another method is :meth:`.Pipeline.append_stage_concurrently`,
 which allows to execute stages creation concurrently with other stages appending calls.
-Useful when the creation is slow,
+Useful when long tasks must be executed at creation,
 e.g., the stage carries the construction of big data structures.
 
 Remember to call :meth:`.Pipeline.build` at the end of stages "concatenation"

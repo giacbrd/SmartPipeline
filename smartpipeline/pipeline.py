@@ -121,11 +121,11 @@ class Pipeline:
         while not all(self._containers.values()):
             time.sleep(wait_seconds)
         self._wait_previous_executor.shutdown(wait=True)
-        for name, stage in self._containers.items():
+        for name, container in self._containers.items():
             if isinstance(
-                stage, (ConcurrentStageContainer, BatchConcurrentStageContainer)
+                container, (ConcurrentStageContainer, BatchConcurrentStageContainer)
             ):
-                stage.run()
+                container.run()
         self._executors_ready = True
         _logger.debug("Pipeline ready to run")
 
@@ -182,6 +182,7 @@ class Pipeline:
                         (ConcurrentStageContainer, BatchConcurrentStageContainer),
                     ):
                         container.process()
+                    # but me must periodically check for errors
                     else:
                         container.check_errors()
                 except Exception as e:
@@ -395,6 +396,8 @@ class Pipeline:
             constructor = (
                 BatchStageContainer if isinstance(stage, BatchStage) else StageContainer
             )
+            # if not concurrent we must explicitly finalize initialization of this single stage object
+            stage.on_fork()
             return constructor(name, stage, self._error_manager)
         else:
             constructor = (
@@ -414,6 +417,9 @@ class Pipeline:
                     parallel,
                 )
             else:
+                # if the stage is executed on multiple threads we must finalize initialization once,
+                # while on multiprocessing each process executor call it for its own copy of the stage
+                stage.on_fork()
                 return constructor(
                     name,
                     stage,
