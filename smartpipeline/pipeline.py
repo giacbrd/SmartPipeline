@@ -126,6 +126,8 @@ class Pipeline:
                 container, (ConcurrentStageContainer, BatchConcurrentStageContainer)
             ):
                 container.run()
+        # finalize initialization of the error manager shared by this and other stage threads
+        self._error_manager.on_fork()
         self._executors_ready = True
         _logger.debug("Pipeline ready to run")
 
@@ -381,7 +383,7 @@ class Pipeline:
         executor = self._get_wait_previous_executor()
         executor.submit(_waiter)
 
-    def _get_container(
+    def _build_container(
         self, name: str, stage: StageType, concurrency: int, parallel: bool
     ) -> BaseContainer:
         """
@@ -454,7 +456,7 @@ class Pipeline:
             parallel = False
             concurrency = 1
         self._check_stage_name(name)
-        container = self._get_container(name, stage, concurrency, parallel)
+        container = self._build_container(name, stage, concurrency, parallel)
         if concurrency > 0:
             # if it is concurrent and it is the first stage, make the source working on a output queue
             if not self._containers:
@@ -505,7 +507,7 @@ class Pipeline:
 
         def append_stage(stage_future: Future):
             stage = stage_future.result()
-            container = self._get_container(name, stage, concurrency, parallel)
+            container = self._build_container(name, stage, concurrency, parallel)
             self._wait_for_previous(container, last_stage_name)
             self._containers[name] = container
 

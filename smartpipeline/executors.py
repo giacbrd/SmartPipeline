@@ -122,8 +122,10 @@ def batch_stage_executor(
     until a termination event is set
     """
     if isinstance(counter, ProcessCounter):
-        # call this only if the stage is a copy of the original, ergo it is executed in a process
+        # call these only if the stage and the error manager are copies of the original,
+        # ergo they are used by processes forked from the main one
         stage.on_fork()
+        error_manager.on_fork()
     while True:
         if terminated.is_set() and in_queue.empty():
             return

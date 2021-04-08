@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from typing import Optional, Union
+from typing import Optional, Union, Any
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.item import DataItem
@@ -34,6 +34,16 @@ class ErrorManager:
         """
         self._skip_on_critical = False
         return self
+
+    def on_fork(self) -> Any:
+        """
+        Called for a concurrent stage executor in a process (only when multiprocessing concurrency)
+        or simply after construction, by the pipeline.
+        The manager in the executor is a copy of the original,
+        by overriding this method one can initialize variables specifically for the copies, that is mandatory
+        when they are not serializable.
+        """
+        pass
 
     def handle(
         self, error: Exception, stage: NameMixin, item: DataItem

@@ -26,9 +26,11 @@ class NameMixin:
 class ConcurrentMixin:
     def on_fork(self) -> Any:
         """
-        Called after concurrent stage executor initialization in a process (multiprocessing concurrency).
+        Called after concurrent stage executor initialization in a process (only when multiprocessing concurrency)
+        or simply after construction, by the pipeline.
         The stage in the executor is a copy of the original,
-        by overriding this method one can initialize variables specifically for the copies.
+        by overriding this method one can initialize variables specifically for the copies, that is mandatory
+        when they are not serializable.
         """
         pass
 
