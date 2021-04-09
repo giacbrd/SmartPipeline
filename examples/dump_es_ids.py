@@ -31,6 +31,7 @@ class FileIter(Source):
         line = next(self._file_obj, None)
         if line is not None:
             line = line.strip()
+            # send only non-empty lines of a file to the pipeline
             if line:
                 item = DataItem()
                 item.payload["_id"] = line
@@ -49,6 +50,7 @@ class ESRetrieve(BatchStage):
 
     def on_fork(self):
         self._es_client = Elasticsearch(self._es_hosts)
+        # use Elasticsearch mget when a single index is specified
         if len(self._es_indices) == 1 and not self._es_client.indices.exists_alias(
             self._es_indices
         ):
@@ -61,9 +63,8 @@ class ESRetrieve(BatchStage):
         body = {"docs": [{"_id": item.payload["_id"]} for item in items]}
         resp = self._es_client.mget(body=body, index=self._es_indices)
         for i, doc in enumerate(resp["docs"]):
-            if "error" in doc:
-                raise SoftError(f"Error response from Elasticsearch: {json.dumps(doc)}")
-            items[i].payload.update(doc)
+            if "error" not in doc:
+                items[i].payload.update(doc)
         return items
 
     @staticmethod
