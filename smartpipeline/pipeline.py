@@ -189,7 +189,7 @@ class Pipeline:
                         container.check_errors()
                 except Exception as e:
                     self.stop()
-                    # TODO in case of soft_errors we loose pending items!
+                    # TODO in case of errors we loose pending items!
                     self._terminate_all(force=True)
                     self.shutdown()
                     self._count += 1
@@ -341,7 +341,7 @@ class Pipeline:
 
     def set_error_manager(self, error_manager: ErrorManager) -> Pipeline:
         """
-        Set the error manager for handling soft_errors from each stage item processing
+        Set the error manager for handling errors from each stage item processing
         """
         self._error_manager = error_manager
         for container in self._containers.values():

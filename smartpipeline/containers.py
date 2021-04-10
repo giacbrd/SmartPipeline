@@ -139,7 +139,7 @@ class ConnectedStageMixin:
 
 class FallibleMixin:
     """
-    A mixin for the containers that encapsulate stages that can produce soft_errors during processing
+    A mixin for the containers that encapsulate stages that can produce errors during processing
     """
 
     def set_error_manager(self, error_manager: ErrorManager):
