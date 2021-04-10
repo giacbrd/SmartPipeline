@@ -76,6 +76,7 @@ def stage_executor(
     out_queue: ItemsQueue,
     error_manager: ErrorManager,
     terminated: Event,
+    has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
 ):
     """
@@ -83,8 +84,11 @@ def stage_executor(
     until a termination event is set
     """
     if isinstance(counter, ProcessCounter):
-        # call this only if the stage is a copy of the original, ergo it is executed in a process
+        # call these only if the stage and the error manager are copies of the original,
+        # ergo they are used by processes forked from the main one
+        error_manager.on_fork()
         stage.on_fork()
+    has_started_counter += 1
     while True:
         if terminated.is_set() and in_queue.empty():
             return
@@ -115,6 +119,7 @@ def batch_stage_executor(
     out_queue: ItemsQueue,
     error_manager: ErrorManager,
     terminated: Event,
+    has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
 ):
     """
@@ -124,8 +129,9 @@ def batch_stage_executor(
     if isinstance(counter, ProcessCounter):
         # call these only if the stage and the error manager are copies of the original,
         # ergo they are used by processes forked from the main one
-        stage.on_fork()
         error_manager.on_fork()
+        stage.on_fork()
+    has_started_counter += 1
     while True:
         if terminated.is_set() and in_queue.empty():
             return

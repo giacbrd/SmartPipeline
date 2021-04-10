@@ -5,6 +5,7 @@ Containers encapsulate stages and manage their execution
 import concurrent
 import logging
 import queue
+import time
 from queue import Queue
 from abc import ABC, abstractmethod
 from concurrent.futures import wait, Executor, Future
@@ -12,6 +13,8 @@ from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event
 from typing import Sequence, Optional, Callable
+
+from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.utils import ConcurrentCounter
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.executors import (
@@ -456,7 +459,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         Initialization of instance members
 
         :param queue_initializer: Constructor for output, and eventually input, queue
-        :param counter_initializer: Constructor for items counter, it counts items seen by concurrent stage executions
+        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage executors that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
@@ -469,6 +472,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         self._queue_initializer = queue_initializer
         self._out_queue = self._queue_initializer()
         self._counter = counter_initializer()
+        self._has_started_counter = counter_initializer()
         self._counter_initializer = counter_initializer
         self._terminate_event = terminate_event_initializer()
 
@@ -588,6 +592,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         """
         ex = self._get_stage_executor()
         self._counter = self._counter_initializer()
+        self._has_started_counter = self._counter_initializer()
         self._terminate_event.clear()
         for _ in range(self._concurrency):
             self._futures.append(
@@ -598,9 +603,14 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
                     out_queue,
                     error_manager,
                     self._terminate_event,
+                    self._has_started_counter,
                     self._counter,
                 )
             )
+        # wait all executors internal loop have started
+        while self._has_started_counter.value < self._concurrency:
+            time.sleep(CONCURRENCY_WAIT)
+            self.check_errors()
 
 
 class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
@@ -624,7 +634,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         :param stage: Stage instance
         :param error_manager: Error manager instance
         :param queue_initializer: Constructor for output, and eventually input, queue
-        :param counter_initializer: Constructor for items counter, it counts items seen by concurrent stage executions
+        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage executors that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
@@ -675,7 +685,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         :param stage: Stage instance
         :param error_manager: Error manager instance
         :param queue_initializer: Constructor for output, and eventually input, queue
-        :param counter_initializer: Constructor for items counter, it counts items seen by concurrent stage executions
+        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage executors that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads

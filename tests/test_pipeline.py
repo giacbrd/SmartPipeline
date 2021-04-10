@@ -16,6 +16,7 @@ from tests.utils import (
     TimeWaster,
     SerializableStage,
     CriticalIOErrorStage,
+    SerializableErrorManager,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -354,16 +355,35 @@ def test_concurrent_constructions():
     """test `on_fork` method"""
     pipeline = (
         _pipeline()
+        .set_error_manager(SerializableErrorManager())
         .set_source(RandomTextSource(10))
         .append_stage("reverser1", TextReverser(), concurrency=1, parallel=True)
-        .append_stage("error", SerializableStage(), concurrency=2, parallel=True)
-        .append_stage("reverser2", TextReverser(), concurrency=1, parallel=True)
+        .append_stage("stage", SerializableStage(), concurrency=2, parallel=True)
+        .append_stage("reverser2", TextReverser())
+        .append_stage("error", ErrorStage(), concurrency=2, parallel=True)
         .build()
     )
     for item in pipeline.run():
         assert item.payload.get("file")
         assert item.get_timing("reverser1")
         assert item.get_timing("reverser2")
+        assert item.has_errors()
+    assert pipeline.count == 10
+    pipeline = (
+        _pipeline()
+        .set_error_manager(SerializableErrorManager())
+        .set_source(RandomTextSource(10))
+        .append_stage("stage", SerializableStage())
+        .append_stage("reverser1", TextReverser(), concurrency=1, parallel=True)
+        .append_stage("reverser2", TextReverser(), concurrency=1, parallel=True)
+        .append_stage("error", ErrorStage())
+        .build()
+    )
+    for item in pipeline.run():
+        assert item.payload.get("file")
+        assert item.get_timing("reverser1")
+        assert item.get_timing("reverser2")
+        assert item.has_errors()
     assert pipeline.count == 10
 
 

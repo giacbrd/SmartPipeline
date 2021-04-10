@@ -4,6 +4,7 @@ from datetime import datetime
 from time import sleep
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
+from smartpipeline.error.handling import ErrorManager
 from smartpipeline.helpers import FilePathItem
 from smartpipeline.stage import Source, Stage, BatchStage
 from smartpipeline.item import DataItem
@@ -180,6 +181,14 @@ class SerializableStage(Stage):
         if self._file is not None and self._file.name == __file__:
             item.payload["file"] = self._file.name
         return item
+
+
+class SerializableErrorManager(ErrorManager):
+    def __init__(self):
+        self._file = None
+
+    def on_fork(self):
+        self._file = open(__file__)
 
 
 def wait_service(timeout, predicate, args):
