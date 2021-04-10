@@ -183,6 +183,17 @@ class SerializableStage(Stage):
         return item
 
 
+class ErrorSerializableStage(Stage):
+    def __init__(self):
+        self._file = None
+
+    def on_fork(self):
+        raise IOError
+
+    def process(self, item: DataItem):
+        return item
+
+
 class SerializableErrorManager(ErrorManager):
     def __init__(self):
         self._file = None

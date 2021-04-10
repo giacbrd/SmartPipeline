@@ -17,6 +17,7 @@ from tests.utils import (
     SerializableStage,
     CriticalIOErrorStage,
     SerializableErrorManager,
+    ErrorSerializableStage,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -385,6 +386,16 @@ def test_concurrent_constructions():
         assert item.get_timing("reverser2")
         assert item.has_errors()
     assert pipeline.count == 10
+    with pytest.raises(IOError):
+        (
+            _pipeline()
+            .set_error_manager(SerializableErrorManager())
+            .set_source(RandomTextSource(10))
+            .append_stage(
+                "stage", ErrorSerializableStage(), concurrency=1, parallel=True
+            )
+            .build()
+        )
 
 
 def test_concurrent_initialization():
