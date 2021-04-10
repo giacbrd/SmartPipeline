@@ -295,6 +295,7 @@ def test_batch_concurrent_stage_container1():
         lambda: ProcessCounter(manager),
         manager.Event,
     )
+    container.set_previous(previous)
     container.run()
     queue = container.out_queue
     for item in items6:
