@@ -18,14 +18,15 @@ A framework for fast development of scalable data pipelines following a simple d
 
 .. documentation-marker
 
-Imagine you have to process data in several independent steps,
 SmartPipeline gives you the tools to design and formalize simple data pipelines,
-in which tasks are sequentially encapsulated in pipeline stages.
+in which tasks are sequentially encapsulated in pipeline stages,
+but it enriches this data processing approach with a lot of features.
 
-SmartPipeline takes a lightweight approach in implementation,
-but stages can run concurrently and scale on heavy tasks,
+It is straightforward to implement pipelines,
+but they are deeply customizable:
+stages can run concurrently and scale on heavy tasks,
 they can process batch of items at once,
-finally executions and soft_errors are monitored by the pipeline.
+moreover executions and errors are monitored by the pipeline.
 
 It is a framework for engineering sequences of data operations:
 an optimal solution for fast and clean data analysis prototypes
@@ -59,7 +60,7 @@ which determine the operations to perform sequentially on each data item.
 - A pipeline can run indefinitely on the source or it can be used to process single items
 - Stages can run concurrently, both on the source or on single asynchronously processed items
 - A stage can be designed for processing batches, i.e. sequences of consecutive items, at once
-- Custom error handling can be set for logging and monitoring specific stages and items
+- Custom error handling can be set for logging and monitoring at stage level
 
 `Read the documentation <https://smartpipeline.readthedocs.io>`_ for an exhaustive tutorial
 and examples
