@@ -209,7 +209,6 @@ More, executables examples can be found in the codebase directory ``examples``.
         """An error manager that writes error info into an Elasticsearch index"""
 
         def __init__(self, es_host: str, es_index: str):
-            super().__init__()
             self.es_host = es_host
             self.es_index = es_index
             self.es_client = Elasticsearch(self.es_host)
@@ -309,13 +308,12 @@ Therefore, if we decide to run a pipeline stage concurrently and parallel,
 it is going to be copied in each process.
 This means that the stage must be "pickleable":
 serializable with the `pickle <https://docs.python.org/3/library/pickle.html>`_ module.
-If we want to define non-serializable attributes in our stage object,
-but also allow to run un multi-processes,
+If we want to define non-serializable attributes in our stage object and run it on more processes,
 we must find a way generate these attributes for each object copy in each process.
 
 This is what :meth:`.Stage.on_fork` method solves. It is simply used to initialize attributes "a posteriori".
 It is normally called after ``__init__``, but in case of execution on multiple processes,
-it is called only on the stage copy at process start.
+it is called once, on the stage copy, at process start.
 
 Also for :class:`.ErrorManager` it is necessary to define :meth:`.ErrorManager.on_fork`,
 because the manager must be coupled with a stage when it is copied.
@@ -333,7 +331,6 @@ This is how we "split" the two classes ``__init__``
     class ESErrorLogger(ErrorManager):
 
         def __init__(self, es_host: str, es_index: str):
-            super().__init__()
             self.es_host = es_host
             self.es_index = es_index
             self.es_client = None

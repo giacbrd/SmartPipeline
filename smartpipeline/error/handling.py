@@ -16,9 +16,8 @@ class ErrorManager:
     Basic error handling of a pipeline, principally manages :class:`.exceptions.SoftError` and :class:`.exceptions.CriticalError` types
     """
 
-    def __init__(self):
-        self._raise_on_critical = False
-        self._skip_on_critical = True
+    _raise_on_critical = False
+    _skip_on_critical = True
 
     def raise_on_critical_error(self) -> ErrorManager:
         """
@@ -29,7 +28,8 @@ class ErrorManager:
 
     def no_skip_on_critical_error(self) -> ErrorManager:
         """
-        Change default behaviour on :class:`.exceptions.CriticalError`: only skip the current stage .
+        Change default behaviour on :class:`.exceptions.CriticalError`: only skip the current stage,
+        like the :class:`.exceptions.SoftError` .
         Valid only if :meth:`.ErrorManager.raise_on_critical_error` is not set
         """
         self._skip_on_critical = False
