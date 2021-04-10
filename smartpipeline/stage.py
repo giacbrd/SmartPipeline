@@ -1,3 +1,4 @@
+import uuid
 from abc import ABC, abstractmethod
 from typing import Sequence, Union, Any, Optional
 from queue import Queue
@@ -17,7 +18,7 @@ class NameMixin:
 
     @property
     def name(self) -> str:
-        return getattr(self, "_name", f"{self.__class__.name}_{id(self)}")
+        return getattr(self, "_name", f"{self.__class__.name}_{uuid.uuid4()}")
 
     def __str__(self) -> str:
         return self.name

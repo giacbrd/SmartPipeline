@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import Union, Generator, Any, KeysView, Callable, Dict
 from smartpipeline.defaults import PAYLOAD_SNIPPET_SIZE
 from smartpipeline.error.exceptions import CriticalError, SoftError
@@ -97,7 +98,7 @@ class DataItem:
         if ret is None:
             ret = self._meta.get("id")
             if ret is None:
-                ret = id(self)
+                ret = str(uuid.uuid4())
         return ret
 
     def set_callback(self, fun: Callable[[DataItem], Any]):
