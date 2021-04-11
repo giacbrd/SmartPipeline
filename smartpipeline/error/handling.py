@@ -21,14 +21,15 @@ class ErrorManager:
 
     def raise_on_critical_error(self) -> ErrorManager:
         """
-        If a :class:`.exceptions.CriticalError` or any un-managed exception is met, raise it externally, kill the pipeline
+        Set the error manager so that if a :class:`.exceptions.CriticalError` or any un-managed exception is met,
+        raise it "externally", killing the pipeline
         """
         self._raise_on_critical = True
         return self
 
     def no_skip_on_critical_error(self) -> ErrorManager:
         """
-        Change default behaviour on :class:`.exceptions.CriticalError`: only skip the current stage,
+        Change default behaviour of the error manager on :class:`.exceptions.CriticalError`: only skip the stage which raises it,
         like the :class:`.exceptions.SoftError` .
         Valid only if :meth:`.ErrorManager.raise_on_critical_error` is not set
         """
@@ -88,7 +89,7 @@ class ErrorManager:
 
     def check_critical_errors(self, item: DataItem) -> Optional[Exception]:
         """
-        Check the critical soft_errors registered for an item
+        Check the critical errors registered for an item
         """
         if item.has_critical_errors():
             for er in item.critical_errors():
