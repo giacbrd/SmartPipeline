@@ -4,51 +4,62 @@ from multiprocessing import Manager
 import pytest
 
 from smartpipeline.error.handling import ErrorManager
-from smartpipeline.error.exceptions import Error, CriticalError
-from smartpipeline.containers import SourceContainer, StageContainer, ConcurrentStageContainer, BatchStageContainer, \
-    BatchConcurrentStageContainer
+from smartpipeline.error.exceptions import CriticalError, SoftError
+from smartpipeline.containers import (
+    SourceContainer,
+    StageContainer,
+    ConcurrentStageContainer,
+    BatchStageContainer,
+    BatchConcurrentStageContainer,
+)
 from smartpipeline.helpers import FilePathItem
 from smartpipeline.item import DataItem, Stop
 from smartpipeline.utils import ProcessCounter
-from tests.utils import TextReverser, ListSource, TextGenerator, BatchTextReverser, BatchTextGenerator
+from tests.utils import (
+    TextReverser,
+    ListSource,
+    TextGenerator,
+    BatchTextReverser,
+    BatchTextGenerator,
+)
 
-__author__ = 'Giacomo Berardi <giacbrd.com>'
+__author__ = "Giacomo Berardi <giacbrd.com>"
 
 
 def test_data():
     item = DataItem()
     assert item.id
-    item.payload['text'] = 'prova'
-    item.payload['id'] = '666'
-    item.set_metadata('source', 'remote')
-    item.set_metadata('version', 3)
-    assert item.id == '666'
-    assert item.get_metadata('source') == 'remote'
-    assert item.get_metadata('version') == 3
-    assert not item.get_metadata('head')
+    item.payload["text"] = "prova"
+    item.payload["id"] = "666"
+    item.set_metadata("source", "remote")
+    item.set_metadata("version", 3)
+    assert item.id == "666"
+    assert item.get_metadata("source") == "remote"
+    assert item.get_metadata("version") == 3
+    assert not item.get_metadata("head")
 
 
 def test_error():
     item = DataItem()
     stage = TextReverser()
-    item.add_error(stage.name, ValueError('value error'))
-    item.add_error(stage.name, KeyError('key error'))
-    item.add_critical_error(stage.name, KeyError('key error'))
+    item.add_soft_error(stage.name, ValueError("value error"))
+    item.add_soft_error(stage.name, KeyError("key error"))
+    item.add_critical_error(stage.name, KeyError("key error"))
     assert item.has_critical_errors()
     assert item.has_errors()
-    assert len(list(item.errors())) == 2
+    assert len(list(item.soft_errors())) == 2
     assert len(list(item.critical_errors())) == 1
     stage = TextReverser()
-    item.add_error(stage.name, Error())
+    item.add_soft_error(stage.name, SoftError())
     item.add_critical_error(stage.name, CriticalError())
     with pytest.raises(ValueError):
-        item.add_error(stage.name, CriticalError())
+        item.add_soft_error(stage.name, CriticalError())
     with pytest.raises(ValueError):
-        item.add_critical_error(stage.name, Error())
+        item.add_critical_error(stage.name, SoftError())
 
 
 def test_fileitem():
-    item = FilePathItem('/path/to/file')
+    item = FilePathItem("/path/to/file")
     assert item.id
     assert not item.payload
     assert item.path in str(item)
@@ -58,7 +69,7 @@ def test_source_container():
     manager = Manager()
     data = [DataItem() for _ in range(100)]
     for i, item in enumerate(data):
-        item.set_metadata('id', i + 1)
+        item.set_metadata("id", i + 1)
     container = SourceContainer()
     assert not container.is_set()
     source = ListSource(data)
@@ -66,7 +77,7 @@ def test_source_container():
     assert not container.is_stopped()
     assert container.is_set()
     item = container.get_processed()
-    assert item.get_metadata('id') == 1
+    assert item.get_metadata("id") == 1
     while not isinstance(item, Stop):
         assert not container.is_stopped()
         item = container.get_processed()
@@ -75,40 +86,40 @@ def test_source_container():
     source = ListSource(data)
     container.set(source)
     item = DataItem()
-    item.set_metadata('id', 1001)
+    item.set_metadata("id", 1001)
     container.prepend_item(item)
     item = DataItem()
-    item.set_metadata('id', 1002)
+    item.set_metadata("id", 1002)
     container.prepend_item(item)
-    assert container.get_processed().get_metadata('id') == 1001
-    assert container.get_processed().get_metadata('id') == 1002
-    assert container.get_processed().get_metadata('id') == 1
-    assert container.get_processed().get_metadata('id') == 2
+    assert container.get_processed().get_metadata("id") == 1001
+    assert container.get_processed().get_metadata("id") == 1002
+    assert container.get_processed().get_metadata("id") == 1
+    assert container.get_processed().get_metadata("id") == 2
     item = DataItem()
-    item.set_metadata('id', 1003)
+    item.set_metadata("id", 1003)
     container.prepend_item(item)
-    assert container.get_processed().get_metadata('id') == 1003
-    assert container.get_processed().get_metadata('id') == 3
+    assert container.get_processed().get_metadata("id") == 1003
+    assert container.get_processed().get_metadata("id") == 3
     assert not container.is_stopped()
     container.init_queue(manager.Queue)
     queue = container.out_queue
     item = DataItem()
-    item.set_metadata('id', 1004)
+    item.set_metadata("id", 1004)
     queue.put(item)
-    assert container.get_processed().get_metadata('id') == 1004
+    assert container.get_processed().get_metadata("id") == 1004
     container.pop_into_queue()
-    assert container.get_processed().get_metadata('id') == 4
+    assert container.get_processed().get_metadata("id") == 4
 
 
 def test_stage_container():
     manager = Manager()
     simple_item = DataItem()
-    simple_item.payload['text'] = 'hello world'
+    simple_item.payload["text"] = "hello world"
     source = SourceContainer()
     source.set(ListSource([DataItem() for _ in range(20)]))
-    previous = StageContainer('test0', TextGenerator(), ErrorManager())
+    previous = StageContainer("test0", TextGenerator(), ErrorManager())
     previous.set_previous(source)
-    container = StageContainer('test1', TextReverser(), ErrorManager())
+    container = StageContainer("test1", TextReverser(), ErrorManager())
     container.set_previous(previous)
     previous.process()
     assert container.count() == 0
@@ -136,7 +147,14 @@ def test_stage_container():
     assert isinstance(container.process(), Stop)
     assert container.is_stopped() and not container.is_terminated()
 
-    container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager(), manager.Queue, lambda: ProcessCounter(manager), manager.Event)
+    container = ConcurrentStageContainer(
+        "test2",
+        TextReverser(),
+        ErrorManager(),
+        manager.Queue,
+        lambda: ProcessCounter(manager),
+        manager.Event,
+    )
     container.set_previous(previous)
     container.run()
     previous.process()
@@ -155,7 +173,14 @@ def test_stage_container():
 
     source = SourceContainer()
     source.set(ListSource([simple_item]))
-    container = ConcurrentStageContainer('test2', TextReverser(), ErrorManager(), manager.Queue, lambda: ProcessCounter(manager),  manager.Event)
+    container = ConcurrentStageContainer(
+        "test2",
+        TextReverser(),
+        ErrorManager(),
+        manager.Queue,
+        lambda: ProcessCounter(manager),
+        manager.Event,
+    )
     container.set_previous(source)
     container.run()
     source.pop_into_queue()
@@ -180,27 +205,27 @@ def _get_items(container):
 def test_batch_stage_container1():
     manager = Manager()
     simple_item = DataItem()
-    simple_item.payload['text'] = 'hello world'
+    simple_item.payload["text"] = "hello world"
     source = SourceContainer()
     source.set(ListSource([DataItem() for _ in range(200)]))
-    previous = BatchStageContainer('test0', BatchTextGenerator(), ErrorManager())
+    previous = BatchStageContainer("test0", BatchTextGenerator(), ErrorManager())
     previous.set_previous(source)
-    container = BatchStageContainer('test1', BatchTextReverser(), ErrorManager())
+    container = BatchStageContainer("test1", BatchTextReverser(), ErrorManager())
     container.set_previous(previous)
     previous.process()
     items1 = container.process()
     assert len(items1) == container.count()
     items2 = list(_get_items(container))
     assert all(items1) and all(items2)
-    assert all(item.payload.get('text') for item in items1)
-    assert all(item.payload.get('text') for item in items2)
+    assert all(item.payload.get("text") for item in items1)
+    assert all(item.payload.get("text") for item in items2)
     assert items1 == items2
     previous.process()
     items3 = container.process()
     items4 = list(_get_items(container))
     assert all(items3) and all(items4)
-    assert all(item.payload.get('text') for item in items3)
-    assert all(item.payload.get('text') for item in items4)
+    assert all(item.payload.get("text") for item in items3)
+    assert all(item.payload.get("text") for item in items4)
     assert items1 != items3
     assert items3 == items4
     assert not container.is_stopped() and not container.is_terminated()
@@ -215,14 +240,16 @@ def test_batch_stage_container1():
 
 def test_batch_stage_container2():
     source = SourceContainer()
-    container = BatchStageContainer('test1', BatchTextReverser(), ErrorManager())
+    container = BatchStageContainer("test1", BatchTextReverser(), ErrorManager())
     items = [DataItem() for _ in range(10)]
     for item in items:
-        item.payload['text'] = 'something'
+        item.payload["text"] = "something"
     source.set(ListSource(items))
     container.set_previous(source)
     processed = container.process()
-    assert len(processed) == 10 and not any(isinstance(item, Stop) for item in processed)
+    assert len(processed) == 10 and not any(
+        isinstance(item, Stop) for item in processed
+    )
     reprocessed = container.process()
     assert any(isinstance(item, Stop) for item in reprocessed)
     assert container.is_stopped() and not container.is_terminated()
@@ -232,9 +259,16 @@ def test_batch_concurrent_stage_container1():
     manager = Manager()
     source = SourceContainer()
     source.set(ListSource([DataItem() for _ in range(200)]))
-    previous = BatchStageContainer('test0', BatchTextGenerator(), ErrorManager())
+    previous = BatchStageContainer("test0", BatchTextGenerator(), ErrorManager())
     previous.set_previous(source)
-    container = BatchConcurrentStageContainer('test2', BatchTextReverser(timeout=1.), ErrorManager(), manager.Queue, lambda: ProcessCounter(manager), manager.Event)
+    container = BatchConcurrentStageContainer(
+        "test2",
+        BatchTextReverser(timeout=1.0),
+        ErrorManager(),
+        manager.Queue,
+        lambda: ProcessCounter(manager),
+        manager.Event,
+    )
     container.set_previous(previous)
     container.run()
     for _ in range(10):
@@ -246,21 +280,29 @@ def test_batch_concurrent_stage_container1():
         previous.process()
     items6 = list(_get_items(container))
     assert items6 and all(items6)
-    assert all(item.payload.get('text') for item in items5)
-    assert all(item.payload.get('text') for item in items6)
+    assert all(item.payload.get("text") for item in items5)
+    assert all(item.payload.get("text") for item in items6)
     assert items5 != items6
     assert not container.is_stopped() and not container.is_terminated()
     container.empty_queues()
     container.terminate()
 
-    container = BatchConcurrentStageContainer('test2', BatchTextReverser(timeout=0.), ErrorManager(), manager.Queue, lambda: ProcessCounter(manager), manager.Event)
+    container = BatchConcurrentStageContainer(
+        "test2",
+        BatchTextReverser(timeout=0.0),
+        ErrorManager(),
+        manager.Queue,
+        lambda: ProcessCounter(manager),
+        manager.Event,
+    )
+    container.set_previous(previous)
     container.run()
     queue = container.out_queue
     for item in items6:
         queue.put(item)
     result = list(_get_items(container))
     for i, item in enumerate(items6):
-        assert item.payload == result[i].payload, 'On item {}'.format(i)
+        assert item.payload == result[i].payload, "On item {}".format(i)
     container.terminate()
 
 
@@ -269,9 +311,16 @@ def test_batch_concurrent_stage_container2():
     source = SourceContainer()
     items = [DataItem() for _ in range(10)]
     for item in items:
-        item.payload['text'] = 'something'
+        item.payload["text"] = "something"
     source.set(ListSource(items))
-    container = BatchConcurrentStageContainer('test3', BatchTextGenerator(), ErrorManager(), manager.Queue, lambda: ProcessCounter(manager), manager.Event)
+    container = BatchConcurrentStageContainer(
+        "test3",
+        BatchTextGenerator(),
+        ErrorManager(),
+        manager.Queue,
+        lambda: ProcessCounter(manager),
+        manager.Event,
+    )
     container.set_previous(source)
     container.run()
     for _ in range(10):

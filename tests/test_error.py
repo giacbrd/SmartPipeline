@@ -1,7 +1,7 @@
 import pytest
 
 from smartpipeline.error.handling import ErrorManager
-from smartpipeline.error.exceptions import Error, CriticalError
+from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.item import DataItem
 from tests.utils import TextReverser
 
@@ -12,7 +12,7 @@ def test_manager(caplog):
     manager = ErrorManager()
     stage = TextReverser()
     item = DataItem()
-    manager.handle(Error(), stage, item)
+    manager.handle(SoftError(), stage, item)
     assert any(caplog.records)
     assert item.has_errors()
     assert not item.has_critical_errors()
@@ -29,14 +29,16 @@ def test_manager(caplog):
     assert item.has_critical_errors()
     assert len(list(item.critical_errors())) == 3
     for record in caplog.records:
-        assert "stage" in record.message
+        assert "has generated an error" in record.message
 
 
 def test_critical_errors(caplog):
     stage = TextReverser()
     manager = ErrorManager()
     item = DataItem()
-    managed_critical_error = manager.handle(CriticalError(), stage, item)
+    error = CriticalError()
+    error.with_exception(Exception())
+    managed_critical_error = manager.handle(error, stage, item)
     assert not item.has_errors()
     assert item.has_critical_errors()
     assert isinstance(
@@ -46,8 +48,11 @@ def test_critical_errors(caplog):
     assert any(caplog.records)
     manager = ErrorManager().raise_on_critical_error()
     item = DataItem()
-    with pytest.raises(Exception):
+    with pytest.raises(CriticalError):
         manager.handle(CriticalError(), stage, item)
+    with pytest.raises(Exception):
+        error = CriticalError().with_exception(Exception())
+        manager.handle(error, stage, item)
     assert any(caplog.records)
     assert item.has_critical_errors()
     assert not item.has_errors()
@@ -65,4 +70,4 @@ def test_critical_errors(caplog):
     assert item.has_critical_errors()
     assert len(list(item.critical_errors())) == 3
     for record in caplog.records:
-        assert "stage" in record.message
+        assert "has generated an error" in record.message

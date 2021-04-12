@@ -1,3 +1,4 @@
+import uuid
 from abc import ABC, abstractmethod
 from typing import Sequence, Union, Any, Optional
 from queue import Queue
@@ -17,15 +18,20 @@ class NameMixin:
 
     @property
     def name(self) -> str:
-        return getattr(self, "_name", f"{self.__class__.name}_{id(self)}")
+        return getattr(self, "_name", f"{self.__class__.name}_{uuid.uuid4()}")
+
+    def __str__(self) -> str:
+        return self.name
 
 
 class ConcurrentMixin:
-    def on_fork(self) -> Any:
+    def on_start(self) -> Any:
         """
-        Called after concurrent stage executor initialization in a process (multiprocessing concurrency).
+        Called after concurrent stage executor initialization in a process (only when multiprocessing concurrency)
+        or simply after construction, by the pipeline.
         The stage in the executor is a copy of the original,
-        by overriding this method one can initialize variables specifically for the copies.
+        by overriding this method one can initialize variables specifically for the copies, that is mandatory
+        when they are not serializable.
         """
         pass
 
@@ -60,7 +66,7 @@ class Stage(NameMixin, ConcurrentMixin, Processor):
     """
 
     def __str__(self) -> str:
-        return "Stage {}".format(self.name)
+        return f"Stage {self.name}"
 
 
 class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):

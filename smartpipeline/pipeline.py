@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from concurrent.futures._base import Future, Executor
 from concurrent.futures.process import ProcessPoolExecutor
@@ -25,6 +26,8 @@ from smartpipeline.item import Stop, DataItem
 from smartpipeline.utils import LastOrderedDict, ThreadCounter, ProcessCounter
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
+
+_logger = logging.getLogger(__name__)
 
 
 class FakeContainer:
@@ -118,12 +121,15 @@ class Pipeline:
         while not all(self._containers.values()):
             time.sleep(wait_seconds)
         self._wait_previous_executor.shutdown(wait=True)
-        for name, stage in self._containers.items():
+        for name, container in self._containers.items():
             if isinstance(
-                stage, (ConcurrentStageContainer, BatchConcurrentStageContainer)
+                container, (ConcurrentStageContainer, BatchConcurrentStageContainer)
             ):
-                stage.run()
+                container.run()
+        # finalize initialization of the error manager shared by this and other stage threads
+        self._error_manager.on_start()
         self._executors_ready = True
+        _logger.debug("Pipeline ready to run")
 
     def shutdown(self):
         if self._out_queue is not None:
@@ -140,6 +146,16 @@ class Pipeline:
     def __del__(self):
         self.shutdown()
 
+    def build(self) -> Pipeline:
+        """
+        Pipeline builder method
+        """
+        if not any(self._containers):
+            raise ValueError("Must append at least a stage")
+        _logger.debug(f"Building the pipeline on stages: {self._log_stages()}")
+        self._wait_executors()
+        return self
+
     def run(self) -> Generator[DataItem, None, None]:
         """
         Run the pipeline given a source and a concatenation of stages.
@@ -148,10 +164,10 @@ class Pipeline:
         :return: Iterator over processed items
         :raises ValueError: When a source has not been set for the pipeline
         """
-        counter = 0
-        self._wait_executors()
         if not self._source_container.is_set():
             raise ValueError("Set the data source for this pipeline")
+        _logger.debug(f"Running the pipeline on stages: {self._log_stages()}")
+        counter = 0
         last_stage_name = self._last_stage_name()
         terminator_thread = None
         source_thread = None
@@ -168,6 +184,7 @@ class Pipeline:
                         (ConcurrentStageContainer, BatchConcurrentStageContainer),
                     ):
                         container.process()
+                    # but me must periodically check for errors
                     else:
                         container.check_errors()
                 except Exception as e:
@@ -226,6 +243,7 @@ class Pipeline:
         :param force: If True do not wait for a container to process all items produced by the source
         :param wait_seconds: Time to wait before pinging again a container for its termination
         """
+        _logger.debug("Terminating the pipeline")
         # scroll the pipeline by its order and terminate stages after the relative queues are empty
         for container in self._containers.values():
             if not force:
@@ -242,6 +260,7 @@ class Pipeline:
                 container.queues_join()
                 while not container.queues_empty():
                     time.sleep(wait_seconds)
+        _logger.debug("Termination done")
 
     def _all_terminated(self) -> bool:
         """
@@ -265,7 +284,7 @@ class Pipeline:
         """
         Process a single item synchronously (no concurrency) through the pipeline
         """
-        self._wait_executors()
+        _logger.debug(f"Processing {item} on stages: {self._log_stages()}")
         last_stage_name = self._containers.last_key()
         self._source_container.prepend_item(item)
         for name, container in self._containers.items():
@@ -282,7 +301,9 @@ class Pipeline:
 
         :param callback: A function to call after a successful process of the item
         """
-        self._wait_executors()
+        _logger.debug(
+            f"Processing asynchronously {item} on stages: {self._log_stages()}"
+        )
         if callback is not None:
             item.set_callback(callback)
         self._source_container.prepend_item(item)
@@ -362,8 +383,8 @@ class Pipeline:
         executor = self._get_wait_previous_executor()
         executor.submit(_waiter)
 
-    def _get_container(
-        self, name: str, stage: StageType, concurrency: int, use_threads: bool
+    def _build_container(
+        self, name: str, stage: StageType, concurrency: int, parallel: bool
     ) -> BaseContainer:
         """
         Get a new container instance according to the pipeline configuration
@@ -371,12 +392,14 @@ class Pipeline:
         :param name: Stage name
         :param stage: A stage instance
         :param concurrency: Number of concurrent stage executions, if 0 then just create the non-concurrent containers
-        :param use_threads: If True use threads, otherwise multiprocessing
+        :param parallel: If True use multiprocessing, otherwise threads
         """
         if concurrency <= 0:
             constructor = (
                 BatchStageContainer if isinstance(stage, BatchStage) else StageContainer
             )
+            # if not concurrent we must explicitly finalize initialization of this single stage object
+            stage.on_start()
             return constructor(name, stage, self._error_manager)
         else:
             constructor = (
@@ -384,18 +407,7 @@ class Pipeline:
                 if isinstance(stage, BatchStage)
                 else ConcurrentStageContainer
             )
-            if use_threads:
-                return constructor(
-                    name,
-                    stage,
-                    self._error_manager,
-                    self._new_queue,
-                    self._new_counter,
-                    self._new_event,
-                    concurrency,
-                    use_threads,
-                )
-            else:
+            if parallel:
                 return constructor(
                     name,
                     stage,
@@ -404,7 +416,21 @@ class Pipeline:
                     self._new_mp_counter,
                     self._new_mp_event,
                     concurrency,
-                    use_threads,
+                    parallel,
+                )
+            else:
+                # if the stage is executed on multiple threads we must finalize initialization once,
+                # while on multiprocessing each process executor calls it for its own copy of the stage
+                stage.on_start()
+                return constructor(
+                    name,
+                    stage,
+                    self._error_manager,
+                    self._new_queue,
+                    self._new_counter,
+                    self._new_event,
+                    concurrency,
+                    parallel,
                 )
 
     def get_stage(self, name: str) -> StageType:
@@ -414,11 +440,7 @@ class Pipeline:
         return self._containers.get(name).stage
 
     def append_stage(
-        self,
-        name: str,
-        stage: StageType,
-        concurrency: int = 0,
-        use_threads: bool = True,
+        self, name: str, stage: StageType, concurrency: int = 0, parallel: bool = False,
     ) -> Pipeline:
         """
         Append a stage to the pipeline just after the last one appended, or after the source if it is the first stage
@@ -426,15 +448,15 @@ class Pipeline:
         :param name: Name for identify the stage in the pipeline, it is also set in the stage and it must be unique in the pipeline
         :param stage: Instance of a stage
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
-        :param use_threads: If True use threads, otherwise multiprocessing
+        :param parallel: If True use multiprocessing, otherwise threads
         """
         self._executors_ready = False
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and isinstance(stage, BatchStage):
-            use_threads = True
+            parallel = False
             concurrency = 1
         self._check_stage_name(name)
-        container = self._get_container(name, stage, concurrency, use_threads)
+        container = self._build_container(name, stage, concurrency, parallel)
         if concurrency > 0:
             # if it is concurrent and it is the first stage, make the source working on a output queue
             if not self._containers:
@@ -452,7 +474,7 @@ class Pipeline:
         args: Sequence = None,
         kwargs: Mapping = None,
         concurrency: int = 0,
-        use_threads: bool = True,
+        parallel: bool = False,
     ) -> Pipeline:
         """
         Append a stage class to the pipeline just after the last one appended, or after the source if it is the first stage.
@@ -463,12 +485,12 @@ class Pipeline:
         :param args: List of arguments for the stage constructor
         :param kwargs: Dictionary of keyed arguments for the stage constructor
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
-        :param use_threads: If True use threads, otherwise multiprocessing
+        :param parallel: If True use multiprocessing, otherwise threads
         """
         self._executors_ready = False
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and issubclass(stage_class, BatchStage):
-            use_threads = True
+            parallel = False
             concurrency = 1
         if kwargs is None:
             kwargs = {}
@@ -481,27 +503,25 @@ class Pipeline:
         last_stage_name = self._last_stage_name()
         # set it immediately so the order of the calls of this method is followed in `_containers`
         self._containers[name] = None
-        future = self._get_init_executor(use_threads).submit(
-            stage_class, *args, **kwargs
-        )
+        future = self._get_init_executor(parallel).submit(stage_class, *args, **kwargs)
 
         def append_stage(stage_future: Future):
             stage = stage_future.result()
-            container = self._get_container(name, stage, concurrency, use_threads)
+            container = self._build_container(name, stage, concurrency, parallel)
             self._wait_for_previous(container, last_stage_name)
             self._containers[name] = container
 
         future.add_done_callback(append_stage)
         return self
 
-    def _get_init_executor(self, use_threads: bool = True) -> Executor:
+    def _get_init_executor(self, parallel: bool = False) -> Executor:
         """
         Get a pool executor for concurrent stage initialization
 
-        :param use_threads: True if the executor uses treads, otherwise multiprocessing
+        :param parallel: True if the executor uses multiprocessing, otherwise treads
         """
         if self._init_executor is None:
-            executor = ThreadPoolExecutor if use_threads else ProcessPoolExecutor
+            executor = ThreadPoolExecutor if not parallel else ProcessPoolExecutor
             self._init_executor = executor(max_workers=self._max_init_workers)
         return self._init_executor
 
@@ -542,3 +562,6 @@ class Pipeline:
         Get the internal output pipeline for asynchronous processing of single items
         """
         self._out_queue = self._new_queue()
+
+    def _log_stages(self):
+        return ", ".join(self._containers.keys())

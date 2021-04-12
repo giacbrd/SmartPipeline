@@ -41,7 +41,7 @@ Error Handling
 
 Exceptions to generate in case of errors and how to handle them
 
-.. autoclass:: smartpipeline.error.exceptions.Error
+.. autoclass:: smartpipeline.error.exceptions.SoftError
    :inherited-members:
    :members:
 

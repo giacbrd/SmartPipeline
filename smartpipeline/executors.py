@@ -1,3 +1,4 @@
+import logging
 import queue
 import time
 from threading import Event
@@ -10,6 +11,8 @@ from smartpipeline.stage import Stage, BatchStage, ItemsQueue, StageType
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
+_logger = logging.getLogger(__name__)
+
 
 def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataItem:
     """
@@ -19,14 +22,17 @@ def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataIt
         return item
     time1 = time.time()
     try:
-        ret = stage.process(item)
+        _logger.debug(f"{stage} is processing {item}")
+        processed_item = stage.process(item)
+        _logger.debug(f"{stage} has finished processing {processed_item}")
     except Exception as e:
-        item.set_timing(stage.name, (time.time() - time1) * 1000.0)
+        _logger.debug(f"{stage} has failed processing {item}")
+        item.set_timing(stage.name, time.time() - time1)
         error_manager.handle(e, stage, item)
         return item
     # this can't be in a finally, otherwise it would register the `error_manager.handle` time
-    item.set_timing(stage.name, (time.time() - time1) * 1000.0)
-    return ret
+    processed_item.set_timing(stage.name, time.time() - time1)
+    return processed_item
 
 
 def process_batch(
@@ -41,18 +47,22 @@ def process_batch(
         if error_manager.check_critical_errors(item):
             ret[i] = item
         else:
+            _logger.debug(f"{stage} is going to process {item}")
             to_process[i] = item
     time1 = time.time()
     try:
+        _logger.debug(f"{stage} is processing {len(to_process)} items")
         processed = stage.process_batch(list(to_process.values()))
+        _logger.debug(f"{stage} has finished processing {len(to_process)} items")
     except Exception as e:
-        spent = ((time.time() - time1) * 1000.0) / (len(to_process) or 1.0)
+        _logger.debug(f"{stage} had failures in processing {len(to_process)} items")
+        spent = (time.time() - time1) / (len(to_process) or 1.0)
         for i, item in to_process.items():
             item.set_timing(stage.name, spent)
             error_manager.handle(e, stage, item)
             ret[i] = item
         return ret
-    spent = ((time.time() - time1) * 1000.0) / (len(to_process) or 1.0)
+    spent = (time.time() - time1) / (len(to_process) or 1.0)
     for n, i in enumerate(to_process.keys()):
         item = processed[n]
         item.set_timing(stage.name, spent)
@@ -66,6 +76,7 @@ def stage_executor(
     out_queue: ItemsQueue,
     error_manager: ErrorManager,
     terminated: Event,
+    has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
 ):
     """
@@ -73,8 +84,11 @@ def stage_executor(
     until a termination event is set
     """
     if isinstance(counter, ProcessCounter):
-        # call this only if the stage is a copy of the original, ergo it is executed in a process
-        stage.on_fork()
+        # call these only if the stage and the error manager are copies of the original,
+        # ergo this executor is running in a child process
+        error_manager.on_start()
+        stage.on_start()
+    has_started_counter += 1
     while True:
         if terminated.is_set() and in_queue.empty():
             return
@@ -105,6 +119,7 @@ def batch_stage_executor(
     out_queue: ItemsQueue,
     error_manager: ErrorManager,
     terminated: Event,
+    has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
 ):
     """
@@ -112,8 +127,11 @@ def batch_stage_executor(
     until a termination event is set
     """
     if isinstance(counter, ProcessCounter):
-        # call this only if the stage is a copy of the original, ergo it is executed in a process
-        stage.on_fork()
+        # call these only if the stage and the error manager are copies of the original,
+        # ergo this executor is running in a child process
+        error_manager.on_start()
+        stage.on_start()
+    has_started_counter += 1
     while True:
         if terminated.is_set() and in_queue.empty():
             return

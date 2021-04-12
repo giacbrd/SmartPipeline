@@ -1,38 +1,50 @@
 from __future__ import annotations
 import logging
-from typing import Optional
+from typing import Optional, Union, Any
 
-from smartpipeline.error.exceptions import Error, CriticalError
+from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.item import DataItem
 from smartpipeline.stage import NameMixin
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
+_logger = logging.getLogger(__name__)
+
 
 class ErrorManager:
     """
-    Basic error handling of a pipeline, principally manages :class:`.exceptions.Error` and :class:`.exceptions.CriticalError` types
+    Basic error handling of a pipeline, principally manages :class:`.exceptions.SoftError` and :class:`.exceptions.CriticalError` types
     """
 
-    def __init__(self):
-        self._raise_on_critical = False
-        self._skip_on_critical = True
-        self._logger = logging.getLogger(self.__class__.__name__)
+    _raise_on_critical = False
+    _skip_on_critical = True
 
     def raise_on_critical_error(self) -> ErrorManager:
         """
-        If a :class:`.exceptions.CriticalError` or any un-managed exception is met, raise it externally, kill the pipeline
+        Set the error manager so that if a :class:`.exceptions.CriticalError` or any un-managed exception is met,
+        raise it "externally", killing the pipeline
         """
         self._raise_on_critical = True
         return self
 
     def no_skip_on_critical_error(self) -> ErrorManager:
         """
-        Change default behaviour on :class:`.exceptions.CriticalError`: just skip the current stage .
+        Change default behaviour of the error manager on :class:`.exceptions.CriticalError`: only skip the stage which raises it,
+        like the :class:`.exceptions.SoftError` .
         Valid only if :meth:`.ErrorManager.raise_on_critical_error` is not set
         """
         self._skip_on_critical = False
         return self
+
+    def on_start(self) -> Any:
+        """
+        Called for a concurrent stage executor in a process (only when multiprocessing concurrency)
+        or simply after construction, by the pipeline.
+        The error manager in the executor is a copy of the original,
+        by overriding this method one can initialize variables specifically for the copies, that is mandatory
+        when they are not serializable.
+        """
+        pass
 
     def handle(
         self, error: Exception, stage: NameMixin, item: DataItem
@@ -44,14 +56,15 @@ class ErrorManager:
         :param stage: Stage which raised the exception during processing
         :param item: Item which raised the exception when processed
         :return: If the handled error results to be critical return the generated :class:`.exceptions.CriticalError`
+        :raises Exception: When a :meth:`.ErrorManager.raise_on_critical_error` has been set and the error is critical
         """
-        if type(error) is Error:
-            item_error = item.add_error(stage.name, error)
+        if isinstance(error, SoftError):
+            item_error = item.add_soft_error(stage.name, error)
         else:
             # any un-managed exception is a potential critical error
             item_error = item.add_critical_error(stage.name, error)
-        exc_info = (type(error), error, error.__traceback__)
-        self._logger.exception(self._generate_message(stage, item), exc_info=exc_info)
+        exc_info = (type(item_error), item_error, item_error.__traceback__)
+        _logger.exception(self._generate_message(stage, item), exc_info=exc_info)
         if isinstance(item_error, CriticalError):
             exception = self._check_critical(item_error)
             if exception:
@@ -59,19 +72,20 @@ class ErrorManager:
 
     @staticmethod
     def _generate_message(stage: NameMixin, item: DataItem) -> str:
-        return "The stage {} has generated an error on item {}".format(stage, item)
+        return f"{stage} has generated an error on item {item}"
 
-    def _check_critical(self, error: CriticalError) -> Optional[Exception]:
+    def _check_critical(self, error: CriticalError) -> Union[Exception, CriticalError]:
         """
         Manage a critical error, usually after an item has been processed by a stage
 
-        :return: The exception which caused a critical error if any
+        :return: The exception which caused a critical error if any, otherwise the :class:`.exceptions.CriticalError` itself
+        :raises Exception: When a :meth:`.ErrorManager.raise_on_critical_error` has been set
         """
         ex = error.get_exception()
         if self._raise_on_critical:
-            raise ex
+            raise ex or error
         elif self._skip_on_critical:
-            return ex
+            return ex or error
 
     def check_critical_errors(self, item: DataItem) -> Optional[Exception]:
         """

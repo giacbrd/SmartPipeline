@@ -3,7 +3,9 @@ Containers encapsulate stages and manage their execution
 """
 
 import concurrent
+import logging
 import queue
+import time
 from queue import Queue
 from abc import ABC, abstractmethod
 from concurrent.futures import wait, Executor, Future
@@ -11,6 +13,8 @@ from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event
 from typing import Sequence, Optional, Callable
+
+from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.utils import ConcurrentCounter
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.executors import (
@@ -24,6 +28,8 @@ from smartpipeline.stage import Stage, BatchStage, Source, ItemsQueue, StageType
 from smartpipeline.item import DataItem, Stop
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
+
+_logger = logging.getLogger(__name__)
 
 
 QueueInitializer = Callable[[], ItemsQueue]
@@ -71,7 +77,7 @@ class BaseContainer(InQueued):
         Get the oldest processed item waiting to be retrieved
 
         :param block: Wait for the next item to be processed if no one available
-        :param timeout: Time to wait when `block` is True
+        :param timeout: Time to wait (seconds) when `block` is True
         :return: A processed item or None if: no item waiting to be retrieved; timeout expires on a blocked call
         """
         pass
@@ -226,6 +232,7 @@ class SourceContainer(BaseContainer):
         """
         Stop this source, the container won't produce items anymore
         """
+        _logger.debug("Stopping from the source")
         if self._source is not None:
             self._source.stop()
         self._is_stopped = True
@@ -283,12 +290,14 @@ class SourceContainer(BaseContainer):
             except queue.Empty:
                 if self.is_stopped():
                     self._next_item = Stop()
+            _logger.debug(f"{ret} produced by the source")
             return ret
         elif self._source is not None:
             ret = self._source.pop()
             if self.is_stopped():
                 return Stop()
             else:
+                _logger.debug(f"{ret} produced by the source")
                 return ret
         elif self.is_stopped():
             return Stop()
@@ -308,7 +317,7 @@ class StageContainer(
         self._last_processed = None
 
     def __str__(self) -> str:
-        return "Container for stage {}".format(self._stage)
+        return "Container for {}".format(self._stage)
 
     def process(self) -> DataItem:
         item = self.previous.get_processed()
@@ -444,25 +453,26 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         counter_initializer: CounterInitializer,
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
-        use_threads: bool = True,
+        parallel: bool = False,
     ):
         """
         Initialization of instance members
 
         :param queue_initializer: Constructor for output, and eventually input, queue
-        :param counter_initializer: Constructor for items counter, it counts items seen by concurrent stage executions
+        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage executors that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
-        :param use_threads: True for using threads for concurrency, otherwise use multiprocess
+        :param parallel: True for using multiprocessing for concurrency, otherwise use threads
         """
         self._concurrency = concurrency
-        self._use_threads = use_threads
+        self._parallel = parallel
         self._stage_executor = None
         self._previous_queue = None
         self._futures: Sequence[Future] = []
         self._queue_initializer = queue_initializer
         self._out_queue = self._queue_initializer()
         self._counter = counter_initializer()
+        self._has_started_counter = counter_initializer()
         self._counter_initializer = counter_initializer
         self._terminate_event = terminate_event_initializer()
 
@@ -495,7 +505,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
                 self._previous,
                 (ConcurrentStageContainer, BatchConcurrentStageContainer),
             )
-            and not self._previous.use_threads
+            and self._previous.parallel
         ):
             # give priority to the previous queue initializer
             self._previous_queue = self._previous.out_queue
@@ -507,17 +517,17 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         Get and eventually generate a pool executor where concurrent stage executions run
         """
         if self._stage_executor is None:
-            executor = ThreadPoolExecutor if self._use_threads else ProcessPoolExecutor
+            executor = ThreadPoolExecutor if not self._parallel else ProcessPoolExecutor
             # TODO one executor per stage? why max_workers are equivalent to concurrency?
             self._stage_executor = executor(max_workers=self._concurrency)
         return self._stage_executor
 
     @property
-    def use_threads(self) -> bool:
+    def parallel(self) -> bool:
         """
-        True if we are using threads, False if we are using multiprocess
+        True if we are using multiprocessing, False if we are using threads
         """
-        return self._use_threads
+        return self._parallel
 
     def shutdown(self):
         """
@@ -582,6 +592,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         """
         ex = self._get_stage_executor()
         self._counter = self._counter_initializer()
+        self._has_started_counter = self._counter_initializer()
         self._terminate_event.clear()
         for _ in range(self._concurrency):
             self._futures.append(
@@ -592,9 +603,14 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
                     out_queue,
                     error_manager,
                     self._terminate_event,
+                    self._has_started_counter,
                     self._counter,
                 )
             )
+        # wait all executors internal loop have started
+        while self._has_started_counter.value < self._concurrency:
+            self.check_errors()
+            time.sleep(CONCURRENCY_WAIT)
 
 
 class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
@@ -611,17 +627,17 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         counter_initializer: CounterInitializer,
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
-        use_threads: bool = True,
+        parallel: bool = False,
     ):
         """
         :param name: Stage name
         :param stage: Stage instance
         :param error_manager: Error manager instance
         :param queue_initializer: Constructor for output, and eventually input, queue
-        :param counter_initializer: Constructor for items counter, it counts items seen by concurrent stage executions
+        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage executors that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
-        :param use_threads: True for using threads for concurrency, otherwise use multiprocess
+        :param parallel: True for using multiprocessing for concurrency, otherwise use threads
         """
         super().__init__(name, stage, error_manager)
         self.init_concurrency(
@@ -629,7 +645,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
             counter_initializer,
             terminate_event_initializer,
             concurrency,
-            use_threads,
+            parallel,
         )
 
     def run(self, _executor: StageExecutor = stage_executor):
@@ -662,17 +678,17 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         counter_initializer: CounterInitializer,
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
-        use_threads: bool = True,
+        parallel: bool = False,
     ):
         """
         :param name: Stage name
         :param stage: Stage instance
         :param error_manager: Error manager instance
         :param queue_initializer: Constructor for output, and eventually input, queue
-        :param counter_initializer: Constructor for items counter, it counts items seen by concurrent stage executions
+        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage executors that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
-        :param use_threads: True for using threads for concurrency, otherwise use multiprocess
+        :param parallel: True for using multiprocessing for concurrency, otherwise use threads
         """
         super().__init__(name, stage, error_manager)
         self.init_concurrency(
@@ -680,7 +696,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
             counter_initializer,
             terminate_event_initializer,
             concurrency,
-            use_threads,
+            parallel,
         )
 
     def run(self, _executor: StageExecutor = batch_stage_executor):

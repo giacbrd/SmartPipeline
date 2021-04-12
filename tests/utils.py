@@ -3,7 +3,8 @@ import time
 from datetime import datetime
 from time import sleep
 
-from smartpipeline.error.exceptions import Error, CriticalError
+from smartpipeline.error.exceptions import CriticalError, SoftError
+from smartpipeline.error.handling import ErrorManager
 from smartpipeline.helpers import FilePathItem
 from smartpipeline.stage import Source, Stage, BatchStage
 from smartpipeline.item import DataItem
@@ -144,12 +145,12 @@ class ExceptionStage(Stage):
 
 class ErrorStage(Stage):
     def process(self, item: DataItem):
-        raise Error("test pipeline error")
+        raise SoftError("test pipeline error")
 
 
-class CriticalErrorStage(Stage):
+class CriticalIOErrorStage(Stage):
     def process(self, item: DataItem):
-        raise CriticalError("test pipeline critical error")
+        raise CriticalError("test pipeline critical IO error") from IOError()
 
 
 class BatchExceptionStage(BatchStage):
@@ -166,20 +167,39 @@ class BatchErrorStage(BatchStage):
         super().__init__(size, timeout)
 
     def process_batch(self, items):
-        raise Error("test pipeline error")
+        raise SoftError("test pipeline error")
 
 
 class SerializableStage(Stage):
     def __init__(self):
         self._file = None
 
-    def on_fork(self):
+    def on_start(self):
         self._file = open(__file__)
 
     def process(self, item: DataItem):
         if self._file is not None and self._file.name == __file__:
             item.payload["file"] = self._file.name
         return item
+
+
+class ErrorSerializableStage(Stage):
+    def __init__(self):
+        self._file = None
+
+    def on_start(self):
+        raise IOError
+
+    def process(self, item: DataItem):
+        return item
+
+
+class SerializableErrorManager(ErrorManager):
+    def __init__(self):
+        self._file = None
+
+    def on_start(self):
+        self._file = open(__file__)
 
 
 def wait_service(timeout, predicate, args):
