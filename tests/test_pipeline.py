@@ -353,7 +353,7 @@ def test_concurrency_errors():
 
 
 def test_concurrent_constructions():
-    """test `on_fork` method"""
+    """test `on_start` method"""
     pipeline = (
         _pipeline()
         .set_error_manager(SerializableErrorManager())

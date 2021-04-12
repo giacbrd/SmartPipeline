@@ -48,7 +48,7 @@ class ESRetrieve(BatchStage):
         self._es_client = None
         self._retrieve = None
 
-    def on_fork(self):
+    def on_start(self):
         self._es_client = Elasticsearch(self._es_hosts)
         # use Elasticsearch mget when a single index is specified
         if len(self._es_indices) == 1 and not self._es_client.indices.exists_alias(

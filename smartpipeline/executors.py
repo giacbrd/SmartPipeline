@@ -85,9 +85,9 @@ def stage_executor(
     """
     if isinstance(counter, ProcessCounter):
         # call these only if the stage and the error manager are copies of the original,
-        # ergo they are used by processes forked from the main one
-        error_manager.on_fork()
-        stage.on_fork()
+        # ergo this executor is running in a child process
+        error_manager.on_start()
+        stage.on_start()
     has_started_counter += 1
     while True:
         if terminated.is_set() and in_queue.empty():
@@ -128,9 +128,9 @@ def batch_stage_executor(
     """
     if isinstance(counter, ProcessCounter):
         # call these only if the stage and the error manager are copies of the original,
-        # ergo they are used by processes forked from the main one
-        error_manager.on_fork()
-        stage.on_fork()
+        # ergo this executor is running in a child process
+        error_manager.on_start()
+        stage.on_start()
     has_started_counter += 1
     while True:
         if terminated.is_set() and in_queue.empty():

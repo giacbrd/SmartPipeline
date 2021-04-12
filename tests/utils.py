@@ -174,7 +174,7 @@ class SerializableStage(Stage):
     def __init__(self):
         self._file = None
 
-    def on_fork(self):
+    def on_start(self):
         self._file = open(__file__)
 
     def process(self, item: DataItem):
@@ -187,7 +187,7 @@ class ErrorSerializableStage(Stage):
     def __init__(self):
         self._file = None
 
-    def on_fork(self):
+    def on_start(self):
         raise IOError
 
     def process(self, item: DataItem):
@@ -198,7 +198,7 @@ class SerializableErrorManager(ErrorManager):
     def __init__(self):
         self._file = None
 
-    def on_fork(self):
+    def on_start(self):
         self._file = open(__file__)
 
 

@@ -292,16 +292,16 @@ More, executables examples can be found in the codebase directory ``examples``.
 
 .. _concurrency-section:
 
-Parallel stages and ``on_fork`` method
+Parallel stages and ``on_start`` method
 --------------------------------------
 
 The only way Python allows to run code in parallel is through multiple OS processes, with the package
 `multiprocessing <https://docs.python.org/3/library/multiprocessing.html>`_ (threads cannot run in parallel
 because the `GIL <https://en.wikipedia.org/wiki/Global_interpreter_lock>`_).
 
-When we submit a Python function to a forked process we are actually copying memory from the current process to the new one,
-because OS processes cannot share memory, differently from multi-threading. In order to do this Python must serialize
-data to pass to the new process.
+When we submit a Python function to a spawned/forked process we are actually copying memory from the current process
+to the new one, because OS processes cannot share memory, differently from multi-threading.
+In order to do this (at least for spawned processes) Python must serialize data to pass to the new process.
 Even communication between processes involve copying data from one to another (e.g. through queues).
 
 Therefore, if we decide to run a pipeline stage concurrently and parallel,
@@ -311,11 +311,12 @@ serializable with the `pickle <https://docs.python.org/3/library/pickle.html>`_ 
 If we want to define non-serializable attributes in our stage object and run it on more processes,
 we must find a way generate these attributes for each object copy in each process.
 
-This is what :meth:`.Stage.on_fork` method solves. It is simply used to initialize attributes "a posteriori".
+This is what :meth:`.Stage.on_start` method solves. It is simply used to initialize attributes "a posteriori".
 It is normally called after ``__init__``, but in case of execution on multiple processes,
 it is called once, on the stage copy, at process start.
+This is also useful for safety and for avoiding copying large data.
 
-Also for :class:`.ErrorManager` it is necessary to define :meth:`.ErrorManager.on_fork`,
+Also for :class:`.ErrorManager` it is necessary to define :meth:`.ErrorManager.on_start`,
 because the manager must be coupled with a stage when it is copied.
 
 Let's take back the previous examples, the error manger and a stage needs to be modified if we want to run the stage in
@@ -335,7 +336,7 @@ This is how we "split" the two classes ``__init__``
             self.es_index = es_index
             self.es_client = None
 
-        def on_fork(self):
+        def on_start(self):
             self.es_client = Elasticsearch(self.es_host)
 
 
@@ -346,12 +347,12 @@ This is how we "split" the two classes ``__init__``
             self.es_index = es_index
             self.es_client = None
 
-        def on_fork(self):
+        def on_start(self):
             self.es_client = Elasticsearch(self.es_host)
 
 The effort for the developer is minimal, but the advantage big.
 We can now execute these pipeline abstractions in parallel,
 not just stateless methods as we would normally do with multiprocessing.
-In general, it is convenient to always define ``on_fork`` if an attribute we are going to construct requires
-this treatment, so that the stage will be always compatible with both three ways of run it: sequentially, concurrently
-on threads or on processes.
+In general, it is convenient to always define ``on_start`` if attributes we are going to construct require
+this special treatment, so that the stage will be always compatible with both three ways of run it: sequentially,
+concurrently on threads or on processes.

@@ -127,7 +127,7 @@ class Pipeline:
             ):
                 container.run()
         # finalize initialization of the error manager shared by this and other stage threads
-        self._error_manager.on_fork()
+        self._error_manager.on_start()
         self._executors_ready = True
         _logger.debug("Pipeline ready to run")
 
@@ -399,7 +399,7 @@ class Pipeline:
                 BatchStageContainer if isinstance(stage, BatchStage) else StageContainer
             )
             # if not concurrent we must explicitly finalize initialization of this single stage object
-            stage.on_fork()
+            stage.on_start()
             return constructor(name, stage, self._error_manager)
         else:
             constructor = (
@@ -420,8 +420,8 @@ class Pipeline:
                 )
             else:
                 # if the stage is executed on multiple threads we must finalize initialization once,
-                # while on multiprocessing each process executor call it for its own copy of the stage
-                stage.on_fork()
+                # while on multiprocessing each process executor calls it for its own copy of the stage
+                stage.on_start()
                 return constructor(
                     name,
                     stage,

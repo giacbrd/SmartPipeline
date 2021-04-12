@@ -25,7 +25,7 @@ class NameMixin:
 
 
 class ConcurrentMixin:
-    def on_fork(self) -> Any:
+    def on_start(self) -> Any:
         """
         Called after concurrent stage executor initialization in a process (only when multiprocessing concurrency)
         or simply after construction, by the pipeline.

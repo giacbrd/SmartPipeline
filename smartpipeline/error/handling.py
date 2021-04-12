@@ -36,11 +36,11 @@ class ErrorManager:
         self._skip_on_critical = False
         return self
 
-    def on_fork(self) -> Any:
+    def on_start(self) -> Any:
         """
         Called for a concurrent stage executor in a process (only when multiprocessing concurrency)
         or simply after construction, by the pipeline.
-        The manager in the executor is a copy of the original,
+        The error manager in the executor is a copy of the original,
         by overriding this method one can initialize variables specifically for the copies, that is mandatory
         when they are not serializable.
         """
