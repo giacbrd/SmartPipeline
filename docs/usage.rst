@@ -53,6 +53,10 @@ Defining your stages
 The stage method :meth:`.Stage.process` (or :meth:`.BatchStage.process_batch`) is where the actual
 item data processing happens.
 A stage receives a single item and returns it after processing.
+A batch stage, instead, processes multiple items at once;
+useful when the computation it must perform can exploit working on more data per call,
+like on a HTTP API that accepts lists of values,
+or on a machine learning model that is optimized for predicting multiple samples.
 Concurrent stages will call the method on different subsets of the data flow, concurrently.
 
 :class:`.DataItem` data is kept in the :attr:`.DataItem.payload`, a read-only dictionary.
