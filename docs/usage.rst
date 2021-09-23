@@ -1,5 +1,5 @@
-Tutorial
-========
+Guide
+=====
 
 Defining the source
 -------------------
@@ -297,7 +297,7 @@ More, executables examples can be found in the codebase directory ``examples``.
 .. _concurrency-section:
 
 Parallel stages and ``on_start`` method
---------------------------------------
+---------------------------------------
 
 The only way Python allows to run code in parallel is through multiple OS processes, with the package
 `multiprocessing <https://docs.python.org/3/library/multiprocessing.html>`_ (threads cannot run in parallel
