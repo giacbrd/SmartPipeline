@@ -30,7 +30,7 @@ def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataIt
         item.set_timing(stage.name, time.time() - time1)
         error_manager.handle(e, stage, item)
         return item
-    # this can't be in a finally, otherwise it would register the `error_manager.handle` time
+    # this can't be in a "finally", otherwise it would register also the `error_manager.handle` time
     processed_item.set_timing(stage.name, time.time() - time1)
     return processed_item
 

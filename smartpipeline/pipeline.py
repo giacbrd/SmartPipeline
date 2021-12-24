@@ -131,7 +131,7 @@ class Pipeline:
         self._executors_ready = True
         _logger.debug("Pipeline ready to run")
 
-    def shutdown(self):
+    def _shutdown(self):
         if self._out_queue is not None:
             self._out_queue.join()
         # if self._init_executor is not None:
@@ -144,7 +144,7 @@ class Pipeline:
             self._sync_manager.shutdown()
 
     def __del__(self):
-        self.shutdown()
+        self._shutdown()
 
     def build(self) -> Pipeline:
         """
@@ -191,7 +191,7 @@ class Pipeline:
                     self.stop()
                     # TODO in case of errors we loose pending items!
                     self._terminate_all(force=True)
-                    self.shutdown()
+                    self._shutdown()
                     self._count += 1
                     raise e
                 # retrieve finally processed items from the last stage
@@ -222,7 +222,7 @@ class Pipeline:
                     source_thread.join()
                 if terminator_thread is not None:
                     terminator_thread.join()
-                    self.shutdown()
+                    self._shutdown()
                 return
 
     @property
@@ -440,7 +440,11 @@ class Pipeline:
         return self._containers.get(name).stage
 
     def append_stage(
-        self, name: str, stage: StageType, concurrency: int = 0, parallel: bool = False,
+        self,
+        name: str,
+        stage: StageType,
+        concurrency: int = 0,
+        parallel: bool = False,
     ) -> Pipeline:
         """
         Append a stage to the pipeline just after the last one appended, or after the source if it is the first stage
