@@ -9,14 +9,13 @@ class Error(Exception):
 
     def set_stage(self, stage: str):
         self._pipeline_stage = stage
-        self._cause = None
 
     def get_stage(self) -> Optional[str]:
         return getattr(self, "_pipeline_stage", None)
 
     def with_exception(self, exception: Exception) -> Error:
         """
-        Set the original exception (if any) that has gener ated this error,
+        Set the original exception (if any) that has generated this error,
         equivalent to `explicit exception chaining <https://www.python.org/dev/peps/pep-3134/#explicit-exception-chaining>`_
         """
         self.__cause__ = exception
