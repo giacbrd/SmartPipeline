@@ -6,13 +6,12 @@ import concurrent
 import logging
 import queue
 import time
-from queue import Queue
 from abc import ABC, abstractmethod
 from concurrent.futures import wait, Executor, Future
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event
-from typing import Sequence, Optional, Callable
+from typing import Sequence, Optional, Callable, Union, Tuple, Type
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.utils import ConcurrentCounter
@@ -172,6 +171,23 @@ class NamedStageMixin:
         return self._stage
 
 
+class RetryableStageMixin:
+    """
+    A mixin for basic containers of retryable stages
+    """
+
+    @staticmethod
+    def set_retryable_stage(
+        backoff: Union[float, int],
+        max_retries: int,
+        retryable_errors: Tuple[Type[Exception], ...],
+        stage: StageType,
+    ):
+        stage.set_backoff(backoff)
+        stage.set_max_retries(max_retries)
+        stage.set_retryable_errors(retryable_errors)
+
+
 class SourceContainer(BaseContainer):
     """
     A container specific for sources
@@ -304,16 +320,29 @@ class SourceContainer(BaseContainer):
 
 
 class StageContainer(
-    BaseContainer, NamedStageMixin, FallibleMixin, ConnectedStageMixin
+    BaseContainer,
+    NamedStageMixin,
+    FallibleMixin,
+    ConnectedStageMixin,
+    RetryableStageMixin,
 ):
     """
     The standard container for basic stages
     """
 
-    def __init__(self, name: str, stage: Stage, error_manager: ErrorManager):
+    def __init__(
+        self,
+        name: str,
+        stage: Stage,
+        error_manager: ErrorManager,
+        backoff: Union[float, int] = 0.0,
+        max_retries: int = 0,
+        retryable_errors: Tuple[Type[Exception], ...] = tuple(),
+    ):
         super().__init__()
         self.set_error_manager(error_manager)
         self.set_stage(name, stage)
+        self.set_retryable_stage(backoff, max_retries, retryable_errors, stage)
         self._last_processed = None
 
     def __str__(self) -> str:
@@ -360,16 +389,29 @@ class StageContainer(
 
 
 class BatchStageContainer(
-    BaseContainer, NamedStageMixin, FallibleMixin, ConnectedStageMixin
+    BaseContainer,
+    NamedStageMixin,
+    FallibleMixin,
+    ConnectedStageMixin,
+    RetryableStageMixin,
 ):
     """
     Container for batch stages
     """
 
-    def __init__(self, name: str, stage: BatchStage, error_manager: ErrorManager):
+    def __init__(
+        self,
+        name: str,
+        stage: BatchStage,
+        error_manager: ErrorManager,
+        backoff: Union[float, int] = 0.0,
+        max_retries: int = 0,
+        retryable_errors: Tuple[Type[Exception], ...] = tuple(),
+    ):
         super().__init__()
         self.set_error_manager(error_manager)
         self.set_stage(name, stage)
+        self.set_retryable_stage(backoff, max_retries, retryable_errors, stage)
         # TODO next two varibales are for non-concurrent container, that is currently never used, it doesn't work
         self.__result_queue: ItemsQueue = queue.SimpleQueue()
         self._last_processed: Sequence[DataItem] = []
@@ -628,6 +670,9 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
         parallel: bool = False,
+        backoff: Union[float, int] = 0.0,
+        max_retries: int = 0,
+        retryable_errors: Tuple[Type[Exception], ...] = tuple(),
     ):
         """
         :param name: Stage name
@@ -639,7 +684,9 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
         """
-        super().__init__(name, stage, error_manager)
+        super().__init__(
+            name, stage, error_manager, backoff, max_retries, retryable_errors
+        )
         self.init_concurrency(
             queue_initializer,
             counter_initializer,
@@ -679,6 +726,9 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
         parallel: bool = False,
+        backoff: Union[float, int] = 0.0,
+        max_retries: int = 0,
+        retryable_errors: Tuple[Type[Exception], ...] = tuple(),
     ):
         """
         :param name: Stage name
@@ -690,7 +740,9 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
         """
-        super().__init__(name, stage, error_manager)
+        super().__init__(
+            name, stage, error_manager, backoff, max_retries, retryable_errors
+        )
         self.init_concurrency(
             queue_initializer,
             counter_initializer,

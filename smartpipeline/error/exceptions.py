@@ -9,13 +9,14 @@ class Error(Exception):
 
     def set_stage(self, stage: str):
         self._pipeline_stage = stage
+        self._cause = None
 
     def get_stage(self) -> Optional[str]:
         return getattr(self, "_pipeline_stage", None)
 
     def with_exception(self, exception: Exception) -> Error:
         """
-        Set the original exception (if any) that has generated this error,
+        Set the original exception (if any) that has gener ated this error,
         equivalent to `explicit exception chaining <https://www.python.org/dev/peps/pep-3134/#explicit-exception-chaining>`_
         """
         self.__cause__ = exception
@@ -40,6 +41,16 @@ class SoftError(Error):
 class CriticalError(Error):
     """
     A type of exception which usually provokes skipping the whole pipeline for an item
+    """
+
+    pass
+
+
+class RetryError(SoftError):
+    """
+    A stage processing an input item may raise a TimeoutError. If so, the stage tries to reprocess the
+    item several times, with the exponential backoff retry strategy. After several attempts a RetryError is raised and
+    that stage is skipped for that item
     """
 
     pass
