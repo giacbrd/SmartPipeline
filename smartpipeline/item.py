@@ -78,7 +78,7 @@ class DataItem:
         """
         Get the time spent by a stage (referenced by its name) for processing the item
 
-        :return: The time in seconds or None if the item has not ben processed by the stage
+        :return: The time in seconds or None if the item has not been processed by the stage
         """
         return self._timings.get(stage_name)
 
