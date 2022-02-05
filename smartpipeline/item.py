@@ -95,16 +95,15 @@ class DataItem:
         Get the unique identifier of the item.
         It is recommended to override this in order to properly compute it from the :attr:`.DataItem.payload`
         """
-        if self._id is None:
-            ret = self._payload.get("id")
+
+        ret = self._payload.get("id")
+        if ret is None:
+            ret = self._meta.get("id")
             if ret is None:
-                ret = self._meta.get("id")
-                if ret is None:
+                if self._id is None:
                     self._id = str(uuid.uuid4())
-                    return self._id
-            return ret
-        else:
-            return self._id
+                return self._id
+        return ret
 
     def set_callback(self, fun: Callable[[DataItem], Any]):
         """
