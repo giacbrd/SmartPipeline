@@ -18,7 +18,9 @@ class NameMixin:
 
     @property
     def name(self) -> str:
-        return getattr(self, "_name", f"{self.__class__.name}_{uuid.uuid4()}")
+        if getattr(self, "_name") is None:
+            self._name = f"{self.__class__.name}_{uuid.uuid4()}"
+        return self._name
 
     def __str__(self) -> str:
         return self.name

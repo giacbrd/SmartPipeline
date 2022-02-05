@@ -21,6 +21,7 @@ class DataItem:
         self._payload = {}
         self._timings = {}
         self._callback_fun = None
+        self._id = None
 
     def __str__(self) -> str:
         return f"Data item {self.id} with payload {self.payload_snippet()}..."
@@ -94,12 +95,16 @@ class DataItem:
         Get the unique identifier of the item.
         It is recommended to override this in order to properly compute it from the :attr:`.DataItem.payload`
         """
-        ret = self._payload.get("id")
-        if ret is None:
-            ret = self._meta.get("id")
+        if self._id is None:
+            ret = self._payload.get("id")
             if ret is None:
-                ret = str(uuid.uuid4())
-        return ret
+                ret = self._meta.get("id")
+                if ret is None:
+                    self._id = str(uuid.uuid4())
+                    return self._id
+            return ret
+        else:
+            return self._id
 
     def set_callback(self, fun: Callable[[DataItem], Any]):
         """

@@ -607,7 +607,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
                     self._counter,
                 )
             )
-        # wait all executors internal loop have started
+        # wait every executor internal loops have started
         while self._has_started_counter.value < self._concurrency:
             self.check_errors()
             time.sleep(CONCURRENCY_WAIT)
