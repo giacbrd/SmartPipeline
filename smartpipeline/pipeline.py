@@ -21,7 +21,7 @@ from typing import (
 )
 
 from smartpipeline.defaults import CONCURRENCY_WAIT, MAX_QUEUES_SIZE
-from smartpipeline.error.handling import ErrorManager
+from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.containers import (
     SourceContainer,
     StageContainer,
@@ -411,15 +411,16 @@ class Pipeline:
         :param concurrency: Number of concurrent stage executions, if 0 then just create the non-concurrent containers
         :param parallel: If True use multiprocessing, otherwise threads
         """
+        retry_manager = RetryManager(
+            backoff=backoff, max_retries=max_retries, retryable_errors=retryable_errors
+        )
         if concurrency <= 0:
             constructor = (
                 BatchStageContainer if isinstance(stage, BatchStage) else StageContainer
             )
             # if not concurrent we must explicitly finalize initialization of this single stage object
             stage.on_start()
-            return constructor(
-                name, stage, self._error_manager, backoff, max_retries, retryable_errors
-            )
+            return constructor(name, stage, self._error_manager, retry_manager)
         else:
             constructor = (
                 BatchConcurrentStageContainer
@@ -431,14 +432,12 @@ class Pipeline:
                     name,
                     stage,
                     self._error_manager,
+                    retry_manager,
                     self._new_mp_queue,
                     self._new_mp_counter,
                     self._new_mp_event,
                     concurrency,
                     parallel,
-                    backoff,
-                    max_retries,
-                    retryable_errors,
                 )
             else:
                 # if the stage is executed on multiple threads we must finalize initialization once,
@@ -448,14 +447,12 @@ class Pipeline:
                     name,
                     stage,
                     self._error_manager,
+                    retry_manager,
                     self._new_queue,
                     self._new_counter,
                     self._new_event,
                     concurrency,
                     parallel,
-                    backoff,
-                    max_retries,
-                    retryable_errors,
                 )
 
     def get_stage(self, name: str) -> StageType:

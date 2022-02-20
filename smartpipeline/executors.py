@@ -7,7 +7,7 @@ from typing import Sequence, Callable, Optional, List
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.utils import ConcurrentCounter, ProcessCounter
 from smartpipeline.defaults import CONCURRENCY_WAIT
-from smartpipeline.error.handling import ErrorManager
+from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import DataItem, Stop
 from smartpipeline.stage import Stage, BatchStage, ItemsQueue, StageType
 
@@ -16,7 +16,12 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 _logger = logging.getLogger(__name__)
 
 
-def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataItem:
+def process(
+    stage: Stage,
+    item: DataItem,
+    error_manager: ErrorManager,
+    retry_manager: RetryManager,
+) -> DataItem:
     """
     Execute the :meth:`.stage.Stage.process` method of a stage for an item
     """
@@ -26,7 +31,8 @@ def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataIt
     # keeping track of caught exceptions
     caught_retryable_exceptions = []
     while (
-        len(caught_retryable_exceptions) <= stage.max_retries or stage.max_retries == 0
+        len(caught_retryable_exceptions) <= retry_manager.max_retries
+        or retry_manager.max_retries == 0
     ):
         try:
             _logger.debug(f"{stage} is processing {item}")
@@ -35,13 +41,15 @@ def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataIt
             # this can't be in a finally, otherwise it would register the `error_manager.handle` time
             processed_item.set_timing(stage.name, time.time() - time1)
             return processed_item
-        except stage.retryable_errors as rexc:
+        except retry_manager.retryable_errors as rexc:
             caught_retryable_exceptions.append(rexc)
             if (
-                stage.max_retries == 0
+                retry_manager.max_retries == 0
             ):  # we have already done an attempt, no more retries
                 break  # breaking the loop and attach to the item a RetryError
-            time.sleep(pow(2, len(caught_retryable_exceptions) - 1) * stage.backoff)
+            time.sleep(
+                pow(2, len(caught_retryable_exceptions) - 1) * retry_manager.backoff
+            )
         except Exception as e:
             _logger.debug(f"{stage} has failed processing {item}")
             item.set_timing(stage.name, time.time() - time1)
@@ -57,7 +65,10 @@ def process(stage: Stage, item: DataItem, error_manager: ErrorManager) -> DataIt
 
 
 def process_batch(
-    stage: BatchStage, items: Sequence[DataItem], error_manager: ErrorManager
+    stage: BatchStage,
+    items: Sequence[DataItem],
+    error_manager: ErrorManager,
+    retry_manager: RetryManager,
 ) -> List[Optional[DataItem]]:
     """
     Execute the :meth:`.stage.BatchStage.process_batch` method of a batch stage for a batch of items
@@ -74,7 +85,8 @@ def process_batch(
     # keeping track of caught exceptions
     caught_retryable_exceptions = []
     while (
-        len(caught_retryable_exceptions) <= stage.max_retries or stage.max_retries == 0
+        len(caught_retryable_exceptions) <= retry_manager.max_retries
+        or retry_manager.max_retries == 0
     ):
         try:
             _logger.debug(f"{stage} is processing {len(to_process)} items")
@@ -86,13 +98,15 @@ def process_batch(
                 item.set_timing(stage.name, spent)
                 ret[i] = item
             return ret
-        except stage.retryable_errors as rexc:
+        except retry_manager.retryable_errors as rexc:
             caught_retryable_exceptions.append(rexc)
             if (
-                stage.max_retries == 0
+                retry_manager.max_retries == 0
             ):  # we have already done an attempt, no more retries
                 break  # breaking the loop and attach to the item a RetryError
-            time.sleep(pow(2, len(caught_retryable_exceptions) - 1) * stage.backoff)
+            time.sleep(
+                pow(2, len(caught_retryable_exceptions) - 1) * retry_manager.backoff
+            )
         except Exception as e:
             _logger.debug(f"{stage} had failures in processing {len(to_process)} items")
             spent = (time.time() - time1) / (len(to_process) or 1.0)
@@ -118,6 +132,7 @@ def stage_executor(
     in_queue: ItemsQueue,
     out_queue: ItemsQueue,
     error_manager: ErrorManager,
+    retry_manager: RetryManager,
     terminated: Event,
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
@@ -144,7 +159,7 @@ def stage_executor(
             in_queue.task_done()
         elif item is not None:
             try:
-                item = process(stage, item, error_manager)
+                item = process(stage, item, error_manager, retry_manager)
             except Exception as e:
                 raise e
             else:
@@ -161,6 +176,7 @@ def batch_stage_executor(
     in_queue: ItemsQueue,
     out_queue: ItemsQueue,
     error_manager: ErrorManager,
+    retry_manager: RetryManager,
     terminated: Event,
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
@@ -193,7 +209,7 @@ def batch_stage_executor(
                 continue
         if any(items):
             try:
-                items = process_batch(stage, items, error_manager)
+                items = process_batch(stage, items, error_manager, retry_manager)
             except Exception as e:
                 raise e
             else:
