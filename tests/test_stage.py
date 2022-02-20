@@ -3,7 +3,7 @@ from multiprocessing import Manager
 
 import pytest
 
-from smartpipeline.error.handling import ErrorManager
+from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.containers import (
     SourceContainer,
@@ -117,9 +117,9 @@ def test_stage_container():
     simple_item.payload["text"] = "hello world"
     source = SourceContainer()
     source.set(ListSource([DataItem() for _ in range(20)]))
-    previous = StageContainer("test0", TextGenerator(), ErrorManager())
+    previous = StageContainer("test0", TextGenerator(), ErrorManager(), RetryManager())
     previous.set_previous(source)
-    container = StageContainer("test1", TextReverser(), ErrorManager())
+    container = StageContainer("test1", TextReverser(), ErrorManager(), RetryManager())
     container.set_previous(previous)
     previous.process()
     assert container.count() == 0
@@ -151,6 +151,7 @@ def test_stage_container():
         "test2",
         TextReverser(),
         ErrorManager(),
+        RetryManager(),
         manager.Queue,
         lambda: ProcessCounter(manager),
         manager.Event,
@@ -177,6 +178,7 @@ def test_stage_container():
         "test2",
         TextReverser(),
         ErrorManager(),
+        RetryManager(),
         manager.Queue,
         lambda: ProcessCounter(manager),
         manager.Event,
@@ -208,9 +210,13 @@ def test_batch_stage_container1():
     simple_item.payload["text"] = "hello world"
     source = SourceContainer()
     source.set(ListSource([DataItem() for _ in range(200)]))
-    previous = BatchStageContainer("test0", BatchTextGenerator(), ErrorManager())
+    previous = BatchStageContainer(
+        "test0", BatchTextGenerator(), ErrorManager(), RetryManager()
+    )
     previous.set_previous(source)
-    container = BatchStageContainer("test1", BatchTextReverser(), ErrorManager())
+    container = BatchStageContainer(
+        "test1", BatchTextReverser(), ErrorManager(), RetryManager()
+    )
     container.set_previous(previous)
     previous.process()
     items1 = container.process()
@@ -240,7 +246,9 @@ def test_batch_stage_container1():
 
 def test_batch_stage_container2():
     source = SourceContainer()
-    container = BatchStageContainer("test1", BatchTextReverser(), ErrorManager())
+    container = BatchStageContainer(
+        "test1", BatchTextReverser(), ErrorManager(), RetryManager()
+    )
     items = [DataItem() for _ in range(10)]
     for item in items:
         item.payload["text"] = "something"
@@ -259,12 +267,15 @@ def test_batch_concurrent_stage_container1():
     manager = Manager()
     source = SourceContainer()
     source.set(ListSource([DataItem() for _ in range(200)]))
-    previous = BatchStageContainer("test0", BatchTextGenerator(), ErrorManager())
+    previous = BatchStageContainer(
+        "test0", BatchTextGenerator(), ErrorManager(), RetryManager()
+    )
     previous.set_previous(source)
     container = BatchConcurrentStageContainer(
         "test2",
         BatchTextReverser(timeout=1.0),
         ErrorManager(),
+        RetryManager(),
         manager.Queue,
         lambda: ProcessCounter(manager),
         manager.Event,
@@ -291,6 +302,7 @@ def test_batch_concurrent_stage_container1():
         "test2",
         BatchTextReverser(timeout=0.0),
         ErrorManager(),
+        RetryManager(),
         manager.Queue,
         lambda: ProcessCounter(manager),
         manager.Event,
@@ -317,6 +329,7 @@ def test_batch_concurrent_stage_container2():
         "test3",
         BatchTextGenerator(),
         ErrorManager(),
+        RetryManager(),
         manager.Queue,
         lambda: ProcessCounter(manager),
         manager.Event,

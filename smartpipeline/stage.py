@@ -37,34 +37,6 @@ class ConcurrentMixin:
         pass
 
 
-class RetryableMixin:
-    """
-    Simple mixin for setting the backoff factor, the maximum number of retries and the errors classes
-    the backoff retry strategy is applied for
-    """
-
-    def set_backoff(self, backoff: Union[float, int]):
-        self._backoff = float(backoff)
-
-    def set_max_retries(self, max_retries: int):
-        self._max_retries = max_retries
-
-    def set_retryable_errors(self, retryable_errors: Tuple[Type[Exception], ...]):
-        self._retryable_errors = retryable_errors
-
-    @property
-    def backoff(self) -> float:
-        return self._backoff
-
-    @property
-    def max_retries(self) -> int:
-        return self._max_retries
-
-    @property
-    def retryable_errors(self) -> Tuple[Type[Exception], ...]:
-        return self._retryable_errors
-
-
 class Processor(ABC):
     @abstractmethod
     def process(self, item: DataItem) -> DataItem:
@@ -89,7 +61,7 @@ class BatchProcessor(ABC):
         return items
 
 
-class Stage(NameMixin, ConcurrentMixin, Processor, RetryableMixin):
+class Stage(NameMixin, ConcurrentMixin, Processor):
     """
     Extend this class and override :meth:`.Stage.process` for defining a stage
     """
@@ -98,7 +70,7 @@ class Stage(NameMixin, ConcurrentMixin, Processor, RetryableMixin):
         return f"Stage {self.name}"
 
 
-class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor, RetryableMixin):
+class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):
     """
     Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage
     """
