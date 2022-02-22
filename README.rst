@@ -61,10 +61,5 @@ which determine the operations to perform sequentially on each data item.
 - A stage can be designed for processing batches, i.e. sequences of consecutive items, at once
 - Custom error handling can be set for logging and monitoring at stage level
 
-Future improvements:
-
-- Stages can be memory profiled
-- Processed items can be cached at stage level
-
 `Read the documentation <https://smartpipeline.readthedocs.io>`_ for an exhaustive tutorial
 and examples
