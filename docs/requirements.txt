@@ -1,2 +1,2 @@
 sphinx-autodoc-typehints
-sphinx_rtd_theme>=0.5.1
+docutils<0.17
