@@ -34,8 +34,6 @@ that can be immediately ready for production.
 Consider it as a solution for problems where task queues and workflow frameworks are overkill.
 No dependencies are required.
 
-
-
 Install
 ~~~~~~~
 
