@@ -20,7 +20,7 @@ import sphinx_rtd_theme
 # -- Project information -----------------------------------------------------
 
 project = "SmartPipeline"
-copyright = "2020, Giacomo Berardi"
+copyright = "2022, Giacomo Berardi"
 author = "Giacomo Berardi"
 
 # The full version, including alpha/beta/rc tags

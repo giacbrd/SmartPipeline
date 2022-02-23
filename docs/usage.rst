@@ -52,21 +52,23 @@ Defining your stages
 
 The stage method :meth:`.Stage.process` (or :meth:`.BatchStage.process_batch`) is where the actual
 item data processing happens.
-A stage receives a single item and returns it after processing.
-A batch stage, instead, processes multiple items at once;
-useful when the computation it must perform can exploit working on more data per call,
-like on a HTTP API that accepts lists of values,
-or on a machine learning model that is optimized for predicting multiple samples.
+A stage receives a single item and returns it, enriched with stage computations.
+
+A batch stage, instead, processes multiple items at once.
+This is useful when the computation can exploit handling more data instead of single items,
+e.g.: on a HTTP API that accepts lists of values, one would benefit by making less calls;
+on a machine learning model that is optimized for predicting multiple samples.
+
 Concurrent stages will call the method on different subsets of the data flow, concurrently.
 
 :class:`.DataItem` data is kept in the :attr:`.DataItem.payload`, a read-only dictionary.
 Other methods allow to enrich an item with metadata, extra stuff as temporary data or descriptors of the item,
 so as to isolate in the payload all and only the data the pipeline produces.
 If the pipeline is going to work on more processes (see later the ``parallel`` parameter)
-a item must me serializable with `pickle <https://docs.python.org/3/library/pickle.html>`_ module,
+an item must me serializable with `pickle <https://docs.python.org/3/library/pickle.html>`_ module,
 both its payload and metadata.
 
-A simple example of a stage that takes the previously generated items and substitute specific
+A simple example of a stage that takes the items generated in the previous example and substitutes specific
 patterns in the string with a fixed string.
 
 .. code-block:: python
@@ -87,9 +89,8 @@ patterns in the string with a fixed string.
 Error handling
 --------------
 
-From the previous code snippet: we also raise a :class:`.SoftError` in case no modifications are made to the content of the item.
-The :class:`.ErrorManager` will take care of this but the item will still be processed by next steps in
-the pipeline.
+In the previous code snippet we raise a :class:`.SoftError` in case no modifications are made to the content of the item.
+The :class:`.ErrorManager` will take care of this but the item will still be processed by the next stages in the pipeline.
 By extending :class:`.ErrorManager` you can define custom handling for these kind of "soft" errors,
 but also for all other exceptions.
 
@@ -181,7 +182,7 @@ A different example in which we process 100 single items concurrently with :meth
         print(pipeline.get_item().payload["text"])
 
 It is possible to use :meth:`.Pipeline.process` when no stage is concurrent,
-each item will be processed and returned directly by the method.
+each item will be processed and returned directly by this method.
 
 A further example
 -----------------
@@ -194,7 +195,7 @@ Here the developer has defined his own custom error manager and obviously the st
 The source must be usually defined, here a straightforward ready one (from the codebase) has been used,
 together with a custom data item type that provides a file reference.
 
-More, executables examples can be found in the codebase directory ``examples``.
+More, executables examples can be found in the root sub-directory ``examples``.
 
 .. code-block:: python
 
