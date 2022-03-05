@@ -54,8 +54,8 @@ class CriticalError(Error):
 
 class RetryError(SoftError):
     """
-    A stage processing an input item may raise a TimeoutError. If so, the stage tries to reprocess the
-    item several times, with the exponential backoff retry strategy. After several attempts a RetryError is raised and
+    A stage processing an input item may raise some Exception for which the stage must try to reprocess the item using
+    an exponential backoff retry strategy. After several attempts a RetryError is raised and
     that stage is skipped for that item
     """
 
