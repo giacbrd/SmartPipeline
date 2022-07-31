@@ -42,6 +42,6 @@ setup(
     author="Giacomo Berardi",
     author_email="barnets@gmail.com",
     packages=find_packages(exclude=["tests"]),
-    tests_require=["pytest"],
+    tests_require=["pytest", "black", "flake8"],
     python_requires=">=3.7",
 )

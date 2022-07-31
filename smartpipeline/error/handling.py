@@ -101,20 +101,19 @@ class ErrorManager:
 class RetryManager:
     """
     This class encapsulate the parameters used to handle the retry strategy in case some kind of error are raise by the stage
-
-    Attributes:
-        backoff: weight for the exponential back-off strategy
-        max_retries: maximum number of attempts for a which a stage is run in case of one of the `retryable_errors` is
-                      raised during its execution
-        retryable_errors: tuple of errors types which the retry strategy is applied for
     """
 
     def __init__(
         self,
-        backoff: Union[float, int] = 0,
-        max_retries: int = 0,
         retryable_errors: Tuple[Type[Exception], ...] = tuple(),
+        max_retries: int = 0,
+        backoff: Union[float, int] = 0,
     ):
+        """
+        :param retryable_errors: tuple of errors types which the retry strategy is applied for
+        :param max_retries: maximum number of attempts for a which a stage is run in case of one of the `retryable_errors` is raised during its execution
+        :param backoff: weight for the exponential back-off strategy
+        """
         self._backoff = backoff
         self._max_retries = max_retries
         self._retryable_errors = retryable_errors

@@ -399,9 +399,9 @@ class Pipeline:
         stage: StageType,
         concurrency: int,
         parallel: bool,
-        backoff: Union[float, int],
-        max_retries: int,
         retryable_errors: Tuple[Type[Exception], ...],
+        max_retries: int,
+        backoff: Union[float, int],
     ) -> BaseContainer:
         """
         Get a new container instance according to the pipeline configuration
@@ -410,6 +410,9 @@ class Pipeline:
         :param stage: A stage instance
         :param concurrency: Number of concurrent stage executions, if 0 then just create the non-concurrent containers
         :param parallel: If True use multiprocessing, otherwise threads
+        :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. When the maximum number of retries is hit, a :class:`.error.exceptions.RetryError` is raised
+        :param max_retries: maximum number of retries for the stage before raising a RetryError(SoftError) (default 0)
+        :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
         """
         retry_manager = RetryManager(
             backoff=backoff, max_retries=max_retries, retryable_errors=retryable_errors
@@ -467,9 +470,9 @@ class Pipeline:
         stage: StageType,
         concurrency: int = 0,
         parallel: bool = False,
-        backoff: Union[float, int] = 0.0,
-        max_retries: int = 0,
         retryable_errors: Tuple[Type[Exception], ...] = tuple(),
+        max_retries: int = 0,
+        backoff: Union[float, int] = 0.0,
     ) -> Pipeline:
         """
         Append a stage to the pipeline just after the last one appended, or after the source if it is the first stage
@@ -478,11 +481,9 @@ class Pipeline:
         :param stage: Instance of a stage
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
         :param parallel: If True use multiprocessing, otherwise threads
-        :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of
-        the exceptions declared in `retryable_errors` param (default 0.0)
+        :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. When the maximum number of retries is hit, a :class:`.error.exceptions.RetryError` is raised
         :param max_retries: maximum number of retries for the stage before raising a RetryError(SoftError) (default 0)
-        :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. When the
-         maximum number of retries is hit, a RetryError(SoftError) is raised
+        :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
         """
         self._executors_ready = False
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
@@ -490,9 +491,9 @@ class Pipeline:
             parallel = False
             concurrency = 1
         self._check_stage_name(name)
-        self._check_retries_params(backoff, max_retries, retryable_errors)
+        self._check_retries_params(retryable_errors, max_retries, backoff)
         container = self._build_container(
-            name, stage, concurrency, parallel, backoff, max_retries, retryable_errors
+            name, stage, concurrency, parallel, retryable_errors, max_retries, backoff
         )
         if concurrency > 0:
             # if it is concurrent and it is the first stage, make the source working on a output queue
@@ -512,9 +513,9 @@ class Pipeline:
         kwargs: Mapping = None,
         concurrency: int = 0,
         parallel: bool = False,
-        backoff: Union[float, int] = 0.0,
-        max_retries: int = 0,
         retryable_errors: Tuple[Type[Exception], ...] = tuple(),
+        max_retries: int = 0,
+        backoff: Union[float, int] = 0.0,
     ) -> Pipeline:
         """
         Append a stage class to the pipeline just after the last one appended, or after the source if it is the first stage.
@@ -526,11 +527,9 @@ class Pipeline:
         :param kwargs: Dictionary of keyed arguments for the stage constructor
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
         :param parallel: If True use multiprocessing, otherwise threads
-        :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of
-        the exceptions declared in `retryable_errors` param (default 0.0)
+        :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. When the maximum number of retries is hit, a :class:`.error.exceptions.RetryError` is raised
         :param max_retries: maximum number of retries for the stage before raising a RetryError(SoftError) (default 0)
-        :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. When the
-         maximum number of retries is hit, a RetryError(SoftError) is raised
+        :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
         """
         self._executors_ready = False
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
@@ -542,6 +541,7 @@ class Pipeline:
         if args is None:
             args = []
         self._check_stage_name(name)
+        self._check_retries_params(retryable_errors, max_retries, backoff)
         # if it is concurrent and it is the first stage, make the source working on a output queue
         if concurrency > 0 and not self._containers:
             self._enqueue_source = True
@@ -557,9 +557,9 @@ class Pipeline:
                 stage,
                 concurrency,
                 parallel,
-                backoff,
-                max_retries,
                 retryable_errors,
+                max_retries,
+                backoff,
             )
             self._wait_for_previous(container, last_stage_name)
             self._containers[name] = container
@@ -612,9 +612,9 @@ class Pipeline:
 
     @staticmethod
     def _check_retries_params(
-        backoff: Union[float, int],
-        max_retries: int,
         retryable_errors: Tuple[Type[Exception], ...],
+        max_retries: int,
+        backoff: Union[float, int],
     ):
         """
         Check the values used to apply the retry strategy for a stage

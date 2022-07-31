@@ -126,6 +126,9 @@ while with concurrency Python queues are involved, so items may be serialized.
 If you intend to define stages that can run on multiple processes,
 please read :ref:`concurrency-section` about further, important details.
 
+Through :meth:`.Pipeline.append_stage` one can also define retry policy on some specific errors,
+(see method documentation for further details).
+
 Another method is :meth:`.Pipeline.append_stage_concurrently`,
 which allows to execute stages creation concurrently with other stages appending calls.
 Useful when long tasks must be executed at creation,
@@ -192,7 +195,7 @@ extracts texts and finds VAT codes occurrences.
 Finally it indexes the result in an Elasticsearch cluster.
 Errors are eventually logged in the Elasticsearch cluster.
 Here the developer has defined his own custom error manager and obviously the stages.
-The source must be usually defined, here a straightforward ready one (from the codebase) has been used,
+The source must be usually defined, here a trivial one (from the codebase) has been used,
 together with a custom data item type that provides a file reference.
 
 More, executables examples can be found in the root sub-directory ``examples``.
@@ -307,7 +310,7 @@ because the `GIL <https://en.wikipedia.org/wiki/Global_interpreter_lock>`_).
 When we submit a Python function to a spawned/forked process we are actually copying memory from the current process
 to the new one, because OS processes cannot share memory, differently from multi-threading.
 In order to do this (at least for spawned processes) Python must serialize data to pass to the new process.
-Even communication between processes involve copying data from one to another (e.g. through queues).
+Even communication between processes involves copying data from one to another (e.g. through queues).
 
 Therefore, if we decide to run a pipeline stage concurrently and parallel,
 it is going to be copied in each process.
@@ -325,12 +328,12 @@ Also for :class:`.ErrorManager` it is necessary to define :meth:`.ErrorManager.o
 because the manager must be coupled with a stage when it is copied.
 
 Let's take back the previous examples, the error manger and a stage needs to be modified if we want to run the stage in
-parallel. The inconvenience is the Elasticsearch client,
+parallel. The inconvenience here is the Elasticsearch client,
 which is not serializable (try it by yourself, e.g., :code:`pickle.dumps(Elasticsearch('localhost'))`).
 Moreover, an Elasticsearch client open a connection, consequently it is obvious we desire an independent connection in
 each process, sharing one is unpractical.
 
-This is how we "split" the two classes ``__init__``
+This is how we refactor the original ``__init__`` methods
 
 .. code-block:: python
 
