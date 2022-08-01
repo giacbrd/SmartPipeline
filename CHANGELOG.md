@@ -1,5 +1,11 @@
 # SmartPipeline changelog
 
+## Version 0.5.0 [2022-08-01]
+
+- retry policy on stage failures on items
+- `on_end` method on stages called at pipeline termination
+- documentation fixes
+
 ## Version 0.4.0 [2020-06-22]
 
 - critical bug fixes on concurrency
