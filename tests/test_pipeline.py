@@ -356,28 +356,35 @@ def test_concurrency_errors():
 
 
 def test_concurrent_constructions():
-    """test `on_start` method"""
+    """test `on_start` and `on_end` methods"""
+    serializable_stage = SerializableStage()
+    error_manager = SerializableErrorManager()
     pipeline = (
         _pipeline()
-        .set_error_manager(SerializableErrorManager())
+        .set_error_manager(error_manager)
         .set_source(RandomTextSource(10))
         .append_stage("reverser1", TextReverser(), concurrency=1, parallel=True)
-        .append_stage("stage", SerializableStage(), concurrency=2, parallel=True)
+        .append_stage("stage", serializable_stage, concurrency=2, parallel=True)
         .append_stage("reverser2", TextReverser())
         .append_stage("error", ErrorStage(), concurrency=2, parallel=True)
         .build()
     )
     for item in pipeline.run():
+        assert serializable_stage._file is None
         assert item.payload.get("file")
         assert item.get_timing("reverser1")
         assert item.get_timing("reverser2")
         assert item.has_errors()
     assert pipeline.count == 10
+    assert serializable_stage._file is None
+    assert error_manager.is_closed()
+    serializable_stage = SerializableStage()
+    error_manager = SerializableErrorManager()
     pipeline = (
         _pipeline()
-        .set_error_manager(SerializableErrorManager())
+        .set_error_manager(error_manager)
         .set_source(RandomTextSource(10))
-        .append_stage("stage", SerializableStage())
+        .append_stage("stage", serializable_stage)
         .append_stage("reverser1", TextReverser(), concurrency=1, parallel=True)
         .append_stage("reverser2", TextReverser(), concurrency=1, parallel=True)
         .append_stage("error", ErrorStage())
@@ -389,6 +396,8 @@ def test_concurrent_constructions():
         assert item.get_timing("reverser2")
         assert item.has_errors()
     assert pipeline.count == 10
+    assert serializable_stage.is_closed()
+    assert error_manager.is_closed()
     with pytest.raises(IOError):
         (
             _pipeline()
@@ -399,6 +408,18 @@ def test_concurrent_constructions():
             )
             .build()
         )
+    error_manager = SerializableErrorManager().raise_on_critical_error()
+    with pytest.raises(IOError):
+        pipeline = (
+            _pipeline()
+            .set_error_manager(error_manager)
+            .set_source(RandomTextSource(10))
+            .append_stage("stage", CriticalIOErrorStage(), concurrency=1, parallel=True)
+            .build()
+        )
+        for item in pipeline.run():
+            pass
+    assert error_manager.is_closed()
 
 
 def test_concurrent_initialization():

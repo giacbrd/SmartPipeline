@@ -209,6 +209,12 @@ class SerializableStage(Stage):
     def on_start(self):
         self._file = open(__file__)
 
+    def on_end(self):
+        self._file.close()
+
+    def is_closed(self):
+        return self._file.closed
+
     def process(self, item: DataItem):
         if self._file is not None and self._file.name == __file__:
             item.payload["file"] = self._file.name
@@ -232,6 +238,12 @@ class SerializableErrorManager(ErrorManager):
 
     def on_start(self):
         self._file = open(__file__)
+
+    def on_end(self):
+        self._file.close()
+
+    def is_closed(self):
+        return self._file.closed
 
 
 def wait_service(timeout, predicate, args):
