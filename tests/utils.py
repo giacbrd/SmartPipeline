@@ -2,6 +2,7 @@ import random
 import time
 from datetime import datetime
 from time import sleep
+from typing import List, Type
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager
@@ -23,6 +24,10 @@ TEXT_SAMPLES = (
 
 def random_text():
     return random.choice(TEXT_SAMPLES)
+
+
+class CustomException(Exception):
+    pass
 
 
 class RandomTextSource(Source):
@@ -77,6 +82,19 @@ class TextDuplicator(Stage):
         return item
 
 
+class CustomizableBrokenStage(Stage):
+    def __init__(self, exceptions_to_raise: List[Type[Exception]]):
+        self._exceptions_to_raise = exceptions_to_raise
+        self._last_processed = 0
+
+    def process(self, item: DataItem):
+        to_raise = self._exceptions_to_raise[
+            self._last_processed % len(self._exceptions_to_raise)
+        ]
+        self._last_processed += 1
+        raise to_raise("exception")
+
+
 class TextExtractor(Stage):
     def process(self, item: FilePathItem):
         with open(item.path) as f:
@@ -128,6 +146,20 @@ class BatchTextDuplicator(BatchStage):
         return items
 
 
+class CustomizableBrokenBatchStage(BatchStage):
+    def __init__(self, size, timeout, exceptions_to_raise: List[Type[Exception]]):
+        super().__init__(size, timeout)
+        self._exceptions_to_raise = exceptions_to_raise
+        self._last_processed = 0
+
+    def process_batch(self, items):
+        to_raise = self._exceptions_to_raise[
+            self._last_processed % len(self._exceptions_to_raise)
+        ]
+        self._last_processed += 1
+        raise to_raise("exception")
+
+
 class TimeWaster(Stage):
     def __init__(self, time=1):
         self._time = time
@@ -177,6 +209,12 @@ class SerializableStage(Stage):
     def on_start(self):
         self._file = open(__file__)
 
+    def on_end(self):
+        self._file.close()
+
+    def is_closed(self):
+        return self._file.closed
+
     def process(self, item: DataItem):
         if self._file is not None and self._file.name == __file__:
             item.payload["file"] = self._file.name
@@ -200,6 +238,12 @@ class SerializableErrorManager(ErrorManager):
 
     def on_start(self):
         self._file = open(__file__)
+
+    def on_end(self):
+        self._file.close()
+
+    def is_closed(self):
+        return self._file.closed
 
 
 def wait_service(timeout, predicate, args):

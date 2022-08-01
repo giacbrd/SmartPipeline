@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from typing import Optional, Union, Any
+from typing import Optional, Union, Any, Tuple, Type
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.item import DataItem
@@ -43,6 +43,12 @@ class ErrorManager:
         The error manager in the executor is a copy of the original,
         by overriding this method one can initialize variables specifically for the copies, that is mandatory
         when they are not serializable.
+        """
+        pass
+
+    def on_end(self) -> Any:
+        """
+        Called when the pipeline terminates, useful for executing closing operations (e.g. on files)
         """
         pass
 
@@ -96,3 +102,36 @@ class ErrorManager:
                 ex = self._check_critical(er)
                 if ex:
                     return ex
+
+
+class RetryManager:
+    """
+    This class encapsulate the parameters used to handle the retry strategy in case some kind of error are raise by the stage
+    """
+
+    def __init__(
+        self,
+        retryable_errors: Tuple[Type[Exception], ...] = tuple(),
+        max_retries: int = 0,
+        backoff: Union[float, int] = 0,
+    ):
+        """
+        :param retryable_errors: tuple of errors types which the retry strategy is applied for
+        :param max_retries: maximum number of attempts for a which a stage is run in case of one of the `retryable_errors` is raised during its execution
+        :param backoff: weight for the exponential back-off strategy
+        """
+        self._backoff = backoff
+        self._max_retries = max_retries
+        self._retryable_errors = retryable_errors
+
+    @property
+    def backoff(self) -> float:
+        return self._backoff
+
+    @property
+    def max_retries(self) -> int:
+        return self._max_retries
+
+    @property
+    def retryable_errors(self) -> Tuple[Type[Exception], ...]:
+        return self._retryable_errors

@@ -5,6 +5,7 @@ import traceback
 
 import pytest
 
+from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.pipeline import Pipeline
 from tests.utils import (
@@ -18,6 +19,8 @@ from tests.utils import (
     CriticalIOErrorStage,
     SerializableErrorManager,
     ErrorSerializableStage,
+    CustomizableBrokenStage,
+    CustomException,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -353,28 +356,35 @@ def test_concurrency_errors():
 
 
 def test_concurrent_constructions():
-    """test `on_start` method"""
+    """test `on_start` and `on_end` methods"""
+    serializable_stage = SerializableStage()
+    error_manager = SerializableErrorManager()
     pipeline = (
         _pipeline()
-        .set_error_manager(SerializableErrorManager())
+        .set_error_manager(error_manager)
         .set_source(RandomTextSource(10))
         .append_stage("reverser1", TextReverser(), concurrency=1, parallel=True)
-        .append_stage("stage", SerializableStage(), concurrency=2, parallel=True)
+        .append_stage("stage", serializable_stage, concurrency=2, parallel=True)
         .append_stage("reverser2", TextReverser())
         .append_stage("error", ErrorStage(), concurrency=2, parallel=True)
         .build()
     )
     for item in pipeline.run():
+        assert serializable_stage._file is None
         assert item.payload.get("file")
         assert item.get_timing("reverser1")
         assert item.get_timing("reverser2")
         assert item.has_errors()
     assert pipeline.count == 10
+    assert serializable_stage._file is None
+    assert error_manager.is_closed()
+    serializable_stage = SerializableStage()
+    error_manager = SerializableErrorManager()
     pipeline = (
         _pipeline()
-        .set_error_manager(SerializableErrorManager())
+        .set_error_manager(error_manager)
         .set_source(RandomTextSource(10))
-        .append_stage("stage", SerializableStage())
+        .append_stage("stage", serializable_stage)
         .append_stage("reverser1", TextReverser(), concurrency=1, parallel=True)
         .append_stage("reverser2", TextReverser(), concurrency=1, parallel=True)
         .append_stage("error", ErrorStage())
@@ -386,6 +396,8 @@ def test_concurrent_constructions():
         assert item.get_timing("reverser2")
         assert item.has_errors()
     assert pipeline.count == 10
+    assert serializable_stage.is_closed()
+    assert error_manager.is_closed()
     with pytest.raises(IOError):
         (
             _pipeline()
@@ -396,6 +408,18 @@ def test_concurrent_constructions():
             )
             .build()
         )
+    error_manager = SerializableErrorManager().raise_on_critical_error()
+    with pytest.raises(IOError):
+        pipeline = (
+            _pipeline()
+            .set_error_manager(error_manager)
+            .set_source(RandomTextSource(10))
+            .append_stage("stage", CriticalIOErrorStage(), concurrency=1, parallel=True)
+            .build()
+        )
+        for item in pipeline.run():
+            pass
+    assert error_manager.is_closed()
 
 
 def test_concurrent_initialization():
@@ -692,3 +716,212 @@ def test_single_items(items_generator_fx):
     assert result.id == item.id
     assert result.payload["text"] == item.payload["text"]
     assert len(result.payload.keys()) > len(item.payload.keys())
+
+
+def test_retryable_stage(items_generator_fx):
+    # default behaviour
+    item = next(items_generator_fx)
+    pipeline = (
+        Pipeline()
+        .append_stage("reverser0", TextReverser())
+        .append_stage("broken_stage", CustomizableBrokenStage([ValueError]))
+        .append_stage("reverser1", TextReverser())
+    )
+    item = pipeline.process(item)
+    assert not item.has_errors()  # no soft errors
+    critical_errors = list(item.critical_errors())
+    assert len(critical_errors) == 1 and isinstance(
+        critical_errors[0].get_exception(), ValueError
+    )
+
+    # not defining any error to which retry on, so the pipeline behaviour should not change
+    item = next(items_generator_fx)
+    pipeline = (
+        Pipeline()
+        .append_stage("reverser0", TextReverser())
+        .append_stage(
+            "broken_stage",
+            CustomizableBrokenStage([ValueError]),
+            backoff=1,
+            max_retries=1,
+        )
+        .append_stage("reverser1", TextReverser())
+        .build()
+    )
+    item = pipeline.process(item)
+    assert not item.has_errors()  # no soft errors
+    critical_errors = list(item.critical_errors())
+    assert len(critical_errors) == 1 and isinstance(
+        critical_errors[0].get_exception(), ValueError
+    )
+
+    # defining some retryable_errors for which the stage is force to try the reprocessing of the item
+    item = next(items_generator_fx)
+    pipeline = (
+        Pipeline()
+        .append_stage("reverser0", TextReverser())
+        .append_stage(
+            "broken_stage",
+            CustomizableBrokenStage([ValueError]),
+            backoff=1,
+            max_retries=1,
+            retryable_errors=(ValueError,),
+        )
+        .append_stage("reverser1", TextReverser())
+        .build()
+    )
+    item = pipeline.process(item)
+    assert not item.has_critical_errors()
+    soft_errors = list(item.soft_errors())
+    assert len(soft_errors) == 2 and all(
+        isinstance(err, RetryError) and isinstance(err.get_exception(), ValueError)
+        for err in soft_errors
+    )
+
+    # mixing retryable and critical errors
+    item = next(items_generator_fx)
+    pipeline = (
+        Pipeline()
+        .append_stage("reverser0", TextReverser())
+        .append_stage(
+            "broken_stage0",
+            CustomizableBrokenStage([CustomException]),
+            backoff=1,
+            max_retries=1,
+            retryable_errors=(ValueError, CustomException),
+        )
+        .append_stage("reverser1", TextReverser())
+        .append_stage(
+            "broken_stage1",
+            CustomizableBrokenStage([CustomException]),
+            backoff=1,
+            max_retries=2,
+            retryable_errors=(ValueError,),
+        )
+        .build()
+    )
+
+    item = pipeline.process(item)
+    critical_errors = list(item.critical_errors())
+    assert len(critical_errors) == 1 and (
+        critical_errors[0].get_exception(),
+        CustomException,
+    )
+    soft_errors = list(item.soft_errors())
+    assert len(soft_errors) == 2 and all(
+        isinstance(err, RetryError) and isinstance(err.get_exception(), CustomException)
+        for err in soft_errors
+    )
+
+
+def test_retry_on_different_errors(items_generator_fx):
+    item = next(items_generator_fx)
+    pipeline = (
+        Pipeline()
+        .append_stage("reverser0", TextReverser())
+        .append_stage(
+            "broken_stage",
+            CustomizableBrokenStage([CustomException, ValueError]),
+            backoff=0,
+            max_retries=2,
+            retryable_errors=(CustomException, ValueError),
+        )
+        .append_stage("reverser1", TextReverser())
+        .build()
+    )
+    item = pipeline.process(item)
+    soft_errors = list(item.soft_errors())
+    assert len(soft_errors) == 3
+    assert all(
+        isinstance(err, RetryError) and err.get_stage() == "broken_stage"
+        for err in soft_errors
+    )
+    assert isinstance(soft_errors[0].get_exception(), CustomException) and isinstance(
+        soft_errors[2].get_exception(), CustomException
+    )
+    assert isinstance(soft_errors[1].get_exception(), ValueError)
+
+
+def test_exponential_backoff_retry_strategy(items_generator_fx):
+    item = next(items_generator_fx)
+    pipeline = (
+        Pipeline()
+        .append_stage("reverser0", TextReverser())
+        .append_stage(
+            "broken_stage",
+            CustomizableBrokenStage([CustomException]),
+            backoff=1,
+            max_retries=0,
+            retryable_errors=(CustomException,),
+        )
+        .append_stage("reverser1", TextReverser())
+        .build()
+    )
+    item = pipeline.process(item)
+    assert item.get_timing("broken_stage") < 1
+    item = next(items_generator_fx)
+    pipeline = (
+        Pipeline()
+        .append_stage("reverser0", TextReverser())
+        .append_stage(
+            "broken_stage",
+            CustomizableBrokenStage([CustomException]),
+            backoff=1,
+            max_retries=3,
+            retryable_errors=(CustomException,),
+        )
+        .append_stage("reverser1", TextReverser())
+        .build()
+    )
+    item = pipeline.process(item)
+    assert 15 <= item.get_timing("broken_stage") <= 16
+    soft_errors = list(item.soft_errors())
+    assert len(soft_errors) == 4
+    assert all(
+        isinstance(err, RetryError) and isinstance(err.get_exception(), CustomException)
+        for err in soft_errors
+    )
+
+
+def test_concurrent_run_with_retryable_stages():
+    pipeline = (
+        _pipeline()
+        .set_source(RandomTextSource(2))
+        .append_stage("reverser0", TextReverser(), concurrency=2)
+        .append_stage(
+            "broken_stage1",
+            CustomizableBrokenStage([ValueError]),
+            concurrency=2,
+            backoff=1,
+            max_retries=2,
+            retryable_errors=(ValueError,),
+        )
+        .append_stage(
+            "broken_stage2",
+            CustomizableBrokenStage([TypeError]),
+            concurrency=2,
+            parallel=True,
+            backoff=1,
+            max_retries=1,
+            retryable_errors=(TypeError,),
+        )
+        .build()
+    )
+    items = list(pipeline.run())
+    for item in items:
+        assert not item.has_critical_errors()
+        soft_errors = list(item.soft_errors())
+        soft_errors_broken_stage_1 = [
+            err for err in soft_errors if err.get_stage() == "broken_stage1"
+        ]
+        soft_errors_broken_stage_2 = [
+            err for err in soft_errors if err.get_stage() == "broken_stage2"
+        ]
+        assert len(soft_errors_broken_stage_1) == 3 and all(
+            isinstance(err, RetryError) and isinstance(err.get_exception(), ValueError)
+            for err in soft_errors_broken_stage_1
+        )
+        assert len(soft_errors_broken_stage_2) == 2 and all(
+            isinstance(err, RetryError) and isinstance(err.get_exception(), TypeError)
+            for err in soft_errors_broken_stage_2
+        )

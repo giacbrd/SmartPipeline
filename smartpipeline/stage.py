@@ -1,7 +1,6 @@
 import uuid
 from abc import ABC, abstractmethod
-from typing import Sequence, Union, Any, Optional
-from queue import Queue
+from typing import Sequence, Union, Any, Optional, Tuple, Type
 
 from smartpipeline.item import DataItem
 
@@ -18,7 +17,9 @@ class NameMixin:
 
     @property
     def name(self) -> str:
-        return getattr(self, "_name", f"{self.__class__.name}_{uuid.uuid4()}")
+        if getattr(self, "_name", None) is None:
+            self._name = f"{self.__class__.name}_{uuid.uuid4()}"
+        return self._name
 
     def __str__(self) -> str:
         return self.name
@@ -32,6 +33,14 @@ class ConcurrentMixin:
         The stage in the executor is a copy of the original,
         by overriding this method one can initialize variables specifically for the copies, that is mandatory
         when they are not serializable.
+        """
+        pass
+
+
+class CloseableMixin:
+    def on_end(self) -> Any:
+        """
+        Called when the stage terminates, useful for executing closing operations (e.g. on files)
         """
         pass
 
@@ -60,7 +69,7 @@ class BatchProcessor(ABC):
         return items
 
 
-class Stage(NameMixin, ConcurrentMixin, Processor):
+class Stage(NameMixin, ConcurrentMixin, CloseableMixin, Processor):
     """
     Extend this class and override :meth:`.Stage.process` for defining a stage
     """
@@ -69,7 +78,7 @@ class Stage(NameMixin, ConcurrentMixin, Processor):
         return f"Stage {self.name}"
 
 
-class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):
+class BatchStage(NameMixin, ConcurrentMixin, CloseableMixin, BatchProcessor):
     """
     Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage
     """

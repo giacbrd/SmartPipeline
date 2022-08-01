@@ -10,7 +10,6 @@ from typing import IO, Optional, Sequence
 
 from elasticsearch import Elasticsearch
 
-from smartpipeline.error.exceptions import SoftError
 from smartpipeline.item import DataItem
 from smartpipeline.pipeline import Pipeline
 from smartpipeline.stage import Source, BatchStage, Stage
@@ -18,7 +17,6 @@ from smartpipeline.stage import Source, BatchStage, Stage
 logging.basicConfig(
     format="%(asctime)s - %(message)s", level=logging.INFO,
 )
-
 
 _logger = logging.getLogger(__name__)
 
@@ -40,6 +38,7 @@ class FileIter(Source):
             self.stop()
 
 
+# by using a batch stage we can retrieve multiple items at once, reducing ES calls
 class ESRetrieve(BatchStage):
     def __init__(self, es_hosts: str, es_indices: str):
         super().__init__(size=10, timeout=5)

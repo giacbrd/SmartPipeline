@@ -6,17 +6,16 @@ import concurrent
 import logging
 import queue
 import time
-from queue import Queue
 from abc import ABC, abstractmethod
 from concurrent.futures import wait, Executor, Future
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event
-from typing import Sequence, Optional, Callable
+from typing import Sequence, Optional, Callable, Union, Tuple, Type
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.utils import ConcurrentCounter
-from smartpipeline.error.handling import ErrorManager
+from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.executors import (
     process,
     process_batch,
@@ -172,6 +171,19 @@ class NamedStageMixin:
         return self._stage
 
 
+class RetryableMixin:
+    """
+    A mixin for basic containers of retryable stages
+    """
+
+    def set_retry_manager(self, retry_manager: RetryManager):
+        self._retry_manager = retry_manager
+
+    @property
+    def retry_manager(self) -> RetryManager:
+        return self._retry_manager
+
+
 class SourceContainer(BaseContainer):
     """
     A container specific for sources
@@ -304,15 +316,26 @@ class SourceContainer(BaseContainer):
 
 
 class StageContainer(
-    BaseContainer, NamedStageMixin, FallibleMixin, ConnectedStageMixin
+    BaseContainer,
+    NamedStageMixin,
+    FallibleMixin,
+    ConnectedStageMixin,
+    RetryableMixin,
 ):
     """
     The standard container for basic stages
     """
 
-    def __init__(self, name: str, stage: Stage, error_manager: ErrorManager):
+    def __init__(
+        self,
+        name: str,
+        stage: Stage,
+        error_manager: ErrorManager,
+        retry_manager: RetryManager,
+    ):
         super().__init__()
         self.set_error_manager(error_manager)
+        self.set_retry_manager(retry_manager)
         self.set_stage(name, stage)
         self._last_processed = None
 
@@ -324,7 +347,7 @@ class StageContainer(
         if isinstance(item, Stop):
             self.stop()
         elif item is not None:
-            item = process(self.stage, item, self._error_manager)
+            item = process(self.stage, item, self.error_manager, self.retry_manager)
         self._put_item(item)
         return item
 
@@ -360,15 +383,26 @@ class StageContainer(
 
 
 class BatchStageContainer(
-    BaseContainer, NamedStageMixin, FallibleMixin, ConnectedStageMixin
+    BaseContainer,
+    NamedStageMixin,
+    FallibleMixin,
+    ConnectedStageMixin,
+    RetryableMixin,
 ):
     """
     Container for batch stages
     """
 
-    def __init__(self, name: str, stage: BatchStage, error_manager: ErrorManager):
+    def __init__(
+        self,
+        name: str,
+        stage: BatchStage,
+        error_manager: ErrorManager,
+        retry_manager: RetryManager,
+    ):
         super().__init__()
         self.set_error_manager(error_manager)
+        self.set_retry_manager(retry_manager)
         self.set_stage(name, stage)
         # TODO next two varibales are for non-concurrent container, that is currently never used, it doesn't work
         self.__result_queue: ItemsQueue = queue.SimpleQueue()
@@ -387,7 +421,9 @@ class BatchStageContainer(
             elif item is not None:
                 items.append(item)
         if any(items):
-            items = process_batch(self.stage, items, self.error_manager)
+            items = process_batch(
+                self.stage, items, self.error_manager, self.retry_manager
+            )
             self._put_item(items)
         return items + extra_items
 
@@ -579,6 +615,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         in_queue: ItemsQueue,
         out_queue: ItemsQueue,
         error_manager: ErrorManager,
+        retry_manager: RetryManager,
     ):
         """
         Start the concurrent execution of stage processing.
@@ -602,12 +639,13 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
                     in_queue,
                     out_queue,
                     error_manager,
+                    retry_manager,
                     self._terminate_event,
                     self._has_started_counter,
                     self._counter,
                 )
             )
-        # wait all executors internal loop have started
+        # wait every executor internal loops have started
         while self._has_started_counter.value < self._concurrency:
             self.check_errors()
             time.sleep(CONCURRENCY_WAIT)
@@ -623,6 +661,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         name: str,
         stage: Stage,
         error_manager: ErrorManager,
+        retry_manager: RetryManager,
         queue_initializer: QueueInitializer,
         counter_initializer: CounterInitializer,
         terminate_event_initializer: EventInitializer,
@@ -632,14 +671,15 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         """
         :param name: Stage name
         :param stage: Stage instance
-        :param error_manager: Error manager instance
+        :param error_manager: ErrorManager instance
+        :param retry_manager: RetryManager instance
         :param queue_initializer: Constructor for output, and eventually input, queue
         :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage executors that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
         """
-        super().__init__(name, stage, error_manager)
+        super().__init__(name, stage, error_manager, retry_manager)
         self.init_concurrency(
             queue_initializer,
             counter_initializer,
@@ -661,6 +701,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
             self._previous_queue,
             self.out_queue,
             self.error_manager,
+            self.retry_manager,
         )
 
 
@@ -674,6 +715,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         name: str,
         stage: BatchStage,
         error_manager: ErrorManager,
+        retry_manager: RetryManager,
         queue_initializer: QueueInitializer,
         counter_initializer: CounterInitializer,
         terminate_event_initializer: EventInitializer,
@@ -683,14 +725,15 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         """
         :param name: Stage name
         :param stage: Stage instance
-        :param error_manager: Error manager instance
+        :param error_manager: ErrorManager instance
+        :param retry_manager: RetryManager instance
         :param queue_initializer: Constructor for output, and eventually input, queue
         :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage executors that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
         """
-        super().__init__(name, stage, error_manager)
+        super().__init__(name, stage, error_manager, retry_manager)
         self.init_concurrency(
             queue_initializer,
             counter_initializer,
@@ -712,4 +755,5 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
             self._previous_queue,
             self.out_queue,
             self.error_manager,
+            self.retry_manager,
         )

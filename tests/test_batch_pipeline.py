@@ -5,6 +5,7 @@ import traceback
 
 import pytest
 
+from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.pipeline import Pipeline
 from tests.utils import (
@@ -18,6 +19,8 @@ from tests.utils import (
     BatchExceptionStage,
     BatchErrorStage,
     TimeWaster,
+    CustomizableBrokenBatchStage,
+    CustomException,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -579,7 +582,11 @@ def test_concurrent_initialization():
         )
         .append_stage_concurrently("reverser2", BatchTextReverser, concurrency=0)
         .append_stage_concurrently(
-            "duplicator", BatchTextDuplicator, args=[10], concurrency=2, parallel=True,
+            "duplicator",
+            BatchTextDuplicator,
+            args=[10],
+            concurrency=2,
+            parallel=True,
         )
         .build()
     )
@@ -625,7 +632,11 @@ def test_concurrent_initialization():
             "reverser1", BatchTextReverser, args=[20], concurrency=1, parallel=False
         )
         .append_stage_concurrently(
-            "duplicator", BatchTextDuplicator, args=[20], concurrency=1, parallel=True,
+            "duplicator",
+            BatchTextDuplicator,
+            args=[20],
+            concurrency=1,
+            parallel=True,
         )
         .build()
     )
@@ -800,7 +811,11 @@ def test_single_items(items_generator_fx):
         )
         .append_stage_concurrently("reverser2", BatchTextReverser, concurrency=0)
         .append_stage_concurrently(
-            "duplicator", BatchTextDuplicator, args=[10], concurrency=2, parallel=True,
+            "duplicator",
+            BatchTextDuplicator,
+            args=[10],
+            concurrency=2,
+            parallel=True,
         )
         .build()
     )
@@ -865,7 +880,11 @@ def test_single_items(items_generator_fx):
             "reverser1", BatchTextReverser, args=[20], concurrency=1, parallel=False
         )
         .append_stage_concurrently(
-            "duplicator", BatchTextDuplicator, args=[20], concurrency=1, parallel=True,
+            "duplicator",
+            BatchTextDuplicator,
+            args=[20],
+            concurrency=1,
+            parallel=True,
         )
         .build()
     )
@@ -924,7 +943,11 @@ def test_mixed_single_items(items_generator_fx):
         )
         .append_stage_concurrently("reverser2", TextReverser, concurrency=0)
         .append_stage_concurrently(
-            "duplicator", BatchTextDuplicator, args=[10], concurrency=2, parallel=True,
+            "duplicator",
+            BatchTextDuplicator,
+            args=[10],
+            concurrency=2,
+            parallel=True,
         )
         .build()
     )
@@ -937,3 +960,33 @@ def test_mixed_single_items(items_generator_fx):
         assert result.payload["text"]
         assert result.payload["text"] != item.payload["text"]
     pipeline.stop()
+
+
+def test_retryable_batch_stages(items_generator_fx):
+    pipeline = (
+        Pipeline()
+        .set_source(RandomTextSource(10))
+        .append_stage("reverser0", TextReverser())
+        .append_stage(
+            "broken_batch_stage",
+            CustomizableBrokenBatchStage(
+                size=10, timeout=5, exceptions_to_raise=[CustomException, ValueError]
+            ),
+            backoff=0.01,
+            max_retries=1,
+            retryable_errors=(CustomException, ValueError),
+        )
+        .append_stage("reverser1", TextReverser())
+        .build()
+    )
+    item = next(items_generator_fx)
+    pipeline.process(copy.deepcopy(item))
+    items = list(pipeline.run())
+    for item in items:
+        assert not item.has_critical_errors()
+        assert all(
+            isinstance(err, RetryError)
+            and isinstance(err.get_exception(), (CustomException, ValueError))
+            and err.get_stage() == "broken_batch_stage"
+            for err in item.soft_errors()
+        )
