@@ -148,7 +148,8 @@ class DataItem:
         self, stage: str, exception: Union[SoftError, Exception]
     ) -> SoftError:
         """
-        Add an :class:`.error.exceptions.SoftError` generated in a stage (referenced by its name) for the item
+        *This is called internally by the :class:`.error.handling.ErrorManager` when the exception is handled.*
+        Add an :class:`.error.exceptions.SoftError` generated in a stage (referenced by its name) for the item.
 
         :param exception: It can be an :class:`.error.exceptions.SoftError` instance or any exception, which will be encapsulated in an :class:`.error.exceptions.SoftError`
         """
@@ -169,6 +170,7 @@ class DataItem:
         self, stage: str, exception: Union[CriticalError, Exception]
     ) -> CriticalError:
         """
+        *This is called internally by the :class:`.error.handling.ErrorManager` when the exception is handled.*
         Add a :class:`.error.exceptions.CriticalError` generated in a stage (referenced by its name) for the item
 
         :param exception: It can be a :class:`.error.exceptions.CriticalError` instance or any exception, which will be encapsulated in a :class:`.error.exceptions.CriticalError`
