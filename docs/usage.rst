@@ -1,8 +1,8 @@
 Guide
 =====
 
-A data items
-------------
+Data items
+----------
 
 The unit of data of a pipeline is the item,
 which is represented by :class:`.DataItem` class or a subclass of it.
