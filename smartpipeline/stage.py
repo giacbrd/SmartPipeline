@@ -37,6 +37,14 @@ class ConcurrentMixin:
         pass
 
 
+class CloseableMixin:
+    def on_end(self) -> Any:
+        """
+        Called when the stage terminates, useful for executing closing operations (e.g. files)
+        """
+        pass
+
+
 class Processor(ABC):
     @abstractmethod
     def process(self, item: DataItem) -> DataItem:
@@ -61,7 +69,7 @@ class BatchProcessor(ABC):
         return items
 
 
-class Stage(NameMixin, ConcurrentMixin, Processor):
+class Stage(NameMixin, ConcurrentMixin, CloseableMixin, Processor):
     """
     Extend this class and override :meth:`.Stage.process` for defining a stage
     """
@@ -70,7 +78,7 @@ class Stage(NameMixin, ConcurrentMixin, Processor):
         return f"Stage {self.name}"
 
 
-class BatchStage(NameMixin, ConcurrentMixin, BatchProcessor):
+class BatchStage(NameMixin, ConcurrentMixin, CloseableMixin, BatchProcessor):
     """
     Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage
     """

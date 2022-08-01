@@ -126,7 +126,7 @@ while with concurrency Python queues are involved, so items may be serialized.
 If you intend to define stages that can run on multiple processes,
 please read :ref:`concurrency-section` about further, important details.
 
-Through :meth:`.Pipeline.append_stage` one can also define retry policy on some specific errors,
+Through :meth:`.Pipeline.append_stage` one can also define a retry policy on some specific errors
 (see method documentation for further details).
 
 Another method is :meth:`.Pipeline.append_stage_concurrently`,

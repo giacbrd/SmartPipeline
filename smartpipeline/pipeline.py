@@ -270,6 +270,9 @@ class Pipeline:
                 container.queues_join()
                 while not container.queues_empty():
                     time.sleep(wait_seconds)
+            if not container.parallel:
+                container.stage.on_end()
+        self._error_manager.on_end()
         _logger.debug("Termination done")
 
     def _all_terminated(self) -> bool:

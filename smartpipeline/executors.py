@@ -149,6 +149,9 @@ def stage_executor(
     has_started_counter += 1
     while True:
         if terminated.is_set() and in_queue.empty():
+            if isinstance(counter, ProcessCounter):
+                error_manager.on_end()
+                stage.on_end()
             return
         try:
             item = in_queue.get(block=True, timeout=CONCURRENCY_WAIT)
@@ -161,6 +164,9 @@ def stage_executor(
             try:
                 item = process(stage, item, error_manager, retry_manager)
             except Exception as e:
+                if isinstance(counter, ProcessCounter):
+                    error_manager.on_end()
+                    stage.on_end()
                 raise e
             else:
                 if item is not None:
@@ -193,6 +199,9 @@ def batch_stage_executor(
     has_started_counter += 1
     while True:
         if terminated.is_set() and in_queue.empty():
+            if isinstance(counter, ProcessCounter):
+                error_manager.on_end()
+                stage.on_end()
             return
         items = []
         try:
@@ -211,6 +220,9 @@ def batch_stage_executor(
             try:
                 items = process_batch(stage, items, error_manager, retry_manager)
             except Exception as e:
+                if isinstance(counter, ProcessCounter):
+                    error_manager.on_end()
+                    stage.on_end()
                 raise e
             else:
                 for item in items:
