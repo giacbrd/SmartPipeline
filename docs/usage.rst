@@ -364,3 +364,7 @@ not just stateless methods as we would normally do with multiprocessing.
 In general, it is convenient to always define ``on_start`` if attributes we are going to construct require
 this special treatment, so that the stage will be always compatible with both three ways of run it: sequentially,
 concurrently on threads or on processes.
+
+A complementary method is ``on_end``, both for stages and error manager,
+which allows to call operations at pipeline exit, even when it is causes by an error.
+Useful, for example, for closing files or connections we have opened in ``on_start``.

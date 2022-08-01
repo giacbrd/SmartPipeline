@@ -48,7 +48,7 @@ class ErrorManager:
 
     def on_end(self) -> Any:
         """
-        Called when the pipeline terminates, useful for executing closing operations (e.g. files)
+        Called when the pipeline terminates, useful for executing closing operations (e.g. on files)
         """
         pass
 

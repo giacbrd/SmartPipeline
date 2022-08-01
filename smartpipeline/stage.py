@@ -40,7 +40,7 @@ class ConcurrentMixin:
 class CloseableMixin:
     def on_end(self) -> Any:
         """
-        Called when the stage terminates, useful for executing closing operations (e.g. files)
+        Called when the stage terminates, useful for executing closing operations (e.g. on files)
         """
         pass
 
