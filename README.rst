@@ -91,7 +91,7 @@ An example of a trivial pipeline definition and run:
         Pipeline()
         .set_source(RandomGenerator())
         .append_stage("adder", Adder(1), concurrency=2)
-        .append_stage("rounder", Rounder())
+        .append_stage("rounder", Rounder(size=100))
         .build()
     )
 
