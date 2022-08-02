@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing import Optional
 
+__author__ = "Giacomo Berardi <giacbrd.com>"
+
 
 class Error(Exception):
     """

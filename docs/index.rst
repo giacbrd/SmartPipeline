@@ -10,7 +10,7 @@ SmartPipeline's documentation
    :start-after: documentation-marker
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 4
 
    usage
    api

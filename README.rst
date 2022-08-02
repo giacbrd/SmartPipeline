@@ -59,11 +59,50 @@ Main features:
 - A stage can be designed for processing batches, i.e. sequences of consecutive items, at once
 - Custom error handling can be set for logging and monitoring at stage level
 
-Future improvements:
+An example of a trivial pipeline definition and run:
 
-- Stages can be memory profiled
-- Processed items can be cached at stage level
+.. code-block:: python
+
+    class RandomGenerator(Source):
+        def pop(self):
+            item = DataItem()
+            item.payload["number"] = random.random()
+            return item
+
+
+    class Adder(Stage):
+        def __init__(self, value):
+            self.value = value
+
+        def process(self, item):
+            item.payload["number"] += self.value
+            return item
+
+
+    class Rounder(BatchStage):
+        def process_batch(self, items):
+            for item in items:
+                item.payload["number"] = round(item.payload["number"], 1)
+            return items
+
+
+    pipeline = (
+        Pipeline()
+        .set_source(RandomGenerator())
+        .append_stage("adder", Adder(1), concurrency=2)
+        .append_stage("rounder", Rounder())
+        .build()
+    )
+
+
+    for item in pipeline.run():
+        print(item)
 
 `Read the documentation <https://smartpipeline.readthedocs.io>`_ for an exhaustive guide
 
 The `examples` folder contains full working sample pipelines
+
+Future improvements:
+
+- Stages can be memory profiled
+- Processed items can be cached at stage level
