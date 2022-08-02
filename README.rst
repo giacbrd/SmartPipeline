@@ -53,7 +53,8 @@ i.e. serialization and copies of the data are minimized.
 
 Main features:
 
-- Define a pipeline object as a sequence of stage objects, optionally set a source on which the pipeline iterates
+- Define a pipeline object as a sequence of stateful stage objects,
+  optionally set a source on which the pipeline iterates
 - A pipeline can run indefinitely on the source or it can be used to process single items
 - Stages can run concurrently on the source or on single asynchronously processed items
 - A stage can be designed for processing batches, i.e. sequences of consecutive items, at once

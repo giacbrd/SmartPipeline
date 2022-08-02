@@ -62,6 +62,8 @@ the payload of each one.
 Defining your stages
 --------------------
 
+A stage is also defined as a class and created when added to a pipeline.
+
 The stage method :meth:`.Stage.process` (or :meth:`.BatchStage.process_batch`) is where the actual
 item data processing happens.
 A stage receives a single item and returns it, enriched with stage computations.
@@ -329,7 +331,8 @@ we must find a way generate these attributes for each object copy in each proces
 This is what :meth:`.Stage.on_start` method solves. It is simply used to initialize attributes "a posteriori".
 It is normally called after ``__init__``, but in case of execution on multiple processes,
 it is called once, on the stage copy, at process start.
-This is also useful for safety and for avoiding copying large data.
+This allow stateful stages, locally to each process;
+it is also useful for safety and for avoiding copying large data.
 
 Also for :class:`.ErrorManager` it is necessary to define :meth:`.ErrorManager.on_start`,
 because the manager must be coupled with a stage when it is copied.
