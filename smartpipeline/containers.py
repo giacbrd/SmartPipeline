@@ -141,7 +141,8 @@ class ConnectedStageMixin:
 
 class FallibleMixin:
     """
-    A mixin for the containers that encapsulate stages that can produce errors during processing
+    A mixin for the containers that encapsulate stages that can produce errors during processing,
+    and that can retry on errors
     """
 
     def set_error_manager(self, error_manager: ErrorManager):
@@ -150,6 +151,13 @@ class FallibleMixin:
     @property
     def error_manager(self) -> ErrorManager:
         return self._error_manager
+
+    def set_retry_manager(self, retry_manager: RetryManager):
+        self._retry_manager = retry_manager
+
+    @property
+    def retry_manager(self) -> RetryManager:
+        return self._retry_manager
 
 
 class NamedStageMixin:
@@ -169,19 +177,6 @@ class NamedStageMixin:
     @property
     def stage(self) -> StageType:
         return self._stage
-
-
-class RetryableMixin:
-    """
-    A mixin for basic containers of retryable stages
-    """
-
-    def set_retry_manager(self, retry_manager: RetryManager):
-        self._retry_manager = retry_manager
-
-    @property
-    def retry_manager(self) -> RetryManager:
-        return self._retry_manager
 
 
 class SourceContainer(BaseContainer):
@@ -320,7 +315,6 @@ class StageContainer(
     NamedStageMixin,
     FallibleMixin,
     ConnectedStageMixin,
-    RetryableMixin,
 ):
     """
     The standard container for basic stages
@@ -387,7 +381,6 @@ class BatchStageContainer(
     NamedStageMixin,
     FallibleMixin,
     ConnectedStageMixin,
-    RetryableMixin,
 ):
     """
     Container for batch stages

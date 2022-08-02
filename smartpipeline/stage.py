@@ -25,19 +25,17 @@ class NameMixin:
         return self.name
 
 
-class ConcurrentMixin:
+class ConstructorMixin:
     def on_start(self) -> Any:
         """
-        Called after concurrent stage executor initialization in a process (only when multiprocessing concurrency)
-        or simply after construction, by the pipeline.
+        Called after concurrent stage executor initialization in a process (only on multiprocessing concurrency)
+        or after construction in all other cases, by the pipeline.
         The stage in the executor is a copy of the original,
         by overriding this method one can initialize variables specifically for the copies, that is mandatory
         when they are not serializable.
         """
         pass
 
-
-class CloseableMixin:
     def on_end(self) -> Any:
         """
         Called when the stage terminates, useful for executing closing operations (e.g. on files)
@@ -69,7 +67,7 @@ class BatchProcessor(ABC):
         return items
 
 
-class Stage(NameMixin, ConcurrentMixin, CloseableMixin, Processor):
+class Stage(NameMixin, ConstructorMixin, Processor):
     """
     Extend this class and override :meth:`.Stage.process` for defining a stage
     """
@@ -78,7 +76,7 @@ class Stage(NameMixin, ConcurrentMixin, CloseableMixin, Processor):
         return f"Stage {self.name}"
 
 
-class BatchStage(NameMixin, ConcurrentMixin, CloseableMixin, BatchProcessor):
+class BatchStage(NameMixin, ConstructorMixin, BatchProcessor):
     """
     Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage
     """
