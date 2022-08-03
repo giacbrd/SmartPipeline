@@ -50,6 +50,8 @@ class ProcessCounter(ConcurrentCounter):
     """
 
     def __init__(self, manager):
+        # we use the `multiprocessing.Manager` instead of "original" types for convenience,
+        # so we can pass this counter as argument to processes in an executor
         self._value = manager.Value("i", 0)
         self._lock = manager.Lock()
 

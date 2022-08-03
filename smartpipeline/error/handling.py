@@ -8,7 +8,7 @@ from smartpipeline.stage import NameMixin
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
-_logger = logging.getLogger(__name__)
+_logger = logging.getLogger("Error Handling")
 
 
 class ErrorManager:

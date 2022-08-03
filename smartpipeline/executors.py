@@ -1,4 +1,3 @@
-import logging
 import queue
 import time
 from threading import Event
@@ -12,8 +11,6 @@ from smartpipeline.item import DataItem, Stop
 from smartpipeline.stage import Stage, BatchStage, ItemsQueue, StageType
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
-
-_logger = logging.getLogger(__name__)
 
 
 def process(
@@ -35,9 +32,9 @@ def process(
         or retry_manager.max_retries == 0
     ):
         try:
-            _logger.debug(f"{stage} is processing {item}")
+            stage.logger.debug(f"{stage} is processing {item}")
             processed_item = stage.process(item)
-            _logger.debug(f"{stage} has finished processing {processed_item}")
+            stage.logger.debug(f"{stage} has finished processing {processed_item}")
             # this can't be in a finally, otherwise it would register the `error_manager.handle` time
             processed_item.set_timing(stage.name, time.time() - time1)
             return processed_item
@@ -51,11 +48,11 @@ def process(
                 pow(2, len(caught_retryable_exceptions) - 1) * retry_manager.backoff
             )
         except Exception as e:
-            _logger.debug(f"{stage} has failed processing {item}")
+            stage.logger.debug(f"{stage} has failed processing {item}")
             item.set_timing(stage.name, time.time() - time1)
             error_manager.handle(e, stage, item)
             return item
-    _logger.debug(
+    stage.logger.debug(
         f"{stage} has failed processing the {item} many times with {len(caught_retryable_exceptions)} errors"
     )
     item.set_timing(stage.name, time.time() - time1)
@@ -79,7 +76,7 @@ def process_batch(
         if error_manager.check_critical_errors(item):
             ret[i] = item
         else:
-            _logger.debug(f"{stage} is going to process {item}")
+            stage.logger.debug(f"{stage} is going to process {item}")
             to_process[i] = item
     time1 = time.time()
     # keeping track of caught exceptions
@@ -89,9 +86,11 @@ def process_batch(
         or retry_manager.max_retries == 0
     ):
         try:
-            _logger.debug(f"{stage} is processing {len(to_process)} items")
+            stage.logger.debug(f"{stage} is processing {len(to_process)} items")
             processed = stage.process_batch(list(to_process.values()))
-            _logger.debug(f"{stage} has finished processing {len(to_process)} items")
+            stage.logger.debug(
+                f"{stage} has finished processing {len(to_process)} items"
+            )
             spent = (time.time() - time1) / (len(to_process) or 1.0)
             for n, i in enumerate(to_process.keys()):
                 item = processed[n]
@@ -108,14 +107,16 @@ def process_batch(
                 pow(2, len(caught_retryable_exceptions) - 1) * retry_manager.backoff
             )
         except Exception as e:
-            _logger.debug(f"{stage} had failures in processing {len(to_process)} items")
+            stage.logger.debug(
+                f"{stage} had failures in processing {len(to_process)} items"
+            )
             spent = (time.time() - time1) / (len(to_process) or 1.0)
             for i, item in to_process.items():
                 item.set_timing(stage.name, spent)
                 error_manager.handle(e, stage, item)
                 ret[i] = item
             return ret
-    _logger.debug(
+    stage.logger.debug(
         f"{stage} has failed in processing {len(to_process)} items many times with {len(caught_retryable_exceptions)} errors"
     )
     spent = (time.time() - time1) / (len(to_process) or 1.0)

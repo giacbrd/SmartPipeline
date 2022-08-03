@@ -1,5 +1,6 @@
 import uuid
 from abc import ABC, abstractmethod
+from logging import Logger, getLogger
 from typing import Sequence, Union, Any, Optional, Tuple, Type
 
 from smartpipeline.item import DataItem
@@ -18,11 +19,17 @@ class NameMixin:
     @property
     def name(self) -> str:
         if getattr(self, "_name", None) is None:
-            self._name = f"{self.__class__.name}_{uuid.uuid4()}"
+            self._name = f"{self.__class__.name}-{uuid.uuid4()}"
         return self._name
 
     def __str__(self) -> str:
         return self.name
+
+    @property
+    def logger(self) -> Logger:
+        if getattr(self, "_logger", None) is None:
+            self._logger = getLogger(self.name)
+        return self._logger
 
 
 class ConstructorMixin:
@@ -107,7 +114,7 @@ class BatchStage(NameMixin, ConstructorMixin, BatchProcessor):
         return self._timeout
 
 
-class Source(ABC):
+class Source(ABC, NameMixin):
     """
     Extend this for defining a pipeline source
     """

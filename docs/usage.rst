@@ -128,7 +128,7 @@ thus stage instances will be copied in each process.
 Consider using threads when I/O blocking operations are prevalent,
 while using multiprocessing when stages execute long computations on data.
 In case of no concurrency the pipeline simply runs a "chain" of :meth:`.Stage.process` on each item,
-while with concurrency Python queues are involved, so items may be serialized.
+while with concurrency Python queues are involved and items may be serialized.
 
 If you intend to define stages that can run on multiple processes,
 please read :ref:`concurrency-section` about further, important details.
@@ -318,7 +318,7 @@ because the `GIL <https://en.wikipedia.org/wiki/Global_interpreter_lock>`_).
 
 When we submit a Python function to a spawned/forked process we are actually copying memory from the current process
 to the new one, because OS processes cannot share memory, differently from multi-threading.
-In order to do this (at least for spawned processes) Python must serialize data to pass to the new process.
+In order to do this (at least for spawned processes) the data we want to pass to a new process must be serialized.
 Even communication between processes involves copying data from one to another (e.g. through queues).
 
 Therefore, if we decide to run a pipeline stage concurrently and parallel,

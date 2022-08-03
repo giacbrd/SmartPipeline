@@ -28,8 +28,6 @@ from smartpipeline.item import DataItem, Stop
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
-_logger = logging.getLogger(__name__)
-
 
 QueueInitializer = Callable[[], ItemsQueue]
 CounterInitializer = Callable[[], ConcurrentCounter]
@@ -192,6 +190,7 @@ class SourceContainer(BaseContainer):
         self._internal_queue_obj = None
         self._stop_sent = False
         self._queue_initializer = None
+        self._logger = logging.getLogger(self.__class__.__name__)
 
     @property
     def _internal_queue(self) -> ItemsQueue:
@@ -239,9 +238,11 @@ class SourceContainer(BaseContainer):
         """
         Stop this source, the container won't produce items anymore
         """
-        _logger.debug("Stopping from the source")
         if self._source is not None:
+            self._source.logger.debug("Stop from the source")
             self._source.stop()
+        else:
+            self._logger.debug("Stop from the source")
         self._is_stopped = True
 
     def pop_into_queue(self):
@@ -297,14 +298,17 @@ class SourceContainer(BaseContainer):
             except queue.Empty:
                 if self.is_stopped():
                     self._next_item = Stop()
-            _logger.debug(f"{ret} produced by the source")
+            if self._source is None:
+                self._logger.debug(f"{ret} produced by the source")
+            else:
+                self._source.logger.debug(f"{ret} produced by the source")
             return ret
         elif self._source is not None:
             ret = self._source.pop()
             if self.is_stopped():
                 return Stop()
             else:
-                _logger.debug(f"{ret} produced by the source")
+                self._source.logger.debug(f"{ret} produced by the source")
                 return ret
         elif self.is_stopped():
             return Stop()

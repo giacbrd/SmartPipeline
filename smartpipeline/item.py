@@ -191,7 +191,7 @@ class DataItem:
 
 class Stop(DataItem):
     """
-    Core "signal" item (do not use this explicitly) used in pipelines for determining the end of a flow of items,
+    Core "signal" item (*do not use this explicitly*) used in pipelines for determining the end of a flow of items,
     like an event passed through all the stages
     """
 

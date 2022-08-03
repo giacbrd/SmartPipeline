@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from concurrent.futures._base import Future, Executor
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -37,8 +38,6 @@ from smartpipeline.utils import LastOrderedDict, ThreadCounter, ProcessCounter
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
-_logger = logging.getLogger(__name__)
-
 
 class FakeContainer:
     def __init__(self, item: DataItem):
@@ -67,16 +66,28 @@ class Pipeline:
         self._max_queues_size = max_queues_size
         self._out_queue = None
         self._enqueue_source = False
+        # we approach sharing memory between processes exclusively through a `multiprocessing.Manager`
         self._sync_manager = None
         # an empty source, on which we can only occasionally send items
         self._source_container = SourceContainer()
         self._count = 0
         self._executors_ready = False
+        self._name = f"{self.__class__.__name__}-{str(uuid.uuid4())[:8]}"
+        self._logger = logging.getLogger(self._name)
+
+    @property
+    def name(self) -> str:
+        """
+        Pipeline unique name, equivalent to its logger name
+        """
+        return self._name
 
     def _new_mp_queue(self) -> ItemsQueue:
         """
         Construct queue for multiprocessing communication
         """
+        # why not use multiprocessing.Queue or JoinableQueue instead of the manager?
+        # answer https://stackoverflow.com/a/45236748 and the lack of "safety" of task_done() and join()
         if self._sync_manager is None:
             self._sync_manager = Manager()
         return self._sync_manager.Queue(maxsize=self._max_queues_size)
@@ -139,7 +150,7 @@ class Pipeline:
         # finalize initialization of the error manager shared by this and other stage threads
         self._error_manager.on_start()
         self._executors_ready = True
-        _logger.debug("Pipeline ready to run")
+        self._logger.debug("Pipeline ready to run")
 
     def shutdown(self):
         if self._out_queue is not None:
@@ -162,7 +173,7 @@ class Pipeline:
         """
         if not any(self._containers):
             raise ValueError("Must append at least a stage")
-        _logger.debug(f"Building the pipeline on stages: {self._log_stages()}")
+        self._logger.debug(f"Building the pipeline on stages: {self._log_stages()}")
         self._wait_executors()
         return self
 
@@ -176,7 +187,7 @@ class Pipeline:
         """
         if not self._source_container.is_set():
             raise ValueError("Set the data source for this pipeline")
-        _logger.debug(f"Running the pipeline on stages: {self._log_stages()}")
+        self._logger.debug(f"Running the pipeline on stages: {self._log_stages()}")
         counter = 0
         last_stage_name = self._last_stage_name()
         terminator_thread = None
@@ -253,8 +264,9 @@ class Pipeline:
         :param force: If True do not wait for a container to process all items produced by the source
         :param wait_seconds: Time to wait before pinging again a container for its termination
         """
-        _logger.debug("Terminating the pipeline")
-        # scroll the pipeline by its order and terminate stages after the relative queues are empty
+        self._logger.debug("Terminating the pipeline")
+        # scroll the pipeline by its order (this is critical for correctness)
+        # and terminate stages after the relative queues are empty
         for container in self._containers.values():
             if not force:
                 # ensure the stage has processed all source items
@@ -276,7 +288,7 @@ class Pipeline:
             ):
                 container.stage.on_end()
         self._error_manager.on_end()
-        _logger.debug("Termination done")
+        self._logger.debug("Termination done")
 
     def _all_terminated(self) -> bool:
         """
@@ -300,7 +312,7 @@ class Pipeline:
         """
         Process a single item synchronously (no concurrency) through the pipeline
         """
-        _logger.debug(f"Processing {item} on stages: {self._log_stages()}")
+        self._logger.debug(f"Processing {item} on stages: {self._log_stages()}")
         last_stage_name = self._containers.last_key()
         self._source_container.prepend_item(item)
         for name, container in self._containers.items():
@@ -317,7 +329,7 @@ class Pipeline:
 
         :param callback: A function to call after a successful process of the item
         """
-        _logger.debug(
+        self._logger.debug(
             f"Processing asynchronously {item} on stages: {self._log_stages()}"
         )
         if callback is not None:
@@ -352,6 +364,7 @@ class Pipeline:
         """
         Set the source of the pipeline: a subclass of :class:`.stage.Source`
         """
+        source.set_name(f"SourceOf{self._name}")
         self._source_container.set(source)
         return self
 
