@@ -11,7 +11,7 @@ from concurrent.futures import wait, Executor, Future
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event
-from typing import Sequence, Optional, Callable, Union, Tuple, Type
+from typing import Sequence, Optional, Callable, Union, Tuple, Type, List
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.utils import ConcurrentCounter
@@ -182,7 +182,7 @@ class SourceContainer(BaseContainer):
     A container specific for sources
     """
 
-    def __init__(self):
+    def __init__(self, name=None):
         super().__init__()
         self._source = None
         # the next two attributes are used jointly for "manually" prepending items
@@ -190,7 +190,7 @@ class SourceContainer(BaseContainer):
         self._internal_queue_obj = None
         self._stop_sent = False
         self._queue_initializer = None
-        self._logger = logging.getLogger(self.__class__.__name__)
+        self._logger = logging.getLogger(name or self.__class__.__name__)
 
     @property
     def _internal_queue(self) -> ItemsQueue:
@@ -214,6 +214,7 @@ class SourceContainer(BaseContainer):
         Set the actual source for this container
         """
         self._source = source
+        self._logger = source.logger
 
     def is_set(self) -> bool:
         """
@@ -238,11 +239,9 @@ class SourceContainer(BaseContainer):
         """
         Stop this source, the container won't produce items anymore
         """
+        self._logger.debug("Stop from the source")
         if self._source is not None:
-            self._source.logger.debug("Stop from the source")
             self._source.stop()
-        else:
-            self._logger.debug("Stop from the source")
         self._is_stopped = True
 
     def pop_into_queue(self):
@@ -298,17 +297,14 @@ class SourceContainer(BaseContainer):
             except queue.Empty:
                 if self.is_stopped():
                     self._next_item = Stop()
-            if self._source is None:
-                self._logger.debug(f"{ret} produced by the source")
-            else:
-                self._source.logger.debug(f"{ret} produced by the source")
+            self._logger.debug(f"{ret} produced by the source")
             return ret
         elif self._source is not None:
             ret = self._source.pop()
             if self.is_stopped():
                 return Stop()
             else:
-                self._source.logger.debug(f"{ret} produced by the source")
+                self._logger.debug(f"{ret} produced by the source")
                 return ret
         elif self.is_stopped():
             return Stop()
@@ -501,7 +497,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         self._parallel = parallel
         self._stage_executor = None
         self._previous_queue = None
-        self._futures: Sequence[Future] = []
+        self._futures: List[Future] = []
         self._queue_initializer = queue_initializer
         self._out_queue = self._queue_initializer()
         self._counter = counter_initializer()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import uuid
 from typing import Optional, Union, Any, Tuple, Type
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
@@ -7,8 +8,6 @@ from smartpipeline.item import DataItem
 from smartpipeline.stage import NameMixin
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
-
-_logger = logging.getLogger("Error Handling")
 
 
 class ErrorManager:
@@ -70,11 +69,19 @@ class ErrorManager:
             # any un-managed exception is a potential critical error
             item_error = item.add_critical_error(stage.name, error)
         exc_info = (type(item_error), item_error, item_error.__traceback__)
-        _logger.exception(self._generate_message(stage, item), exc_info=exc_info)
+        self.logger.exception(self._generate_message(stage, item), exc_info=exc_info)
         if isinstance(item_error, CriticalError):
             exception = self._check_critical(item_error)
             if exception:
                 return item_error
+
+    @property
+    def logger(self) -> logging.Logger:
+        if getattr(self, "_logger", None) is None:
+            self._logger = logging.getLogger(
+                f"{self.__class__.__name__}-{str(uuid.uuid4())[:8]}"
+            )
+        return self._logger
 
     @staticmethod
     def _generate_message(stage: NameMixin, item: DataItem) -> str:

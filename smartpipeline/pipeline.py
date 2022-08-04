@@ -69,11 +69,12 @@ class Pipeline:
         # we approach sharing memory between processes exclusively through a `multiprocessing.Manager`
         self._sync_manager = None
         # an empty source, on which we can only occasionally send items
-        self._source_container = SourceContainer()
         self._count = 0
         self._executors_ready = False
         self._name = f"{self.__class__.__name__}-{str(uuid.uuid4())[:8]}"
         self._logger = logging.getLogger(self._name)
+        self._source_name = f"SourceOf{self._name}"
+        self._source_container = SourceContainer(self._source_name)
 
     @property
     def name(self) -> str:
@@ -364,7 +365,7 @@ class Pipeline:
         """
         Set the source of the pipeline: a subclass of :class:`.stage.Source`
         """
-        source.set_name(f"SourceOf{self._name}")
+        source.set_name(self._source_name)
         self._source_container.set(source)
         return self
 
