@@ -1,5 +1,7 @@
+import logging
 import queue
 import time
+from logging.handlers import QueueHandler
 from threading import Event
 from typing import Sequence, Callable, Optional, List
 
@@ -137,12 +139,16 @@ def stage_executor(
     terminated: Event,
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
+    logs_queue: queue.Queue[logging.LogRecord],
 ):
     """
     Consume items from an input queue, process and put them in an output queue, indefinitely,
     until a termination event is set
     """
     if isinstance(counter, ProcessCounter):
+        handler = QueueHandler(logs_queue)
+        root_logger = logging.getLogger()
+        root_logger.addHandler(handler)
         # call these only if the stage and the error manager are copies of the original,
         # ergo this executor is running in a child process
         error_manager.on_start()
@@ -187,12 +193,16 @@ def batch_stage_executor(
     terminated: Event,
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
+    logs_queue: queue.Queue[logging.LogRecord],
 ):
     """
     Consume items in batches from an input queue, process and put them in an output queue, indefinitely,
     until a termination event is set
     """
     if isinstance(counter, ProcessCounter):
+        handler = QueueHandler(logs_queue)
+        root_logger = logging.getLogger()
+        root_logger.addHandler(handler)
         # call these only if the stage and the error manager are copies of the original,
         # ergo this executor is running in a child process
         error_manager.on_start()

@@ -6,6 +6,7 @@ import uuid
 from concurrent.futures._base import Future, Executor
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
+from logging.handlers import QueueHandler
 from multiprocessing import Manager
 from queue import Queue
 from threading import Thread, Event
@@ -34,9 +35,21 @@ from smartpipeline.containers import (
 )
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, StageType
 from smartpipeline.item import Stop, DataItem
-from smartpipeline.utils import LastOrderedDict, ThreadCounter, ProcessCounter
+from smartpipeline.utils import (
+    LastOrderedDict,
+    ThreadCounter,
+    ProcessCounter,
+    LogsReceiver,
+)
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
+
+
+def _stage_initialization_with_logger(logs_queue, stage_class, args, kwargs):
+    handler = QueueHandler(logs_queue)
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+    return stage_class(*args, **kwargs)
 
 
 class FakeContainer:
@@ -71,10 +84,31 @@ class Pipeline:
         # an empty source, on which we can only occasionally send items
         self._count = 0
         self._executors_ready = False
+        self._logs_receiver = None
         self._name = f"{self.__class__.__name__}-{str(uuid.uuid4())[:8]}"
         self._logger = logging.getLogger(self._name)
         self._source_name = f"SourceOf{self._name}"
         self._source_container = SourceContainer(self._source_name)
+
+    def _start_logs_receiver(self) -> LogsReceiver:
+        if self._logs_receiver is None:
+            if self._sync_manager is None:
+                self._sync_manager = Manager()
+            logs_queue = self._sync_manager.Queue()
+            self._logs_receiver = LogsReceiver(logs_queue)
+            self._logs_receiver.start()
+        return self._logs_receiver
+
+    def _stop_logs_receiver(self):
+        if self._logs_receiver is not None:
+            self._logs_receiver.stop()
+            self._logs_receiver = None
+
+    def _get_logs_receiver_queue(self) -> Queue:
+        if self._logs_receiver is not None:
+            return self._logs_receiver.queue
+        else:
+            raise AttributeError("Logs queue for multiprocessing never initialized")
 
     @property
     def name(self) -> str:
@@ -211,8 +245,12 @@ class Pipeline:
                         container.check_errors()
                 except Exception as e:
                     self.stop()
+                    if source_thread is not None:
+                        source_thread.join()
                     # TODO in case of errors we loose pending items!
                     self._terminate_all(force=True)
+                    if terminator_thread is not None:
+                        terminator_thread.join()
                     self.shutdown()
                     self._count += 1
                     raise e
@@ -289,6 +327,7 @@ class Pipeline:
             ):
                 container.stage.on_end()
         self._error_manager.on_end()
+        self._stop_logs_receiver()
         self._logger.debug("Termination done")
 
     def _all_terminated(self) -> bool:
@@ -451,6 +490,8 @@ class Pipeline:
                 else ConcurrentStageContainer
             )
             if parallel:
+                self._start_logs_receiver()
+                logs_queue = self._get_logs_receiver_queue()
                 return constructor(
                     name,
                     stage,
@@ -461,6 +502,7 @@ class Pipeline:
                     self._new_mp_event,
                     concurrency,
                     parallel,
+                    logs_queue,
                 )
             else:
                 # if the stage is executed on multiple threads we must finalize initialization once,
@@ -568,7 +610,11 @@ class Pipeline:
         last_stage_name = self._last_stage_name()
         # set it immediately so the order of the calls of this method is followed in `_containers`
         self._containers[name] = None
-        future = self._get_init_executor(parallel).submit(stage_class, *args, **kwargs)
+        self._start_logs_receiver()
+        logs_queue = self._get_logs_receiver_queue()
+        future = self._get_init_executor(parallel).submit(
+            _stage_initialization_with_logger, logs_queue, stage_class, args, kwargs
+        )
 
         def append_stage(stage_future: Future):
             stage = stage_future.result()

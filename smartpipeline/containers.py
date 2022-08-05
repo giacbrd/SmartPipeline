@@ -483,6 +483,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
         parallel: bool = False,
+        logs_queue: queue.Queue[logging.LogRecord] = None,
     ):
         """
         Initialization of instance members
@@ -492,6 +493,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
+        :param logs_queue: The queue in which all stages in processes will send their logs records through a `QueueHandler`
         """
         self._concurrency = concurrency
         self._parallel = parallel
@@ -504,6 +506,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         self._has_started_counter = counter_initializer()
         self._counter_initializer = counter_initializer
         self._terminate_event = terminate_event_initializer()
+        self._logs_queue = logs_queue
 
     def queues_empty(self) -> bool:
         """
@@ -636,6 +639,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
                     self._terminate_event,
                     self._has_started_counter,
                     self._counter,
+                    self._logs_queue,
                 )
             )
         # wait every executor internal loops have started
@@ -660,6 +664,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
         parallel: bool = False,
+        logs_queue: queue.Queue[logging.LogRecord] = None,
     ):
         """
         :param name: Stage name
@@ -671,6 +676,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
+        :param logs_queue: The queue in which all stages in processes will send their logs records through a `QueueHandler`
         """
         super().__init__(name, stage, error_manager, retry_manager)
         self.init_concurrency(
@@ -679,6 +685,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
             terminate_event_initializer,
             concurrency,
             parallel,
+            logs_queue,
         )
 
     def run(self, _executor: StageExecutor = stage_executor):
@@ -714,6 +721,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
         parallel: bool = False,
+        logs_queue: queue.Queue[logging.LogRecord] = None,
     ):
         """
         :param name: Stage name
@@ -725,6 +733,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
+        :param logs_queue: The queue in which all stages in processes will send their logs records through a `QueueHandler`
         """
         super().__init__(name, stage, error_manager, retry_manager)
         self.init_concurrency(
@@ -733,6 +742,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
             terminate_event_initializer,
             concurrency,
             parallel,
+            logs_queue,
         )
 
     def run(self, _executor: StageExecutor = batch_stage_executor):
