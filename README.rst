@@ -12,7 +12,7 @@ A framework for rapid development of robust data pipelines following a simple de
    :target: https://smartpipeline.readthedocs.io/en/stable/?badge=stable
    :alt: Documentation Status
 
-.. image:: https://github.com/giacbrd/SmartPipeline/actions/workflows/tests.yml/badge.svg
+.. image:: https://github.com/giacbrd/SmartPipeline/actions/workflows/tests.yml/badge.svg?branch=master
    :target: https://github.com/giacbrd/SmartPipeline/actions/workflows/tests.yml
    :alt: Tests
 
