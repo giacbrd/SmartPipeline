@@ -147,9 +147,10 @@ def stage_executor(
     until a termination event is set
     """
     if isinstance(counter, ProcessCounter):
-        handler = QueueHandler(logs_queue)
-        root_logger = logging.getLogger()
-        root_logger.addHandler(handler)
+        if logs_queue is not None:
+            handler = QueueHandler(logs_queue)
+            root_logger = logging.getLogger()
+            root_logger.addHandler(handler)
         # call these only if the stage and the error manager are copies of the original,
         # ergo this executor is running in a child process
         error_manager.on_start()
@@ -201,9 +202,10 @@ def batch_stage_executor(
     until a termination event is set
     """
     if isinstance(counter, ProcessCounter):
-        handler = QueueHandler(logs_queue)
-        root_logger = logging.getLogger()
-        root_logger.addHandler(handler)
+        if logs_queue is not None:
+            handler = QueueHandler(logs_queue)
+            root_logger = logging.getLogger()
+            root_logger.addHandler(handler)
         # call these only if the stage and the error manager are copies of the original,
         # ergo this executor is running in a child process
         error_manager.on_start()

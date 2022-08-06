@@ -7,6 +7,7 @@ from typing import List, Type
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.helpers import FilePathItem
+from smartpipeline.pipeline import Pipeline
 from smartpipeline.stage import Source, Stage, BatchStage
 from smartpipeline.item import DataItem
 
@@ -252,3 +253,9 @@ def wait_service(timeout, predicate, args):
         sleep(1)
         if (datetime.now() - start).seconds > timeout:
             raise TimeoutError()
+
+
+def get_pipeline(*args, **kwargs):
+    return Pipeline(*args, **kwargs).set_error_manager(
+        ErrorManager().raise_on_critical_error()
+    )

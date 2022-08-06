@@ -15,7 +15,7 @@ class DataItem:
     """
 
     def __init__(self):
-        self._errors = []
+        self._soft_errors = []
         self._critical_errors = []
         self._meta = {}
         self._payload = {}
@@ -122,7 +122,7 @@ class DataItem:
         """
         True if the item has raised an :class:`.error.exceptions.SoftError` in some stage processing
         """
-        return any(self._errors)
+        return any(self._soft_errors)
 
     def has_critical_errors(self) -> bool:
         """
@@ -134,7 +134,7 @@ class DataItem:
         """
         Iter over :class:`.error.exceptions.SoftError` instances eventually generated in some stage processing
         """
-        for e in self._errors:
+        for e in self._soft_errors:
             yield e
 
     def critical_errors(self) -> Generator[CriticalError, None, None]:
@@ -156,13 +156,13 @@ class DataItem:
         if type(exception) is not CriticalError:
             if isinstance(exception, SoftError):
                 exception.set_stage(stage)
-                self._errors.append(exception)
+                self._soft_errors.append(exception)
                 return exception
             elif isinstance(exception, Exception):
                 error = SoftError(str(exception))
                 error.with_exception(exception)
                 error.set_stage(stage)
-                self._errors.append(error)
+                self._soft_errors.append(error)
                 return error
         raise ValueError("Add a pipeline SoftError or a generic exception")
 
