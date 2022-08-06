@@ -1,6 +1,4 @@
-import copy
 import logging
-import time
 import traceback
 
 import pytest
@@ -14,11 +12,7 @@ from tests.utils import (
     TextReverser,
     ErrorStage,
     ExceptionStage,
-    TimeWaster,
-    SerializableStage,
     CriticalIOErrorStage,
-    SerializableErrorManager,
-    ErrorSerializableStage,
     CustomizableBrokenStage,
     CustomException,
     get_pipeline,

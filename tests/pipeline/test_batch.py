@@ -1,7 +1,5 @@
 import copy
 import logging
-import time
-import traceback
 
 import pytest
 
@@ -18,7 +16,6 @@ from tests.utils import (
     BatchTextDuplicator,
     BatchExceptionStage,
     BatchErrorStage,
-    TimeWaster,
     CustomizableBrokenBatchStage,
     CustomException,
     get_pipeline,

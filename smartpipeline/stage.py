@@ -1,7 +1,7 @@
 import uuid
 from abc import ABC, abstractmethod
 from logging import Logger, getLogger
-from typing import Sequence, Union, Any, Optional, Tuple, Type
+from typing import Sequence, Union, Any, Optional
 
 from smartpipeline.item import DataItem
 

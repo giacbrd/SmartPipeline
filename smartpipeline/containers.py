@@ -3,6 +3,7 @@ Containers encapsulate stages and manage their execution
 """
 
 from __future__ import annotations
+
 import concurrent
 import logging
 import queue
@@ -12,10 +13,9 @@ from concurrent.futures import wait, Executor, Future
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event
-from typing import Sequence, Optional, Callable, Union, Tuple, Type, List
+from typing import Sequence, Optional, Callable, List
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
-from smartpipeline.utils import ConcurrentCounter
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.executors import (
     process,
@@ -24,8 +24,9 @@ from smartpipeline.executors import (
     batch_stage_executor,
     StageExecutor,
 )
-from smartpipeline.stage import Stage, BatchStage, Source, ItemsQueue, StageType
 from smartpipeline.item import DataItem, Stop
+from smartpipeline.stage import Stage, BatchStage, Source, ItemsQueue, StageType
+from smartpipeline.utils import ConcurrentCounter
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 

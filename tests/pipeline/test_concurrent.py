@@ -6,8 +6,6 @@ import traceback
 import pytest
 
 from smartpipeline.error.exceptions import RetryError
-from smartpipeline.error.handling import ErrorManager
-from smartpipeline.pipeline import Pipeline
 from tests.utils import (
     RandomTextSource,
     TextDuplicator,
@@ -20,7 +18,6 @@ from tests.utils import (
     SerializableErrorManager,
     ErrorSerializableStage,
     CustomizableBrokenStage,
-    CustomException,
     get_pipeline,
 )
 
