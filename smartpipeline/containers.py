@@ -2,6 +2,7 @@
 Containers encapsulate stages and manage their execution
 """
 
+from __future__ import annotations
 import concurrent
 import logging
 import queue
