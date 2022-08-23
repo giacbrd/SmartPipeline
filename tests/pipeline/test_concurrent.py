@@ -619,3 +619,30 @@ def test_concurrent_run_with_retryable_stages():
             isinstance(err, RetryError) and isinstance(err.get_exception(), TypeError)
             for err in soft_errors_broken_stage_2
         )
+
+
+def test_broken_loop():
+    def _get_pipeline():
+        return (
+            get_pipeline()
+            .set_source(RandomTextSource(100))
+            .append_stage("reverser0", TextReverser(), concurrency=3, parallel=True)
+            .append_stage("reverser1", TextReverser(), concurrency=2, parallel=False)
+            .append_stage("duplicator", TextDuplicator(), concurrency=1, parallel=True)
+            .build()
+        )
+
+    items = []
+    for n, item in enumerate(_get_pipeline().run()):
+        items.append(item)
+        if n >= 9:
+            break
+    assert len(items) == 10
+    items = []
+    try:
+        for n, item in enumerate(_get_pipeline().run()):
+            items.append(item)
+            if n >= 9:
+                raise IOError
+    except IOError:
+        assert len(items) == 10

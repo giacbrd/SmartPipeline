@@ -220,6 +220,18 @@ class Pipeline:
         :return: Iterator over processed items
         :raises ValueError: When a source has not been set for the pipeline
         """
+
+        def _exit():
+            self.stop()
+            if source_thread is not None:
+                source_thread.join()
+            # TODO in case of errors we loose pending items!
+            self._terminate_all(force=True)
+            if terminator_thread is not None:
+                terminator_thread.join()
+            self.shutdown()
+            self._count += 1
+
         if not self._source_container.is_set():
             raise ValueError("Set the data source for this pipeline")
         self._logger.debug(f"Running the pipeline on stages: {self._log_stages()}")
@@ -229,8 +241,13 @@ class Pipeline:
         source_thread = None
         # in case the first stage is concurrent
         if self._enqueue_source:
-            source_thread = Thread(target=self._source_container.pop_into_queue)
-            source_thread.start()
+            try:
+                source_thread = Thread(target=self._source_container.pop_into_queue)
+                source_thread.start()
+            except Exception as e:
+                # when the source fails terminate everything
+                _exit()
+                raise e
         while True:
             for name, container in self._containers.items():
                 try:
@@ -244,15 +261,7 @@ class Pipeline:
                     else:
                         container.check_errors()
                 except Exception as e:
-                    self.stop()
-                    if source_thread is not None:
-                        source_thread.join()
-                    # TODO in case of errors we loose pending items!
-                    self._terminate_all(force=True)
-                    if terminator_thread is not None:
-                        terminator_thread.join()
-                    self.shutdown()
-                    self._count += 1
+                    _exit()
                     raise e
                 # retrieve finally processed items from the last stage
                 if name == last_stage_name:
@@ -264,8 +273,14 @@ class Pipeline:
                         item = container.get_processed()
                         if item is not None:
                             if not isinstance(item, Stop):
-                                yield item
-                                counter += 1
+                                try:
+                                    yield item
+                                except GeneratorExit:
+                                    # when the caller exits the run loop terminate everything
+                                    _exit()
+                                    return
+                                finally:
+                                    counter += 1
                                 self._count += 1
                             # if a stop is finally signaled, start termination of all containers
                             elif (
@@ -379,7 +394,8 @@ class Pipeline:
 
     def stop(self):
         """
-        Tell the source to stop to generate items and consequently the pipeline
+        Tell the source to stop to generate items and consequently terminate the pipeline
+        after all "remaining" items are processed.
         """
         self._source_container.stop()
 
