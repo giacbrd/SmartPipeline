@@ -160,7 +160,7 @@ class FallibleMixin:
         return self._retry_manager
 
 
-class NamedStageMixin:
+class AliveStageMixin:
     """
     A mixin for basic containers of stages
     """
@@ -314,7 +314,7 @@ class SourceContainer(BaseContainer):
 
 class StageContainer(
     BaseContainer,
-    NamedStageMixin,
+    AliveStageMixin,
     FallibleMixin,
     ConnectedStageMixin,
 ):
@@ -380,7 +380,7 @@ class StageContainer(
 
 class BatchStageContainer(
     BaseContainer,
-    NamedStageMixin,
+    AliveStageMixin,
     FallibleMixin,
     ConnectedStageMixin,
 ):

@@ -12,6 +12,7 @@ from tests.utils import (
     ErrorSerializableStage,
     ErrorStage,
     ExceptionStage,
+    Logger,
     RandomTextSource,
     SerializableErrorManager,
     SerializableStage,
@@ -157,7 +158,7 @@ def test_queue_sizes():
     _check(items, 100, pipeline)
 
 
-def test_concurrency_errors():
+def test_concurrency_errors(caplog):
     with pytest.raises(Exception):
         pipeline = (
             get_pipeline()
@@ -174,6 +175,17 @@ def test_concurrency_errors():
             assert 'Exception("test exception")' in tb
             assert "CriticalError" in tb
             raise
+        assert (
+            len(
+                [
+                    record
+                    for record in caplog.records
+                    if record.levelno == logging.ERROR
+                    and "stage error has generated an error" in record.msg.lower()
+                ]
+            )
+            == 1
+        )
         assert pipeline.count == 1
     with pytest.raises(Exception):
         pipeline = (
@@ -191,6 +203,18 @@ def test_concurrency_errors():
             assert 'Exception("test exception")' in tb
             assert "CriticalError" in tb
             raise
+        assert (
+            len(
+                [
+                    record
+                    for record in caplog.records
+                    if record.levelno == logging.ERROR
+                    and "stage error has generated an error" in record.msg.lower()
+                ]
+            )
+            == 1
+        )
+        caplog.clear()
         assert pipeline.count == 1
     pipeline = (
         get_pipeline()
@@ -208,6 +232,20 @@ def test_concurrency_errors():
         assert len(list(item.soft_errors())) == 2
         assert item.get_timing("error1")
         assert item.get_timing("error2")
+    assert (
+        len(
+            [
+                record
+                for record in caplog.records
+                if record.levelno == logging.ERROR
+                and (
+                    "stage error1 has generated an error" in record.msg.lower()
+                    or "stage error2 has generated an error" in record.msg.lower()
+                )
+            ]
+        )
+        == 20
+    )
     assert pipeline.count == 10
 
 
@@ -646,3 +684,35 @@ def test_broken_loop():
                 raise IOError
     except IOError:
         assert len(items) == 10
+
+
+def test_logging(caplog):
+    with caplog.at_level(logging.INFO):
+        pipeline = (
+            get_pipeline()
+            .set_source(RandomTextSource(100))
+            .append_stage("logger1", Logger(), concurrency=2)
+            .append_stage("reverser0", TextReverser(), concurrency=1)
+            .build()
+        )
+        list(pipeline.run())
+        messages = [
+            record for record in caplog.records if record.levelno == logging.INFO
+        ]
+        assert len(messages) == 100
+        assert all("logging item " in record.msg.lower() for record in messages)
+        caplog.clear()
+        pipeline = (
+            get_pipeline()
+            .set_source(RandomTextSource(100))
+            .append_stage("reverser1", TextReverser(), concurrency=2)
+            .append_stage("logger2", Logger(), concurrency=2, parallel=True)
+            .append_stage("reverser2", TextReverser())
+            .build()
+        )
+        list(pipeline.run())
+        messages = [
+            record for record in caplog.records if record.levelno == logging.INFO
+        ]
+        assert len(messages) == 100
+        assert all("logging item " in record.msg.lower() for record in messages)

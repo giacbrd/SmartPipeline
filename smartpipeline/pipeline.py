@@ -52,14 +52,6 @@ def _stage_initialization_with_logger(logs_queue, stage_class, args, kwargs):
     return stage_class(*args, **kwargs)
 
 
-class FakeContainer:
-    def __init__(self, item: DataItem):
-        self._item = item
-
-    def get_item(self) -> DataItem:
-        return self._item
-
-
 class Pipeline:
     def __init__(
         self,

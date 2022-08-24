@@ -6,7 +6,7 @@ from typing import Any, Optional, Tuple, Type, Union
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.item import DataItem
-from smartpipeline.stage import NameMixin
+from smartpipeline.stage import AliveMixin
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -53,7 +53,7 @@ class ErrorManager:
         pass
 
     def handle(
-        self, error: Exception, stage: NameMixin, item: DataItem
+        self, error: Exception, stage: AliveMixin, item: DataItem
     ) -> Optional[CriticalError]:
         """
         Manage an error produced by a stage
@@ -85,7 +85,7 @@ class ErrorManager:
         return self._logger
 
     @staticmethod
-    def _generate_message(stage: NameMixin, item: DataItem) -> str:
+    def _generate_message(stage: AliveMixin, item: DataItem) -> str:
         return f"{stage} has generated an error on item {item}"
 
     def _check_critical(self, error: CriticalError) -> Union[Exception, CriticalError]:

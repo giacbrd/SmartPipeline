@@ -8,9 +8,9 @@ from smartpipeline.item import DataItem
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
-class NameMixin:
+class AliveMixin:
     """
-    Simple mixin for setting a name to an object
+    Simple mixin for setting a name and a logger to an object
     """
 
     def set_name(self, name: str):
@@ -27,6 +27,7 @@ class NameMixin:
 
     @property
     def logger(self) -> Logger:
+        """Specific logger for this object"""
         if getattr(self, "_logger", None) is None:
             self._logger = getLogger(self.name)
         return self._logger
@@ -74,7 +75,7 @@ class BatchProcessor(ABC):
         return items
 
 
-class Stage(NameMixin, ConstructorMixin, Processor):
+class Stage(AliveMixin, ConstructorMixin, Processor):
     """
     Extend this class and override :meth:`.Stage.process` for defining a stage
     """
@@ -83,7 +84,7 @@ class Stage(NameMixin, ConstructorMixin, Processor):
         return f"Stage {self.name}"
 
 
-class BatchStage(NameMixin, ConstructorMixin, BatchProcessor):
+class BatchStage(AliveMixin, ConstructorMixin, BatchProcessor):
     """
     Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage
     """
@@ -114,7 +115,7 @@ class BatchStage(NameMixin, ConstructorMixin, BatchProcessor):
         return self._timeout
 
 
-class Source(ABC, NameMixin):
+class Source(ABC, AliveMixin):
     """
     Extend this for defining a pipeline source
     """

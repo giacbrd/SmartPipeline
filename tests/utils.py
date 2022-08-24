@@ -1,3 +1,4 @@
+import logging
 import random
 import time
 from datetime import datetime
@@ -100,6 +101,15 @@ class TextExtractor(Stage):
     def process(self, item: FilePathItem):
         with open(item.path) as f:
             item.payload["text"] = f.read()
+        return item
+
+
+class Logger(Stage):
+    def on_start(self):
+        self.logger.setLevel(logging.INFO)
+
+    def process(self, item: DataItem):
+        self.logger.info(f"logging item {item}")
         return item
 
 

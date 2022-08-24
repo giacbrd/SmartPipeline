@@ -75,6 +75,8 @@ on a machine learning model that is optimized for predicting multiple samples.
 
 Concurrent stages will call the method on different subsets of the data flow, concurrently.
 
+Each stage provides its own logger in :attr:`.Stage.logger`.
+
 A simple example of a stage that takes the items generated in the previous example and substitutes specific
 patterns in the string with a fixed string.
 
@@ -371,10 +373,23 @@ This is how we refactor the original ``__init__`` methods
 The effort for the developer is minimal, but the advantage big.
 We can now execute these pipeline abstractions in parallel,
 not just stateless methods as we would normally do with multiprocessing.
-In general, it is convenient to always define ``on_start`` if attributes we are going to construct require
+In general, it is convenient to always override ``on_start`` if attributes we are going to construct require
 this special treatment, so that the stage will be always compatible with both three ways of run it: sequentially,
 concurrently on threads or on processes.
 
 A complementary method is ``on_end``, both for stages and error manager,
 which allows to call operations at pipeline exit, even when this is caused by an error.
 Useful, for example, for closing files or connections we have opened in ``on_start``.
+
+
+Parallel stages and logging
+```````````````````````````
+
+The ``on_start`` method is especially useful for configuring stage loggers.
+
+Unfortunately a stage logger configuration, like the log level, and even
+the global logging configuration, won't be inherited by stages running on sub-processes
+(this actually happens when the fork method is not used for creating child processes).
+
+By defining the logging configuration of :attr:`.Stage.logger` inside the ``on_start`` overriding,
+one can solve this issue.
