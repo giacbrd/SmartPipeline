@@ -16,6 +16,11 @@ A framework for rapid development of robust data pipelines following a simple de
    :target: https://github.com/giacbrd/SmartPipeline/actions/workflows/tests.yml
    :alt: Tests
 
+.. image:: https://coveralls.io/repos/github/giacbrd/SmartPipeline/badge.svg?branch=master
+   :target: https://coveralls.io/github/giacbrd/SmartPipeline?branch=develop
+   :alt: Tests Coverage
+
+
 .. documentation-marker
 
 SmartPipeline gives you the tools to design and formalize simple data pipelines,
