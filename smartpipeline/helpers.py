@@ -1,8 +1,8 @@
 import os
-from typing import Generator, Optional, Any, IO
+from typing import IO, Any, Generator, Optional
 
-from smartpipeline.stage import Source
 from smartpipeline.item import DataItem
+from smartpipeline.stage import Source
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 

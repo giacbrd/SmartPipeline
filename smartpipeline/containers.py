@@ -9,23 +9,23 @@ import logging
 import queue
 import time
 from abc import ABC, abstractmethod
-from concurrent.futures import wait, Executor, Future
+from concurrent.futures import Executor, Future, wait
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from threading import Event
-from typing import Sequence, Optional, Callable, List
+from typing import Callable, List, Optional, Sequence
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.executors import (
+    StageExecutor,
+    batch_stage_executor,
     process,
     process_batch,
     stage_executor,
-    batch_stage_executor,
-    StageExecutor,
 )
 from smartpipeline.item import DataItem, Stop
-from smartpipeline.stage import Stage, BatchStage, Source, ItemsQueue, StageType
+from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage, StageType
 from smartpipeline.utils import ConcurrentCounter
 
 __author__ = "Giacomo Berardi <giacbrd.com>"

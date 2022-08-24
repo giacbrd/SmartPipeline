@@ -1,6 +1,6 @@
-from smartpipeline.helpers import LocalFilesSource, FilePathItem
+from smartpipeline.helpers import FilePathItem, LocalFilesSource
 from smartpipeline.pipeline import Pipeline
-from tests.utils import TextExtractor, TEXT_SAMPLES
+from tests.utils import TEXT_SAMPLES, TextExtractor
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 

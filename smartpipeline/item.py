@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from typing import Union, Generator, Any, KeysView, Callable, Dict
+from typing import Any, Callable, Dict, Generator, KeysView, Union
+
 from smartpipeline.defaults import PAYLOAD_SNIPPET_SIZE
 from smartpipeline.error.exceptions import CriticalError, SoftError
 

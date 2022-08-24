@@ -7,9 +7,9 @@ from typing import List, Type
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.helpers import FilePathItem
-from smartpipeline.pipeline import Pipeline
-from smartpipeline.stage import Source, Stage, BatchStage
 from smartpipeline.item import DataItem
+from smartpipeline.pipeline import Pipeline
+from smartpipeline.stage import BatchStage, Source, Stage
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 

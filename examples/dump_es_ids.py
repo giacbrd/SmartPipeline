@@ -12,10 +12,11 @@ from elasticsearch import Elasticsearch
 
 from smartpipeline.item import DataItem
 from smartpipeline.pipeline import Pipeline
-from smartpipeline.stage import Source, BatchStage, Stage
+from smartpipeline.stage import BatchStage, Source, Stage
 
 logging.basicConfig(
-    format="%(asctime)s - %(message)s", level=logging.INFO,
+    format="%(asctime)s - %(message)s",
+    level=logging.INFO,
 )
 
 _logger = logging.getLogger(__name__)

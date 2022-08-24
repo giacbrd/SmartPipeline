@@ -1,7 +1,8 @@
 from __future__ import annotations
+
 import logging
 import uuid
-from typing import Optional, Union, Any, Tuple, Type
+from typing import Any, Optional, Tuple, Type, Union
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.item import DataItem

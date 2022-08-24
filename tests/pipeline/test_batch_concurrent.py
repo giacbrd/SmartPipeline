@@ -6,15 +6,15 @@ import traceback
 import pytest
 
 from tests.utils import (
+    BatchErrorStage,
+    BatchExceptionStage,
+    BatchTextDuplicator,
+    BatchTextReverser,
+    ErrorStage,
+    ExceptionStage,
     RandomTextSource,
     TextDuplicator,
     TextReverser,
-    ErrorStage,
-    ExceptionStage,
-    BatchTextReverser,
-    BatchTextDuplicator,
-    BatchExceptionStage,
-    BatchErrorStage,
     TimeWaster,
     get_pipeline,
 )

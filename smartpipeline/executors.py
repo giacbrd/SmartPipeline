@@ -1,17 +1,18 @@
 from __future__ import annotations
+
 import logging
 import queue
 import time
 from logging.handlers import QueueHandler
 from threading import Event
-from typing import Sequence, Callable, Optional, List
+from typing import Callable, List, Optional, Sequence
 
-from smartpipeline.error.exceptions import RetryError
-from smartpipeline.utils import ConcurrentCounter, ProcessCounter
 from smartpipeline.defaults import CONCURRENCY_WAIT
+from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import DataItem, Stop
-from smartpipeline.stage import Stage, BatchStage, ItemsQueue, StageType
+from smartpipeline.stage import BatchStage, ItemsQueue, Stage, StageType
+from smartpipeline.utils import ConcurrentCounter, ProcessCounter
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 

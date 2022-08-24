@@ -7,14 +7,14 @@ from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.pipeline import Pipeline
 from tests.utils import (
+    CriticalIOErrorStage,
+    CustomException,
+    CustomizableBrokenStage,
+    ErrorStage,
+    ExceptionStage,
     RandomTextSource,
     TextDuplicator,
     TextReverser,
-    ErrorStage,
-    ExceptionStage,
-    CriticalIOErrorStage,
-    CustomizableBrokenStage,
-    CustomException,
     get_pipeline,
 )
 

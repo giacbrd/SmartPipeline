@@ -1,7 +1,7 @@
 import pytest
 
-from smartpipeline.error.handling import ErrorManager
 from smartpipeline.error.exceptions import CriticalError, SoftError
+from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import DataItem
 from tests.utils import TextReverser
 

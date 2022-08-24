@@ -3,43 +3,43 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from concurrent.futures._base import Future, Executor
+from concurrent.futures._base import Executor, Future
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from logging.handlers import QueueHandler
 from multiprocessing import Manager
 from queue import Queue
-from threading import Thread, Event
+from threading import Event, Thread
 from typing import (
-    Generator,
-    Optional,
-    Callable,
-    Sequence,
-    Mapping,
     Any,
-    Union,
+    Callable,
+    Generator,
+    Mapping,
+    Optional,
+    Sequence,
     Tuple,
     Type,
+    Union,
 )
 
-from smartpipeline.defaults import CONCURRENCY_WAIT, MAX_QUEUES_SIZE
-from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.containers import (
+    BaseContainer,
+    BatchConcurrentStageContainer,
+    BatchStageContainer,
+    ConcurrentStageContainer,
+    ConnectedStageMixin,
     SourceContainer,
     StageContainer,
-    ConcurrentStageContainer,
-    BatchStageContainer,
-    BatchConcurrentStageContainer,
-    BaseContainer,
-    ConnectedStageMixin,
 )
+from smartpipeline.defaults import CONCURRENCY_WAIT, MAX_QUEUES_SIZE
+from smartpipeline.error.handling import ErrorManager, RetryManager
+from smartpipeline.item import DataItem, Stop
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, StageType
-from smartpipeline.item import Stop, DataItem
 from smartpipeline.utils import (
     LastOrderedDict,
-    ThreadCounter,
-    ProcessCounter,
     LogsReceiver,
+    ProcessCounter,
+    ThreadCounter,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"

@@ -7,17 +7,17 @@ import pytest
 
 from smartpipeline.error.exceptions import RetryError
 from tests.utils import (
-    RandomTextSource,
-    TextDuplicator,
-    TextReverser,
+    CriticalIOErrorStage,
+    CustomizableBrokenStage,
+    ErrorSerializableStage,
     ErrorStage,
     ExceptionStage,
-    TimeWaster,
-    SerializableStage,
-    CriticalIOErrorStage,
+    RandomTextSource,
     SerializableErrorManager,
-    ErrorSerializableStage,
-    CustomizableBrokenStage,
+    SerializableStage,
+    TextDuplicator,
+    TextReverser,
+    TimeWaster,
     get_pipeline,
 )
 

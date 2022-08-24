@@ -7,17 +7,17 @@ from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.pipeline import Pipeline
 from tests.utils import (
+    BatchErrorStage,
+    BatchExceptionStage,
+    BatchTextDuplicator,
+    BatchTextReverser,
+    CustomException,
+    CustomizableBrokenBatchStage,
+    ErrorStage,
+    ExceptionStage,
     RandomTextSource,
     TextDuplicator,
     TextReverser,
-    ErrorStage,
-    ExceptionStage,
-    BatchTextReverser,
-    BatchTextDuplicator,
-    BatchExceptionStage,
-    BatchErrorStage,
-    CustomizableBrokenBatchStage,
-    CustomException,
     get_pipeline,
 )
 

@@ -3,24 +3,24 @@ from multiprocessing import Manager
 
 import pytest
 
-from smartpipeline.error.handling import ErrorManager, RetryManager
-from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.containers import (
+    BatchConcurrentStageContainer,
+    BatchStageContainer,
+    ConcurrentStageContainer,
     SourceContainer,
     StageContainer,
-    ConcurrentStageContainer,
-    BatchStageContainer,
-    BatchConcurrentStageContainer,
 )
+from smartpipeline.error.exceptions import CriticalError, SoftError
+from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.helpers import FilePathItem
 from smartpipeline.item import DataItem, Stop
 from smartpipeline.utils import ProcessCounter
 from tests.utils import (
-    TextReverser,
+    BatchTextGenerator,
+    BatchTextReverser,
     ListSource,
     TextGenerator,
-    BatchTextReverser,
-    BatchTextGenerator,
+    TextReverser,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
