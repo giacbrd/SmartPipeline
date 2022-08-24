@@ -17,7 +17,7 @@ A framework for rapid development of robust data pipelines following a simple de
    :alt: Tests
 
 .. image:: https://coveralls.io/repos/github/giacbrd/SmartPipeline/badge.svg?branch=master
-   :target: https://coveralls.io/github/giacbrd/SmartPipeline?branch=develop
+   :target: https://coveralls.io/github/giacbrd/SmartPipeline?branch=master
    :alt: Tests Coverage
 
 
