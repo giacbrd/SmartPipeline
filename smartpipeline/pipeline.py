@@ -200,7 +200,7 @@ class Pipeline:
         """
         if not any(self._containers):
             raise ValueError("Must append at least a stage")
-        self._logger.debug(f"Building the pipeline on stages: {self._log_stages()}")
+        self._logger.debug("Building the pipeline on stages: %s", self._log_stages())
         self._wait_executors()
         return self
 
@@ -226,7 +226,7 @@ class Pipeline:
 
         if not self._source_container.is_set():
             raise ValueError("Set the data source for this pipeline")
-        self._logger.debug(f"Running the pipeline on stages: {self._log_stages()}")
+        self._logger.debug("Running the pipeline on stages: %s", self._log_stages())
         counter = 0
         last_stage_name = self._last_stage_name()
         terminator_thread = None
@@ -359,7 +359,7 @@ class Pipeline:
         """
         Process a single item synchronously (no concurrency) through the pipeline
         """
-        self._logger.debug(f"Processing {item} on stages: {self._log_stages()}")
+        self._logger.debug("Processing %s on stages: %s", item, self._log_stages())
         last_stage_name = self._containers.last_key()
         self._source_container.prepend_item(item)
         for name, container in self._containers.items():
@@ -377,7 +377,7 @@ class Pipeline:
         :param callback: A function to call after a successful process of the item
         """
         self._logger.debug(
-            f"Processing asynchronously {item} on stages: {self._log_stages()}"
+            "Processing asynchronously %s on stages: %s", item, self._log_stages()
         )
         if callback is not None:
             item.set_callback(callback)
@@ -620,9 +620,13 @@ class Pipeline:
         self._containers[name] = None
         self._start_logs_receiver()
         logs_queue = self._get_logs_receiver_queue()
-        future = self._get_init_executor(parallel).submit(
-            _stage_initialization_with_logger, logs_queue, stage_class, args, kwargs
-        )
+        executor = self._get_init_executor(parallel)
+        if parallel:
+            future = executor.submit(
+                _stage_initialization_with_logger, logs_queue, stage_class, args, kwargs
+            )
+        else:
+            future = executor.submit(stage_class, *args, **kwargs)
 
         def append_stage(stage_future: Future):
             stage = stage_future.result()

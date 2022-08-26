@@ -57,6 +57,7 @@ class ESRetrieve(BatchStage):
             self._retrieve = self._mget
         else:
             self._retrieve = self._search
+        self.logger.setLevel(logging.INFO)
 
     @staticmethod
     def _mget(self, items: Sequence[DataItem]) -> Sequence[DataItem]:
@@ -113,7 +114,7 @@ def main(args):
                 es_indices=args.indices,
             )
             for item in pipeline.run():
-                _logger.info(f"Processed {item}")
+                _logger.info("Processed %s", item)
 
 
 if __name__ == "__main__":

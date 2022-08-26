@@ -105,11 +105,14 @@ class TextExtractor(Stage):
 
 
 class Logger(Stage):
+    def __init__(self):
+        self.logger.warning("testing concurrent initialization")
+
     def on_start(self):
         self.logger.setLevel(logging.INFO)
 
     def process(self, item: DataItem):
-        self.logger.info(f"logging item {item}")
+        self.logger.info("logging item %s", item)
         return item
 
 

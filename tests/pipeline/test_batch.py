@@ -99,7 +99,7 @@ def test_errors(caplog):
         assert str(error) == "test pipeline error"
     assert pipeline.count == 22
     assert all(
-        "stage error has generated an error" in record.msg.lower()
+        "has generated an error" in record.msg.lower()
         for record in caplog.records
         if record.levelno == logging.ERROR
     )

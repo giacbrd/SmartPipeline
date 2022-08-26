@@ -181,12 +181,13 @@ def test_concurrency_errors(caplog):
                     record
                     for record in caplog.records
                     if record.levelno == logging.ERROR
-                    and "stage error has generated an error" in record.msg.lower()
+                    and "has generated an error" in record.msg.lower()
                 ]
             )
             == 1
         )
         assert pipeline.count == 1
+    caplog.clear()
     with pytest.raises(Exception):
         pipeline = (
             get_pipeline()
@@ -209,13 +210,13 @@ def test_concurrency_errors(caplog):
                     record
                     for record in caplog.records
                     if record.levelno == logging.ERROR
-                    and "stage error has generated an error" in record.msg.lower()
+                    and "has generated an error" in record.msg.lower()
                 ]
             )
             == 1
         )
-        caplog.clear()
         assert pipeline.count == 1
+    caplog.clear()
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(10))
@@ -238,10 +239,7 @@ def test_concurrency_errors(caplog):
                 record
                 for record in caplog.records
                 if record.levelno == logging.ERROR
-                and (
-                    "stage error1 has generated an error" in record.msg.lower()
-                    or "stage error2 has generated an error" in record.msg.lower()
-                )
+                and "has generated an error" in record.msg.lower()
             ]
         )
         == 20
@@ -415,7 +413,7 @@ def test_huge_run():
     start_time = time.time()
     items = list(runner)
     elapsed1 = time.time() - start_time
-    logger.debug("Time for strongly parallel: {}".format(elapsed1))
+    logger.debug("Time for strongly parallel: %s", elapsed1)
     _check(items, 200)
     pipeline = (
         get_pipeline()
@@ -430,7 +428,7 @@ def test_huge_run():
     start_time = time.time()
     items = list(runner)
     elapsed2 = time.time() - start_time
-    logger.debug("Time for mildly parallel: {}".format(elapsed2))
+    logger.debug("Time for mildly parallel: %s", elapsed2)
     _check(items, 200)
     pipeline = (
         get_pipeline()
@@ -445,7 +443,7 @@ def test_huge_run():
     start_time = time.time()
     items = list(runner)
     elapsed3 = time.time() - start_time
-    logger.debug("Time for sequential: {}".format(elapsed3))
+    logger.debug("Time for sequential: %s", elapsed3)
     _check(items, 200)
     assert elapsed3 > elapsed1
     assert elapsed3 > elapsed2
@@ -466,7 +464,7 @@ def test_run_times():
     items = list(pipeline.run())
     _check(items, 10)
     elapsed0 = time.time() - start_time
-    logger.debug("Time for multi-threading: {}".format(elapsed0))
+    logger.debug("Time for multi-threading: %s", elapsed0)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(10))
@@ -480,7 +478,7 @@ def test_run_times():
     items = list(pipeline.run())
     _check(items, 10)
     elapsed1 = time.time() - start_time
-    logger.debug("Time for multi-process: {}".format(elapsed1))
+    logger.debug("Time for multi-process: %s", elapsed1)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(10))
@@ -494,7 +492,7 @@ def test_run_times():
     items = list(pipeline.run())
     _check(items, 10)
     elapsed2 = time.time() - start_time
-    logger.debug("Time for sequential: {}".format(elapsed2))
+    logger.debug("Time for sequential: %s", elapsed2)
     assert elapsed2 > elapsed0
     assert elapsed2 > elapsed1
 
@@ -701,6 +699,24 @@ def test_logging(caplog):
         ]
         assert len(messages) == 100
         assert all("logging item " in record.msg.lower() for record in messages)
+        caplog.clear()
+        pipeline = (
+            get_pipeline()
+            .set_source(RandomTextSource(10))
+            .append_stage_concurrently("logger1", Logger, concurrency=1, parallel=True)
+            .append_stage("reverser0", TextReverser(), concurrency=1)
+            .build()
+        )
+        list(pipeline.run())
+        messages = [
+            record for record in caplog.records if record.levelno == logging.INFO
+        ]
+        assert len(messages) == 10
+        assert all("logging item " in record.msg.lower() for record in messages)
+        assert any(
+            "testing concurrent initialization" in record.msg.lower()
+            for record in caplog.records
+        )
         caplog.clear()
         pipeline = (
             get_pipeline()

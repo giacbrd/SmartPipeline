@@ -40,7 +40,7 @@ the payload of each one.
         def pop(self):
             self._counter += 1
             # when 1000 items are reached we declare a stop,
-            # this will be still valid for all the next calls of pop()
+            # the stop will be still valid for all the next calls of pop()
             if self._counter > self._total:
                 self.stop()
                 return
@@ -307,7 +307,7 @@ More, executables examples can be found in the root sub-directory ``examples``.
     )
 
     for item in pipeline.run():
-        logging.info(f"Processed document: {item}")
+        logging.info("Processed document: %s", item)
 
 .. _concurrency-section:
 
@@ -322,9 +322,11 @@ When we submit a Python function to a spawned/forked process we are actually cop
 to the new one, because OS processes cannot share memory, differently from multi-threading.
 In order to do this (at least for spawned processes) the data we want to pass to a new process must be serialized.
 Even communication between processes involves copying data from one to another (e.g. through queues).
+Moreover, for child processes that are not created with "fork" method,
+the memory of the parent won't be copied completely.
 
-Therefore, if we decide to run a pipeline stage concurrently and parallel,
-it is going to be copied in each process.
+Therefore, if we decide to run a pipeline stage concurrently and in parallel,
+the stage is going to be copied to each process.
 This means that the stage must be "pickleable":
 serializable with the `pickle <https://docs.python.org/3/library/pickle.html>`_ module.
 If we want to define non-serializable attributes in our stage object and run it on more processes,

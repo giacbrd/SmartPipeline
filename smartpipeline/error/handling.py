@@ -70,7 +70,9 @@ class ErrorManager:
             # any un-managed exception is a potential critical error
             item_error = item.add_critical_error(stage.name, error)
         exc_info = (type(item_error), item_error, item_error.__traceback__)
-        self.logger.exception(self._generate_message(stage, item), exc_info=exc_info)
+        self.logger.exception(
+            "%s has generated an error on item %s", stage, item, exc_info=exc_info
+        )
         if isinstance(item_error, CriticalError):
             exception = self._check_critical(item_error)
             if exception:
@@ -83,10 +85,6 @@ class ErrorManager:
                 f"{self.__class__.__name__}-{str(uuid.uuid4())[:8]}"
             )
         return self._logger
-
-    @staticmethod
-    def _generate_message(stage: AliveMixin, item: DataItem) -> str:
-        return f"{stage} has generated an error on item {item}"
 
     def _check_critical(self, error: CriticalError) -> Union[Exception, CriticalError]:
         """

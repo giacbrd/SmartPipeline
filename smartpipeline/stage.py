@@ -19,7 +19,7 @@ class AliveMixin:
     @property
     def name(self) -> str:
         if getattr(self, "_name", None) is None:
-            self._name = f"{self.__class__.name}-{uuid.uuid4()}"
+            self._name = f"{self.__class__.__name__}-{str(uuid.uuid4())[:8]}"
         return self._name
 
     def __str__(self) -> str:

@@ -299,14 +299,14 @@ class SourceContainer(BaseContainer):
             except queue.Empty:
                 if self.is_stopped():
                     self._next_item = Stop()
-            self._logger.debug(f"{ret} produced by the source")
+            self._logger.debug("%s produced by the source", ret)
             return ret
         elif self._source is not None:
             ret = self._source.pop()
             if self.is_stopped():
                 return Stop()
             else:
-                self._logger.debug(f"{ret} produced by the source")
+                self._logger.debug("%s produced by the source", ret)
                 return ret
         elif self.is_stopped():
             return Stop()
@@ -570,7 +570,10 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         for future in self._futures:
             future.cancel()
         if self._stage_executor is not None:
-            self._stage_executor.shutdown()
+            try:
+                self._stage_executor.shutdown()
+            except OSError as e:
+                logging.warning("Problems in shutting down %s: %s", self, e)
 
     def __del__(self):
         self.shutdown()

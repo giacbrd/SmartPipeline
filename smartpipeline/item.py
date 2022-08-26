@@ -36,6 +36,15 @@ class DataItem:
         """
         return self._payload
 
+    @property
+    def d(self) -> Dict[str, Any]:
+        """
+        Alias for the payload
+
+        :return: A dictionary in which organizing data by fields (recommended to be JSON serializable)
+        """
+        return self._payload
+
     def payload_snippet(self, max_size: int = PAYLOAD_SNIPPET_SIZE):
         """
         A short string representation of the :attr:`.DataItem.payload` (recommended to override this method)

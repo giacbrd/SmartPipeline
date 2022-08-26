@@ -434,7 +434,7 @@ def test_huge_run():
     start_time = time.time()
     items = list(pipeline.run())
     elapsed1 = time.time() - start_time
-    logger.debug("Time for parallel: {}".format(elapsed1))
+    logger.debug("Time for parallel: %s", elapsed1)
     _check(items, 200)
     pipeline = (
         get_pipeline()
@@ -448,7 +448,7 @@ def test_huge_run():
     start_time = time.time()
     items = list(pipeline.run())
     elapsed2 = time.time() - start_time
-    logger.debug("Time for sequential: {}".format(elapsed2))
+    logger.debug("Time for sequential: %s", elapsed2)
     _check(items, 200)
     assert elapsed2 > elapsed1
 
