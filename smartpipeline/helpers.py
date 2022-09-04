@@ -1,5 +1,5 @@
 import os
-from typing import IO, Any, Generator, Optional
+from typing import Any, Generator, Optional
 
 from smartpipeline.item import DataItem
 from smartpipeline.stage import Source
@@ -46,13 +46,3 @@ class FilePathItem(DataItem):
     @property
     def id(self) -> Any:
         return os.path.basename(self.path) or super().id()
-
-
-class FileObjItem(FilePathItem):
-    """
-    An item with a pointer to a file object
-    """
-
-    def __init__(self, file: IO):
-        super().__init__(file.name)
-        self.file = file

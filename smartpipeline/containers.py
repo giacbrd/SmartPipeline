@@ -209,7 +209,7 @@ class SourceContainer(BaseContainer):
         self._queue_initializer = initializer
 
     def __str__(self) -> str:
-        return "Base container for source {}".format(self._source)
+        return f"Base container for source {self._source}"
 
     def set(self, source: Source):
         """
@@ -336,7 +336,7 @@ class StageContainer(
         self._last_processed = None
 
     def __str__(self) -> str:
-        return "Container for {}".format(self._stage)
+        return f"Container for {self._stage}"
 
     def process(self) -> DataItem:
         item = self.previous.get_processed()

@@ -40,6 +40,8 @@ def test_run():
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
     assert pipeline.count == 35
+    for _ in range(3):
+        assert pipeline._containers["batch_duplicator"].get_processed() is None
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(40))

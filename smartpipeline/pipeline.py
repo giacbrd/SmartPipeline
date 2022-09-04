@@ -676,7 +676,7 @@ class Pipeline:
                     item.callback()
                     self._out_queue.put(item)
 
-            self._pipeline_executor = Thread(target=pipeline_runner, daemon=True)
+            self._pipeline_executor = Thread(target=pipeline_runner)
             self._pipeline_executor.start()
         return self._pipeline_executor
 

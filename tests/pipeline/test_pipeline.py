@@ -31,6 +31,10 @@ def test_run():
         .append_stage("duplicator", TextDuplicator())
         .build()
     )
+    assert str(pipeline._source_container)
+    for container in pipeline._containers.values():
+        assert container.name
+        assert str(container)
     for item in pipeline.run():
         assert len([x for x in item.payload.keys() if x.startswith("text")]) == 2
         assert item.get_timing("reverser")
@@ -218,6 +222,29 @@ def test_retryable_stage(items_generator_fx):
     assert not item.has_critical_errors()
     soft_errors = list(item.soft_errors())
     assert len(soft_errors) == 2 and all(
+        isinstance(err, RetryError) and isinstance(err.get_exception(), ValueError)
+        for err in soft_errors
+    )
+
+    # 0 retries
+    item = next(items_generator_fx)
+    pipeline = (
+        Pipeline()
+        .append_stage("reverser0", TextReverser())
+        .append_stage(
+            "broken_stage",
+            CustomizableBrokenStage([ValueError]),
+            backoff=0,
+            max_retries=0,
+            retryable_errors=(ValueError,),
+        )
+        .append_stage("reverser1", TextReverser())
+        .build()
+    )
+    item = pipeline.process(item)
+    assert not item.has_critical_errors()
+    soft_errors = list(item.soft_errors())
+    assert len(soft_errors) == 1 and all(
         isinstance(err, RetryError) and isinstance(err.get_exception(), ValueError)
         for err in soft_errors
     )

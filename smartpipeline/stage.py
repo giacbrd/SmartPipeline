@@ -98,7 +98,7 @@ class BatchStage(AliveMixin, ConstructorMixin, BatchProcessor):
         self._timeout = timeout
 
     def __str__(self) -> str:
-        return "Batch stage {}".format(self.name)
+        return f"Batch stage {self.name}"
 
     @property
     def size(self) -> int:

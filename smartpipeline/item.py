@@ -206,4 +206,4 @@ class Stop(DataItem):
     """
 
     def __str__(self) -> str:
-        return "Stop signal {}".format(self.id)
+        return f"Stop signal {self.id}"

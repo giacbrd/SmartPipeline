@@ -33,10 +33,12 @@ def test_data():
     item.payload["id"] = "666"
     item.set_metadata("source", "remote")
     item.set_metadata("version", 3)
+    assert set(item.metadata_fields) == {"source", "version"}
     assert item.id == "666"
     assert item.get_metadata("source") == "remote"
     assert item.get_metadata("version") == 3
     assert not item.get_metadata("head")
+    assert item.payload == item.d
 
 
 def test_error():
@@ -71,6 +73,7 @@ def test_source_container():
     for i, item in enumerate(data):
         item.set_metadata("id", i + 1)
     container = SourceContainer()
+    assert str(container)
     assert not container.is_set()
     source = ListSource(data)
     container.set(source)
@@ -121,12 +124,15 @@ def test_stage_container():
     previous.set_previous(source)
     container = StageContainer("test1", TextReverser(), ErrorManager(), RetryManager())
     container.set_previous(previous)
+    assert str(container)
+    assert container.name
     previous.process()
     assert container.count() == 0
     item1 = container.process()
     item2 = container.get_processed()
     assert item1 and item2
     assert item1 == item2
+    assert len(list(item1.timed_stages)) == 2
     assert container.count() == 1
     previous.process()
     item3 = container.process()
@@ -144,7 +150,9 @@ def test_stage_container():
     source.set(ListSource([simple_item]))
     container.set_previous(source)
     assert container.process()
-    assert isinstance(container.process(), Stop)
+    last = container.process()
+    assert isinstance(last, Stop)
+    assert str(last)
     assert container.is_stopped() and not container.is_terminated()
 
     container = ConcurrentStageContainer(
@@ -161,6 +169,7 @@ def test_stage_container():
     previous.process()
     item5 = container.get_processed(block=True)
     assert item5
+    assert list(item5.timed_stages)
     previous.process()
     item6 = container.get_processed(block=True)
     assert item6
@@ -171,6 +180,7 @@ def test_stage_container():
     assert item6.payload == container.get_processed().payload
     container.terminate()
     container.shutdown()
+    del container
 
     source = SourceContainer()
     source.set(ListSource([simple_item]))
@@ -194,6 +204,7 @@ def test_stage_container():
     time.sleep(1)
     assert container.is_terminated()
     container.shutdown()
+    del container
 
 
 def _get_items(container):
@@ -224,6 +235,7 @@ def test_batch_stage_container1():
     items2 = list(_get_items(container))
     assert all(items1) and all(items2)
     assert all(item.payload.get("text") for item in items1)
+    assert all(list(item.timed_stages) for item in items1)
     assert all(item.payload.get("text") for item in items2)
     assert items1 == items2
     previous.process()
@@ -286,6 +298,7 @@ def test_batch_concurrent_stage_container1():
         previous.process()
     items5 = list(_get_items(container))
     assert items5 and all(items5)
+    assert all(list(item.timed_stages) for item in items5)
     assert container.count() == len(items5)
     for _ in range(11):
         previous.process()
@@ -297,6 +310,7 @@ def test_batch_concurrent_stage_container1():
     assert not container.is_stopped() and not container.is_terminated()
     container.empty_queues()
     container.terminate()
+    del container
 
     container = BatchConcurrentStageContainer(
         "test2",
@@ -316,6 +330,7 @@ def test_batch_concurrent_stage_container1():
     for i, item in enumerate(items6):
         assert item.payload == result[i].payload, "On item {}".format(i)
     container.terminate()
+    del container
 
 
 def test_batch_concurrent_stage_container2():
@@ -345,3 +360,4 @@ def test_batch_concurrent_stage_container2():
     time.sleep(1)
     assert container.is_terminated()
     container.shutdown()
+    del container

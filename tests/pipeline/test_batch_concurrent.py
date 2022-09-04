@@ -534,6 +534,11 @@ def test_timeouts():
     _check(items, 100, pipeline)
 
 
+def _check_item(item):
+    assert item.payload
+    item.set_metadata("check", True)
+
+
 def test_single_items(items_generator_fx):
     pipeline = (
         get_pipeline()
@@ -545,11 +550,14 @@ def test_single_items(items_generator_fx):
     )
     item = next(items_generator_fx)
     for _ in range(88):
-        pipeline.process_async(copy.deepcopy(item))
-    result = pipeline.get_item()
+        pipeline.process_async(copy.deepcopy(item), callback=_check_item)
     pipeline.stop()
+    result = pipeline.get_item()
     assert result.id == item.id
+    assert result.get_metadata("check")
     assert result.payload["text"] != item.payload["text"]
+    for _ in range(87):
+        pipeline.get_item()
 
     pipeline = (
         get_pipeline()
@@ -564,10 +572,11 @@ def test_single_items(items_generator_fx):
         .build()
     )
     item = next(items_generator_fx)
-    pipeline.process_async(copy.deepcopy(item))
+    pipeline.process_async(copy.deepcopy(item), callback=_check_item)
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
+    assert result.get_metadata("check")
     assert result.payload["text"] != item.payload["text"]
 
     pipeline = (
@@ -590,10 +599,11 @@ def test_single_items(items_generator_fx):
     )
     item = next(items_generator_fx)
     for _ in range(88):
-        pipeline.process_async(item)
+        pipeline.process_async(item, callback=_check_item)
     for _ in range(88):
         result = pipeline.get_item()
         assert result.id == item.id
+        assert result.get_metadata("check")
         assert result.payload["text"]
         assert result.payload["text"] != item.payload["text"]
     pipeline.stop()
@@ -606,10 +616,11 @@ def test_single_items(items_generator_fx):
         .build()
     )
     item = next(items_generator_fx)
-    pipeline.process_async(copy.deepcopy(item))
+    pipeline.process_async(copy.deepcopy(item), callback=_check_item)
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
+    assert result.get_metadata("check")
     assert result.payload["text"] == item.payload["text"]
 
     pipeline = (
@@ -620,10 +631,11 @@ def test_single_items(items_generator_fx):
         .build()
     )
     item = next(items_generator_fx)
-    pipeline.process_async(copy.deepcopy(item))
+    pipeline.process_async(copy.deepcopy(item), callback=_check_item)
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
+    assert result.get_metadata("check")
     assert result.payload["text"] != item.payload["text"]
 
     pipeline = (
@@ -634,10 +646,11 @@ def test_single_items(items_generator_fx):
         .build()
     )
     item = next(items_generator_fx)
-    pipeline.process_async(copy.deepcopy(item))
+    pipeline.process_async(copy.deepcopy(item), callback=_check_item)
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
+    assert result.get_metadata("check")
     assert result.payload["text"] != item.payload["text"]
 
     pipeline = (
@@ -658,10 +671,11 @@ def test_single_items(items_generator_fx):
         .build()
     )
     item = next(items_generator_fx)
-    pipeline.process_async(item)
+    pipeline.process_async(item, callback=_check_item)
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
+    assert result.get_metadata("check")
     assert result.payload["text"] == item.payload["text"]
     assert len(result.payload.keys()) > len(item.payload.keys())
 
@@ -677,11 +691,14 @@ def test_mixed_single_items(items_generator_fx):
     )
     item = next(items_generator_fx)
     for _ in range(88):
-        pipeline.process_async(copy.deepcopy(item))
+        pipeline.process_async(copy.deepcopy(item), callback=_check_item)
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
+    assert result.get_metadata("check")
     assert result.payload["text"] != item.payload["text"]
+    for _ in range(87):
+        pipeline.get_item()
 
     pipeline = (
         get_pipeline()
@@ -696,10 +713,11 @@ def test_mixed_single_items(items_generator_fx):
         .build()
     )
     item = next(items_generator_fx)
-    pipeline.process_async(copy.deepcopy(item))
+    pipeline.process_async(copy.deepcopy(item), callback=_check_item)
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
+    assert result.get_metadata("check")
     assert result.payload["text"] != item.payload["text"]
 
     pipeline = (
@@ -722,10 +740,11 @@ def test_mixed_single_items(items_generator_fx):
     )
     item = next(items_generator_fx)
     for _ in range(88):
-        pipeline.process_async(item)
+        pipeline.process_async(item, callback=_check_item)
     for _ in range(88):
         result = pipeline.get_item()
         assert result.id == item.id
+        assert result.get_metadata("check")
         assert result.payload["text"]
         assert result.payload["text"] != item.payload["text"]
     pipeline.stop()

@@ -1,3 +1,5 @@
 [run]
 relative_files = True
 source_pkgs = smartpipeline
+exclude_lines =
+    pass
