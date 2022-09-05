@@ -1,5 +1,8 @@
 [run]
 relative_files = True
 source_pkgs = smartpipeline
+
+[report]
 exclude_lines =
     pass
+

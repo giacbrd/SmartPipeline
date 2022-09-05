@@ -255,13 +255,22 @@ def test_retryable_batch_stages(items_generator_fx):
         .set_source(RandomTextSource(10))
         .append_stage("reverser0", TextReverser())
         .append_stage(
-            "broken_batch_stage",
+            "broken_batch_stage1",
             CustomizableBrokenBatchStage(
                 size=10, timeout=5, exceptions_to_raise=[CustomException, ValueError]
             ),
             backoff=0.01,
             max_retries=1,
             retryable_errors=(CustomException, ValueError),
+        )
+        .append_stage(
+            "broken_batch_stage2",
+            CustomizableBrokenBatchStage(
+                size=10, timeout=5, exceptions_to_raise=[IOError]
+            ),
+            backoff=0,
+            max_retries=0,
+            retryable_errors=(IOError,),
         )
         .append_stage("reverser1", TextReverser())
         .build()
@@ -273,7 +282,8 @@ def test_retryable_batch_stages(items_generator_fx):
         assert not item.has_critical_errors()
         assert all(
             isinstance(err, RetryError)
-            and isinstance(err.get_exception(), (CustomException, ValueError))
-            and err.get_stage() == "broken_batch_stage"
+            and isinstance(err.get_exception(), (CustomException, ValueError, IOError))
+            and err.get_stage() == "broken_batch_stage1"
+            or err.get_stage() == "broken_batch_stage2"
             for err in item.soft_errors()
         )

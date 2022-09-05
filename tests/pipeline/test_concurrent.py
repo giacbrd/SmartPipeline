@@ -646,6 +646,15 @@ def test_concurrent_run_with_retryable_stages():
             max_retries=1,
             retryable_errors=(TypeError,),
         )
+        .append_stage(
+            "broken_stage3",
+            CustomizableBrokenStage([IOError]),
+            concurrency=1,
+            parallel=True,
+            backoff=0,
+            max_retries=0,
+            retryable_errors=(IOError,),
+        )
         .build()
     )
     items = list(pipeline.run())
@@ -658,6 +667,9 @@ def test_concurrent_run_with_retryable_stages():
         soft_errors_broken_stage_2 = [
             err for err in soft_errors if err.get_stage() == "broken_stage2"
         ]
+        soft_errors_broken_stage_3 = [
+            err for err in soft_errors if err.get_stage() == "broken_stage3"
+        ]
         assert len(soft_errors_broken_stage_1) == 3 and all(
             isinstance(err, RetryError) and isinstance(err.get_exception(), ValueError)
             for err in soft_errors_broken_stage_1
@@ -665,6 +677,10 @@ def test_concurrent_run_with_retryable_stages():
         assert len(soft_errors_broken_stage_2) == 2 and all(
             isinstance(err, RetryError) and isinstance(err.get_exception(), TypeError)
             for err in soft_errors_broken_stage_2
+        )
+        assert len(soft_errors_broken_stage_3) == 1 and all(
+            isinstance(err, RetryError) and isinstance(err.get_exception(), IOError)
+            for err in soft_errors_broken_stage_3
         )
 
 

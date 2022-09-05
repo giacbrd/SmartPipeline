@@ -1,4 +1,5 @@
 import time
+from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import Manager
 
 import pytest
@@ -12,6 +13,7 @@ from smartpipeline.containers import (
 )
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager, RetryManager
+from smartpipeline.executors import batch_stage_executor, stage_executor
 from smartpipeline.helpers import FilePathItem
 from smartpipeline.item import DataItem, Stop
 from smartpipeline.utils import ProcessCounter
@@ -19,6 +21,9 @@ from tests.utils import (
     BatchTextGenerator,
     BatchTextReverser,
     ListSource,
+    SerializableBatchStage,
+    SerializableErrorManager,
+    SerializableStage,
     TextGenerator,
     TextReverser,
 )
@@ -205,6 +210,62 @@ def test_stage_container():
     assert container.is_terminated()
     container.shutdown()
     del container
+
+
+def test_executors():
+    manager = Manager()
+    terminated = manager.Event()
+    in_queue = manager.Queue()
+    out_queue = manager.Queue()
+
+    def _stage_executor():
+        stage_executor(
+            SerializableStage(),
+            in_queue,
+            out_queue,
+            SerializableErrorManager().raise_on_critical_error(),
+            RetryManager(),
+            terminated,
+            ProcessCounter(manager),
+            ProcessCounter(manager),
+            manager.Queue(),
+        )
+
+    future = ThreadPoolExecutor().submit(_stage_executor)
+    in_queue.put(DataItem())
+    assert out_queue.get(block=True).payload["file"]
+    item = DataItem()
+    item.payload["file"] = "f"
+    in_queue.put(item)
+    assert str(future.exception()) == "bad item"
+    terminated.set()
+    future.cancel()
+    terminated = manager.Event()
+
+    def _batch_stage_executor():
+        batch_stage_executor(
+            SerializableBatchStage(100, 1),
+            in_queue,
+            out_queue,
+            SerializableErrorManager().raise_on_critical_error(),
+            RetryManager(),
+            terminated,
+            ProcessCounter(manager),
+            ProcessCounter(manager),
+            manager.Queue(),
+        )
+
+    future = ThreadPoolExecutor().submit(_batch_stage_executor)
+    for _ in range(150):
+        in_queue.put(DataItem())
+    for _ in range(150):
+        assert out_queue.get(block=True).payload["file"]
+    item = DataItem()
+    item.payload["file"] = "f"
+    in_queue.put(item)
+    assert str(future.exception()) == "bad item"
+    terminated.set()
+    future.cancel()
 
 
 def _get_items(container):

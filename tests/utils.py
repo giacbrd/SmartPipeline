@@ -230,9 +230,22 @@ class SerializableStage(Stage):
         return self._file.closed
 
     def process(self, item: DataItem):
+        if item.payload.get("file"):
+            raise ValueError("bad item")
         if self._file is not None and self._file.name == __file__:
             item.payload["file"] = self._file.name
         return item
+
+
+class SerializableBatchStage(BatchStage, SerializableStage):
+    def __init__(self, size: int, timeout: int):
+        super().__init__(size, timeout)
+        self._file = None
+
+    def process_batch(self, items):
+        for item in items:
+            self.process(item)
+        return items
 
 
 class ErrorSerializableStage(Stage):

@@ -46,9 +46,10 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
 def _stage_initialization_with_logger(logs_queue, stage_class, args, kwargs):
-    handler = QueueHandler(logs_queue)
     root_logger = logging.getLogger()
-    root_logger.addHandler(handler)
+    if not any(isinstance(handler, QueueHandler) for handler in root_logger.handlers):
+        handler = QueueHandler(logs_queue)
+        root_logger.addHandler(handler)
     return stage_class(*args, **kwargs)
 
 
@@ -596,12 +597,13 @@ class Pipeline:
         :param args: List of arguments for the stage constructor
         :param kwargs: Dictionary of keyed arguments for the stage constructor
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
-        :param parallel: If True use multiprocessing, otherwise threads
+        :param parallel: If True use multiprocessing, otherwise threads (also for concurrent construction)
         :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. When the maximum number of retries is hit, a :class:`.error.exceptions.RetryError` is raised
         :param max_retries: maximum number of retries for the stage before raising a RetryError(SoftError) (default 0)
         :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
         """
         self._executors_ready = False
+        parallel_construction = parallel
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and issubclass(stage_class, BatchStage):
             parallel = False
@@ -620,8 +622,8 @@ class Pipeline:
         self._containers[name] = None
         self._start_logs_receiver()
         logs_queue = self._get_logs_receiver_queue()
-        executor = self._get_init_executor(parallel)
-        if parallel:
+        executor = self._get_init_executor(parallel_construction)
+        if parallel_construction:
             future = executor.submit(
                 _stage_initialization_with_logger, logs_queue, stage_class, args, kwargs
             )
