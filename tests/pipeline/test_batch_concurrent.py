@@ -551,13 +551,13 @@ def test_single_items(items_generator_fx):
     item = next(items_generator_fx)
     for _ in range(88):
         pipeline.process_async(copy.deepcopy(item), callback=_check_item)
-    pipeline.stop()
     result = pipeline.get_item()
     assert result.id == item.id
     assert result.get_metadata("check")
     assert result.payload["text"] != item.payload["text"]
     for _ in range(87):
         pipeline.get_item()
+    pipeline.stop()
 
     pipeline = (
         get_pipeline()
@@ -654,7 +654,7 @@ def test_single_items(items_generator_fx):
     assert result.payload["text"] != item.payload["text"]
 
     pipeline = (
-        get_pipeline(max_init_workers=1)
+        get_pipeline(max_init_workers=2)
         .append_stage_concurrently(
             "reverser0", BatchTextReverser, args=[20], concurrency=1, parallel=True
         )
@@ -693,12 +693,12 @@ def test_mixed_single_items(items_generator_fx):
     for _ in range(88):
         pipeline.process_async(copy.deepcopy(item), callback=_check_item)
     result = pipeline.get_item()
-    pipeline.stop()
     assert result.id == item.id
     assert result.get_metadata("check")
     assert result.payload["text"] != item.payload["text"]
     for _ in range(87):
         pipeline.get_item()
+    pipeline.stop()
 
     pipeline = (
         get_pipeline()

@@ -1,6 +1,8 @@
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from multiprocessing import Manager
+from queue import Queue
+from threading import Event
 
 import pytest
 
@@ -16,7 +18,7 @@ from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.executors import batch_stage_executor, stage_executor
 from smartpipeline.helpers import FilePathItem
 from smartpipeline.item import DataItem, Stop
-from smartpipeline.utils import ProcessCounter
+from smartpipeline.utils import ProcessCounter, ThreadCounter
 from tests.utils import (
     BatchTextGenerator,
     BatchTextReverser,
@@ -218,7 +220,12 @@ def test_executors():
     in_queue = manager.Queue()
     out_queue = manager.Queue()
 
-    def _stage_executor():
+    in_queue.put(DataItem())
+    item = DataItem()
+    item.payload["file"] = "f"
+    in_queue.put(item)
+    terminated.set()
+    with pytest.raises(ValueError) as excinfo:
         stage_executor(
             SerializableStage(),
             in_queue,
@@ -230,19 +237,17 @@ def test_executors():
             ProcessCounter(manager),
             manager.Queue(),
         )
-
-    future = ThreadPoolExecutor().submit(_stage_executor)
-    in_queue.put(DataItem())
+    assert "bad item" in str(excinfo.value)
     assert out_queue.get(block=True).payload["file"]
+
+    terminated = manager.Event()
+    for _ in range(100):
+        in_queue.put(DataItem())
     item = DataItem()
     item.payload["file"] = "f"
     in_queue.put(item)
-    assert str(future.exception()) == "bad item"
     terminated.set()
-    future.cancel()
-    terminated = manager.Event()
-
-    def _batch_stage_executor():
+    with pytest.raises(ValueError) as excinfo:
         batch_stage_executor(
             SerializableBatchStage(100, 1),
             in_queue,
@@ -254,8 +259,77 @@ def test_executors():
             ProcessCounter(manager),
             manager.Queue(),
         )
+    assert "bad item" in str(excinfo.value)
+    for _ in range(100):
+        assert out_queue.get(block=True).payload["file"]
+    assert out_queue.empty()
 
-    future = ThreadPoolExecutor().submit(_batch_stage_executor)
+    terminated = manager.Event()
+    for _ in range(100):
+        in_queue.put(DataItem())
+    item = DataItem()
+    item.payload["file"] = "f"
+    in_queue.put(item)
+    terminated.set()
+    with pytest.raises(ValueError) as excinfo:
+        batch_stage_executor(
+            SerializableBatchStage(100, 1),
+            in_queue,
+            out_queue,
+            SerializableErrorManager().raise_on_critical_error(),
+            RetryManager(),
+            terminated,
+            ProcessCounter(manager),
+            ProcessCounter(manager),
+            manager.Queue(),
+        )
+    assert "bad item" in str(excinfo.value)
+    for _ in range(100):
+        assert out_queue.get(block=True).payload["file"]
+    assert out_queue.empty()
+
+    # also test when running concurrently, both on processes and threads, that is how batch stages always run
+    terminated = manager.Event()
+    future = ProcessPoolExecutor().submit(
+        batch_stage_executor,
+        SerializableBatchStage(100, 1),
+        in_queue,
+        out_queue,
+        SerializableErrorManager().raise_on_critical_error(),
+        RetryManager(),
+        terminated,
+        ProcessCounter(manager),
+        ProcessCounter(manager),
+        manager.Queue(),
+    )
+    for _ in range(150):
+        in_queue.put(DataItem())
+    for _ in range(150):
+        assert out_queue.get(block=True).payload["file"]
+    item = DataItem()
+    item.payload["file"] = "f"
+    in_queue.put(item)
+    assert str(future.exception()) == "bad item"
+    terminated.set()
+    future.cancel()
+
+    terminated = Event()
+    in_queue = Queue()
+    out_queue = Queue()
+    stage = SerializableBatchStage(100, 1)
+    stage.on_start()
+    future = ThreadPoolExecutor().submit(
+        batch_stage_executor,
+        stage,
+        in_queue,
+        out_queue,
+        SerializableErrorManager().raise_on_critical_error(),
+        RetryManager(),
+        terminated,
+        ThreadCounter(),
+        ThreadCounter(),
+        Queue(),
+    )
     for _ in range(150):
         in_queue.put(DataItem())
     for _ in range(150):

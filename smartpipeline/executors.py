@@ -156,8 +156,11 @@ def stage_executor(
     if isinstance(counter, ProcessCounter):
         if logs_queue is not None:
             root_logger = logging.getLogger()
+            # only by comparing string of queues we obtain their "original" address
             if not any(
-                isinstance(handler, QueueHandler) for handler in root_logger.handlers
+                isinstance(handler, QueueHandler)
+                and str(handler.queue) == str(logs_queue)
+                for handler in root_logger.handlers
             ):
                 handler = QueueHandler(logs_queue)
                 root_logger.addHandler(handler)
@@ -213,9 +216,15 @@ def batch_stage_executor(
     """
     if isinstance(counter, ProcessCounter):
         if logs_queue is not None:
-            handler = QueueHandler(logs_queue)
             root_logger = logging.getLogger()
-            root_logger.addHandler(handler)
+            # only by comparing string of queues we obtain their "original" address
+            if not any(
+                isinstance(handler, QueueHandler)
+                and str(handler.queue) == str(logs_queue)
+                for handler in root_logger.handlers
+            ):
+                handler = QueueHandler(logs_queue)
+                root_logger.addHandler(handler)
         # call these only if the stage and the error manager are copies of the original,
         # ergo this executor is running in a child process
         error_manager.on_start()

@@ -47,7 +47,11 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 def _stage_initialization_with_logger(logs_queue, stage_class, args, kwargs):
     root_logger = logging.getLogger()
-    if not any(isinstance(handler, QueueHandler) for handler in root_logger.handlers):
+    # only by comparing string of queues we obtain their "original" address
+    if not any(
+        isinstance(handler, QueueHandler) and str(handler.queue) == str(logs_queue)
+        for handler in root_logger.handlers
+    ):
         handler = QueueHandler(logs_queue)
         root_logger.addHandler(handler)
     return stage_class(*args, **kwargs)

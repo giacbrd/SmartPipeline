@@ -191,11 +191,11 @@ Note that no source is defined here.
             "id": hash(text)
         })
         pipeline.process_async(item)
-    # explicitly stop the pipeline when there are no more items
-    pipeline.stop()
     # retrieve the processed items
     for _ in range(100):
         print(pipeline.get_item().payload["text"])
+    # explicitly stop the pipeline when there are no more items
+    pipeline.stop()
 
 It is possible to use :meth:`.Pipeline.process` when no stage is concurrent,
 each item will be processed and returned directly by this method.

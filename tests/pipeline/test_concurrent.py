@@ -602,7 +602,7 @@ def test_single_items(items_generator_fx):
     assert result.payload["text"] != item.payload["text"]
 
     pipeline = (
-        get_pipeline(max_init_workers=1)
+        get_pipeline(max_init_workers=2)
         .append_stage_concurrently(
             "reverser0", TextReverser, args=[20], concurrency=1, parallel=True
         )
