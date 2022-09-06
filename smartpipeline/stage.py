@@ -131,9 +131,6 @@ class Source(ABC, AliveMixin):
         """
         pass
 
-    def get_item(self, block: bool = False) -> Optional[DataItem]:
-        return self.pop()
-
     def stop(self):
         """
         Declare the end item generation, this event will be spread through the pipeline

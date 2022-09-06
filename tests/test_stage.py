@@ -92,6 +92,7 @@ def test_source_container():
         assert not container.is_stopped()
         item = container.get_processed()
     assert container.is_stopped()
+
     container = SourceContainer()
     source = ListSource(data)
     container.set(source)
@@ -119,6 +120,14 @@ def test_source_container():
     assert container.get_processed().get_metadata("id") == 1004
     container.pop_into_queue()
     assert container.get_processed().get_metadata("id") == 4
+
+    container = SourceContainer()
+    source = ListSource([])
+    container.set(source)
+    container.prepend_item(DataItem())
+    container.stop()
+    assert isinstance(container.get_processed(), DataItem)
+    assert isinstance(container.get_processed(), Stop)
 
 
 def test_stage_container():
@@ -389,6 +398,7 @@ def test_batch_stage_container1():
     result = list(_get_items(container))
     for i, item in enumerate(items4):
         assert item.payload == result[i].payload
+    assert container.get_processed() is None
 
 
 def test_batch_stage_container2():
@@ -408,6 +418,7 @@ def test_batch_stage_container2():
     reprocessed = container.process()
     assert any(isinstance(item, Stop) for item in reprocessed)
     assert container.is_stopped() and not container.is_terminated()
+    assert container.get_processed() is None
 
 
 def test_batch_concurrent_stage_container1():

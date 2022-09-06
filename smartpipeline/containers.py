@@ -399,7 +399,7 @@ class BatchStageContainer(
         self.set_error_manager(error_manager)
         self.set_retry_manager(retry_manager)
         self.set_stage(name, stage)
-        # TODO next two varibales are for non-concurrent container, that is currently never used, it doesn't work
+        # TODO next two variables should help for non-concurrent container, that is currently never created
         self.__result_queue: ItemsQueue = queue.SimpleQueue()
         self._last_processed: Sequence[DataItem] = []
 

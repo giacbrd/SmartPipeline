@@ -4,5 +4,6 @@ source_pkgs = smartpipeline
 
 [report]
 exclude_lines =
+    pragma: no cover
     pass
-
+    @abstractmethod
