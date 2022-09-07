@@ -339,6 +339,10 @@ class StageContainer(
         return f"Container for {self._stage}"
 
     def process(self) -> DataItem:
+        """
+        Get item from the previous container, process it with stage, put it in the output queue
+        :return: The same processed item put in the output queue
+        """
         item = self.previous.get_processed()
         if isinstance(item, Stop):
             self.stop()
@@ -404,6 +408,10 @@ class BatchStageContainer(
         self._last_processed: Sequence[DataItem] = []
 
     def process(self) -> Sequence[DataItem]:
+        """
+        Get items from the previous container, process them with stage, put them in the output queue
+        :return: The same processed items put in the output queue
+        """
         items = []
         # items that we want to put as last in a batch, ergo in output
         extra_items = []

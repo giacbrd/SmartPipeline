@@ -1,11 +1,14 @@
 import copy
 import logging
+import queue
 import time
 import traceback
+from logging.handlers import QueueHandler
 
 import pytest
 
 from smartpipeline.error.exceptions import RetryError
+from smartpipeline.pipeline import _stage_initialization_with_logger
 from tests.utils import (
     CriticalIOErrorStage,
     CustomizableBrokenStage,
@@ -38,6 +41,23 @@ def _check(items, num, pipeline=None):
 
 
 def test_concurrent_run():
+    # no stages
+    with pytest.raises(ValueError):
+        get_pipeline().build()
+    # no source
+    with pytest.raises(ValueError):
+        pipeline = get_pipeline().append_stage("reverser", TextReverser()).build()
+        list(pipeline.run())
+    pipeline = get_pipeline().append_stage("reverser", TextReverser()).build()
+    assert pipeline._new_mp_queue() != pipeline._new_mp_queue()
+    assert pipeline._new_queue() != pipeline._new_queue()
+    assert not isinstance(pipeline._new_queue(), pipeline._new_mp_queue().__class__)
+    assert pipeline._new_mp_counter() != pipeline._new_mp_counter()
+    assert pipeline._new_counter() != pipeline._new_counter()
+    assert not isinstance(pipeline._new_counter(), pipeline._new_mp_counter().__class__)
+    assert pipeline._new_mp_event() != pipeline._new_mp_event()
+    assert pipeline._new_event() != pipeline._new_event()
+    assert not isinstance(pipeline._new_event(), pipeline._new_mp_event().__class__)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(100))
@@ -48,6 +68,7 @@ def test_concurrent_run():
         .build()
     )
     items = list(pipeline.run())
+    assert pipeline._wait_executors() is None
     _check(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -267,6 +288,7 @@ def test_concurrent_constructions():
         assert item.get_timing("reverser1")
         assert item.get_timing("reverser2")
         assert item.has_errors()
+    assert pipeline._wait_executors() is None
     assert pipeline.count == 10
     assert serializable_stage._file is None
     assert error_manager.is_closed()
@@ -759,3 +781,14 @@ def test_logging(caplog):
         ]
         assert len(messages) == 100
         assert all("logging item " in record.msg.lower() for record in messages)
+
+        assert isinstance(
+            _stage_initialization_with_logger(queue.Queue(), TextReverser, [], {}),
+            TextReverser,
+        )
+        assert any(isinstance(h, QueueHandler) for h in logging.getLogger().handlers)
+
+        with pytest.raises(AttributeError):
+            get_pipeline().append_stage(
+                "reverser", TextReverser()
+            ).build()._get_logs_receiver_queue()

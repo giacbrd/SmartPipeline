@@ -418,7 +418,6 @@ def test_batch_stage_container2():
     reprocessed = container.process()
     assert any(isinstance(item, Stop) for item in reprocessed)
     assert container.is_stopped() and not container.is_terminated()
-    assert container.get_processed() is None
 
 
 def test_batch_concurrent_stage_container1():

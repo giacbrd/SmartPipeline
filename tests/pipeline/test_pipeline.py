@@ -31,6 +31,7 @@ def test_run():
         .append_stage("duplicator", TextDuplicator())
         .build()
     )
+    assert pipeline.name.startswith("Pipeline-")
     assert str(pipeline._source_container)
     for container in pipeline._containers.values():
         assert container.name
