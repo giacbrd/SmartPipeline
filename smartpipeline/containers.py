@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import Executor, Future, wait
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
+from multiprocessing import get_context
 from threading import Event
 from typing import Callable, List, Optional, Sequence
 
@@ -559,9 +560,12 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         Get and eventually generate a pool executor where concurrent stage executions run
         """
         if self._stage_executor is None:
-            executor = ThreadPoolExecutor if not self._parallel else ProcessPoolExecutor
-            # TODO one executor per stage? why max_workers are equivalent to concurrency?
-            self._stage_executor = executor(max_workers=self._concurrency)
+            if not self._parallel:
+                self._stage_executor = ThreadPoolExecutor(max_workers=self._concurrency)
+            else:
+                self._stage_executor = ProcessPoolExecutor(
+                    max_workers=self._concurrency, mp_context=get_context("spawn")
+                )
         return self._stage_executor
 
     @property

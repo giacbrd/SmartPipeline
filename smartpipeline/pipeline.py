@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures._base import Executor, Future
-from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from logging.handlers import QueueHandler
-from multiprocessing import Manager
+from multiprocessing import Manager, get_context
 from queue import Queue
 from threading import Event, Thread
 from typing import (
@@ -187,12 +187,14 @@ class Pipeline:
     def shutdown(self):
         if self._out_queue is not None:
             self._out_queue.join()
-        # if self._init_executor is not None:
-        #     self._init_executor.shutdown()
+        if self._init_executor is not None:
+            self._init_executor.shutdown()
         # FIXME stage shutdown may raise exception, the executor gets stuck
-        # for name, stage in self._containers.items():
-        #     if isinstance(stage, (ConcurrentStageContainer, BatchConcurrentStageContainer)):
-        #         stage.shutdown()
+        for name, container in self._containers.items():
+            if isinstance(
+                container, (ConcurrentStageContainer, BatchConcurrentStageContainer)
+            ):
+                container.shutdown()
         if self._sync_manager is not None:
             self._sync_manager.shutdown()
 
@@ -652,8 +654,14 @@ class Pipeline:
         :param parallel: True if the executor uses multiprocessing, otherwise treads
         """
         if self._init_executor is None:
-            executor = ThreadPoolExecutor if not parallel else ProcessPoolExecutor
-            self._init_executor = executor(max_workers=self._max_init_workers)
+            if not parallel:
+                self._init_executor = ThreadPoolExecutor(
+                    max_workers=self._max_init_workers
+                )
+            else:
+                self._init_executor = ProcessPoolExecutor(
+                    max_workers=self._max_init_workers, mp_context=get_context("spawn")
+                )
         return self._init_executor
 
     def _get_wait_previous_executor(self) -> Executor:

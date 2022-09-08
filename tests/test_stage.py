@@ -1,6 +1,6 @@
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from multiprocessing import Manager
+from multiprocessing import Manager, get_context
 from queue import Queue
 from threading import Event
 
@@ -299,7 +299,7 @@ def test_executors():
 
     # also test when running concurrently, both on processes and threads, that is how batch stages always run
     terminated = manager.Event()
-    future = ProcessPoolExecutor().submit(
+    future = ProcessPoolExecutor(mp_context=get_context("spawn")).submit(
         batch_stage_executor,
         SerializableBatchStage(100, 1),
         in_queue,
