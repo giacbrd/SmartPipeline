@@ -185,11 +185,14 @@ class Pipeline:
         self._logger.debug("Pipeline ready to run")
 
     def shutdown(self):
+        """
+        Execute shutdown of various pool executors and multiprocessing stuff.
+        The developer should not need to call it explicitly.
+        """
         if self._out_queue is not None:
             self._out_queue.join()
         if self._init_executor is not None:
             self._init_executor.shutdown()
-        # FIXME stage shutdown may raise exception, the executor gets stuck
         for name, container in self._containers.items():
             if isinstance(
                 container, (ConcurrentStageContainer, BatchConcurrentStageContainer)
@@ -197,9 +200,6 @@ class Pipeline:
                 container.shutdown()
         if self._sync_manager is not None:
             self._sync_manager.shutdown()
-
-    def __del__(self):
-        self.shutdown()
 
     def build(self) -> Pipeline:
         """
@@ -429,12 +429,6 @@ class Pipeline:
     def _last_stage_name(self) -> str:
         if self._containers:
             return self._containers.last_key()
-
-    def _last_container(self) -> BaseContainer:
-        if self._containers:
-            return self._containers[self._last_stage_name()]
-        else:
-            return self._source_container
 
     def _wait_for_previous(
         self,

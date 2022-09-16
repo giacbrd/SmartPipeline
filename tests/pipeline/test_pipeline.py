@@ -33,6 +33,7 @@ def test_run():
     )
     assert pipeline.name.startswith("Pipeline-")
     assert str(pipeline._source_container)
+    assert isinstance(pipeline.get_stage("duplicator"), TextDuplicator)
     for container in pipeline._containers.values():
         assert container.name
         assert str(container)
@@ -41,17 +42,23 @@ def test_run():
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
     assert pipeline.count == 10
+    with pytest.raises(ValueError):
+        Pipeline().append_stage("reverser", TextReverser()).append_stage(
+            "reverser", TextReverser()
+        )
 
 
 def test_errors(caplog):
     pipeline = (
         get_pipeline()
-        .set_error_manager(ErrorManager())
         .set_source(RandomTextSource(10))
         .append_stage("reverser", TextReverser())
         .append_stage("error", ErrorStage())
         .build()
     )
+    error_manager = ErrorManager()
+    pipeline.set_error_manager(error_manager)
+    assert all(c.error_manager == error_manager for c in pipeline._containers.values())
     for item in pipeline.run():
         assert item.has_errors()
         assert item.get_timing("reverser")
@@ -284,6 +291,30 @@ def test_retryable_stage(items_generator_fx):
         isinstance(err, RetryError) and isinstance(err.get_exception(), CustomException)
         for err in soft_errors
     )
+    with pytest.raises(ValueError):
+        Pipeline().append_stage(
+            "broken_stage",
+            CustomizableBrokenStage([CustomException]),
+            backoff=1,
+            max_retries=1,
+            retryable_errors=[ValueError, CustomException],
+        )
+    with pytest.raises(ValueError):
+        Pipeline().append_stage(
+            "broken_stage",
+            CustomizableBrokenStage([CustomException]),
+            backoff="1.2",
+            max_retries=1,
+            retryable_errors=(ValueError, CustomException),
+        )
+    with pytest.raises(ValueError):
+        Pipeline().append_stage(
+            "broken_stage",
+            CustomizableBrokenStage([CustomException]),
+            backoff=1,
+            max_retries=2.5,
+            retryable_errors=(ValueError, CustomException),
+        )
 
 
 def test_retry_on_different_errors(items_generator_fx):

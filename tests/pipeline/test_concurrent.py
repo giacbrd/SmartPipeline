@@ -19,6 +19,7 @@ from tests.utils import (
     RandomTextSource,
     SerializableErrorManager,
     SerializableStage,
+    SlowInitializer,
     TextDuplicator,
     TextReverser,
     TimeWaster,
@@ -52,9 +53,11 @@ def test_concurrent_run():
     assert pipeline._new_mp_queue() != pipeline._new_mp_queue()
     assert pipeline._new_queue() != pipeline._new_queue()
     assert not isinstance(pipeline._new_queue(), pipeline._new_mp_queue().__class__)
+    pipeline = get_pipeline().append_stage("reverser", TextReverser()).build()
     assert pipeline._new_mp_counter() != pipeline._new_mp_counter()
     assert pipeline._new_counter() != pipeline._new_counter()
     assert not isinstance(pipeline._new_counter(), pipeline._new_mp_counter().__class__)
+    pipeline = get_pipeline().append_stage("reverser", TextReverser()).build()
     assert pipeline._new_mp_event() != pipeline._new_mp_event()
     assert pipeline._new_event() != pipeline._new_event()
     assert not isinstance(pipeline._new_event(), pipeline._new_mp_event().__class__)
@@ -416,6 +419,17 @@ def test_concurrent_initialization():
     )
     items = list(pipeline.run())
     _check(items, 100, pipeline)
+    pipeline = (
+        get_pipeline(max_init_workers=1)
+        .set_source(RandomTextSource(100))
+        .append_stage_concurrently(
+            "slow_init", SlowInitializer, concurrency=1, parallel=True
+        )
+        .build()
+    )
+    pipeline._terminate_all()
+    pipeline.shutdown()
+    assert pipeline._containers["slow_init"]
 
 
 # one core machines can have problems with this test
@@ -548,6 +562,8 @@ def test_single_items(items_generator_fx):
         .append_stage("duplicator", TextDuplicator(), concurrency=2)
         .build()
     )
+    with pytest.raises(ValueError):
+        pipeline.get_item()
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=_check_item)
     result = pipeline.get_item()

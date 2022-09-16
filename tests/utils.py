@@ -84,6 +84,14 @@ class TextDuplicator(Stage):
         return item
 
 
+class SlowInitializer(Stage):
+    def __init__(self, wait_time=2):
+        time.sleep(wait_time)
+
+    def process(self, item: DataItem):
+        return item
+
+
 class CustomizableBrokenStage(Stage):
     def __init__(self, exceptions_to_raise: List[Type[Exception]]):
         self._exceptions_to_raise = exceptions_to_raise
