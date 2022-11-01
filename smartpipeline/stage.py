@@ -89,7 +89,7 @@ class BatchStage(AliveMixin, ConstructorMixin, BatchProcessor):
     Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage
     """
 
-    def __init__(self, size: int, timeout: Optional[float] = None):
+    def __init__(self, size: int, timeout: float = 1.0):
         """
         :param size: Maximum size of item batches that can be processed together
         :param timeout: Seconds to wait before flushing a batch (calling :meth:`.BatchStage.process_batch` on it)
@@ -108,7 +108,7 @@ class BatchStage(AliveMixin, ConstructorMixin, BatchProcessor):
         return self._size
 
     @property
-    def timeout(self) -> Optional[float]:
+    def timeout(self) -> float:
         """
         Seconds to wait before flushing a batch (calling :meth:`.BatchStage.process_batch` on it)
         """
