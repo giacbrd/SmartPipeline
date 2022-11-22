@@ -25,7 +25,7 @@ from smartpipeline.executors import (
     process_batch,
     stage_executor,
 )
-from smartpipeline.item import DataItem, Stop
+from smartpipeline.item import Item, Stop
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage, StageType
 from smartpipeline.utils import ConcurrentCounter
 
@@ -72,7 +72,7 @@ class BaseContainer(InQueued):
     @abstractmethod
     def get_processed(
         self, block: bool = False, timeout: Optional[int] = None
-    ) -> Optional[DataItem]:
+    ) -> Optional[Item]:
         """
         Get the oldest processed item waiting to be retrieved
 
@@ -266,7 +266,7 @@ class SourceContainer(BaseContainer):
                 self._stop_sent = True
                 return
 
-    def prepend_item(self, item: Optional[DataItem]):
+    def prepend_item(self, item: Optional[Item]):
         """
         Enrich the source with items "manually".
         Only used for processing single items
@@ -278,7 +278,7 @@ class SourceContainer(BaseContainer):
 
     def get_processed(
         self, block: bool = True, timeout: Optional[int] = None
-    ) -> Optional[DataItem]:
+    ) -> Optional[Item]:
         if self.out_queue is not None:
             item = self.out_queue.get(block=block, timeout=timeout)
         else:
@@ -287,7 +287,7 @@ class SourceContainer(BaseContainer):
                 self.increase_count()
         return item
 
-    def _get_next_item(self) -> DataItem:
+    def _get_next_item(self) -> Item:
         """
         Obtain the next item to send to output according to the source status and "manually" added items
         """
@@ -339,7 +339,7 @@ class StageContainer(
     def __str__(self) -> str:
         return f"Container for {self._stage}"
 
-    def process(self) -> DataItem:
+    def process(self) -> Item:
         """
         Get item from the previous container, process it with stage, put it in the output queue
         :return: The same processed item put in the output queue
@@ -354,7 +354,7 @@ class StageContainer(
 
     def get_processed(
         self, block: bool = False, timeout: Optional[int] = None
-    ) -> Optional[DataItem]:
+    ) -> Optional[Item]:
         ret = self._last_processed
         self._last_processed = None
         # if we are in a concurrent stage the items are obtained exclusively from the output queue
@@ -366,7 +366,7 @@ class StageContainer(
                 return None
         return ret
 
-    def _put_item(self, item: DataItem):
+    def _put_item(self, item: Item):
         """
         A processed item is set as next output.
         If we are processing asynchronously (e.g. concurrent stage) it is put in the output queue,
@@ -406,9 +406,9 @@ class BatchStageContainer(
         self.set_stage(name, stage)
         # TODO next two variables should help for non-concurrent container, that is currently never created
         self.__result_queue: ItemsQueue = queue.SimpleQueue()
-        self._last_processed: Sequence[DataItem] = []
+        self._last_processed: Sequence[Item] = []
 
-    def process(self) -> Sequence[DataItem]:
+    def process(self) -> Sequence[Item]:
         """
         Get items from the previous container, process them with stage, put them in the output queue
         :return: The same processed items put in the output queue
@@ -433,7 +433,7 @@ class BatchStageContainer(
 
     def get_processed(
         self, block: bool = False, timeout: Optional[int] = None
-    ) -> Optional[DataItem]:
+    ) -> Optional[Item]:
         if (
             self.out_queue is not None
             and self.__result_queue.qsize() < self.out_queue.qsize()
@@ -459,7 +459,7 @@ class BatchStageContainer(
         except queue.Empty:
             return None
 
-    def _put_item(self, items: Sequence[DataItem]):
+    def _put_item(self, items: Sequence[Item]):
         """
         A batch of processed items is set as next output.
         If we are processing asynchronously (e.g. concurrent stage) they are put in the output queue,

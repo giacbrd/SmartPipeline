@@ -71,8 +71,8 @@ An example of a trivial pipeline definition and run:
 
     class RandomGenerator(Source):
         def pop(self):
-            item = DataItem()
-            item.payload["number"] = random.random()
+            item = Item()
+            item.data["number"] = random.random()
             return item
 
 
@@ -81,14 +81,14 @@ An example of a trivial pipeline definition and run:
             self.value = value
 
         def process(self, item):
-            item.payload["number"] += self.value
+            item.data["number"] += self.value
             return item
 
 
     class Rounder(BatchStage):
         def process_batch(self, items):
             for item in items:
-                item.payload["number"] = round(item.payload["number"], 1)
+                item.data["number"] = round(item.data["number"], 1)
             return items
 
 

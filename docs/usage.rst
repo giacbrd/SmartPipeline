@@ -5,13 +5,13 @@ Data items
 ----------
 
 The unit of data of a pipeline is the item,
-which is represented by :class:`.DataItem` class or a subclass of it.
-Data is kept in the :attr:`.DataItem.payload`, a read-only dictionary.
+which is represented by :class:`.Item` class or a subclass of it.
+Data is kept in the :attr:`.Item.data`, a read-only dictionary.
 Other methods allow to enrich an item with metadata, extra stuff as temporary data or descriptors of the item,
-so as to isolate in the payload all, and only, the data the pipeline produces.
+so as to isolate in the data all, and only, the data the pipeline produces.
 If the pipeline is going to work on more processes (see later the ``parallel`` parameter)
 an item must me serializable with `pickle <https://docs.python.org/3/library/pickle.html>`_ module,
-both its payload and metadata.
+both its data and metadata.
 
 Defining the source
 -------------------
@@ -28,7 +28,7 @@ all the lines on CSV file have been read.
 A source can also generate items indefinitely, then the pipeline will never end.
 
 In this example we define a source that generates 1000 items with a random variable string in
-the payload of each one.
+the data of each one.
 
 .. code-block:: python
 
@@ -45,14 +45,14 @@ the payload of each one.
                 self.stop()
                 return
             else:
-                item = DataItem()
+                item = Item()
                 text = ''.join(
                     random.choices(
                         string.ascii_letters + string.digits,
                         k=random.randint(50, 200)
                     )
                 )
-                item.payload.update({
+                item.data.update({
                     "text": text,
                     "id": hash(text)
                 })
@@ -88,11 +88,11 @@ patterns in the string with a fixed string.
             self._sub = substitution
 
         def process(self, item):
-            new_text = re.sub(self._sub, item.payload["text"])
-            if item.payload["text"] == new_text:
+            new_text = re.sub(self._sub, item.data["text"])
+            if item.data["text"] == new_text:
                 # even if we raise SoftError the item will continue its path through the pipeline
                 raise SoftError("Text has not been modified")
-            item.payload["text"] = new_text
+            item.data["text"] = new_text
             return item
 
 Error handling
@@ -151,7 +151,7 @@ Finally, from the previous example, we define another stage that reduces text si
 
     class TextReducer(Stage):
         def process(self, item):
-            item.payload["text"] = item.payload["text"][:40]
+            item.data["text"] = item.data["text"][:40]
             return item
 
     pipeline = (
@@ -163,7 +163,7 @@ Finally, from the previous example, we define another stage that reduces text si
     )
 
     for item in pipeline.run():
-        print(item.payload["text"])
+        print(item.data["text"])
 
 A different example in which we process 100 items concurrently with :meth:`.Pipeline.process_async`,
 without running the pipeline but explicitly executing a pipeline processing on each one.
@@ -179,21 +179,21 @@ Note that no source is defined here.
     )
     # "manually" send 100 items to the pipeline
     for _ in range(100):
-        item = DataItem()
+        item = Item()
         text = ''.join(
             random.choices(
                 string.ascii_letters + string.digits,
                 k=random.randint(50, 200)
             )
         )
-        item.payload.update({
+        item.data.update({
             "text": text,
             "id": hash(text)
         })
         pipeline.process_async(item)
     # retrieve the processed items
     for _ in range(100):
-        print(pipeline.get_item().payload["text"])
+        print(pipeline.get_item().data["text"])
     # explicitly stop the pipeline when there are no more items
     pipeline.stop()
 
@@ -217,7 +217,7 @@ More, executables examples can be found in the root sub-directory ``examples``.
 
     from smartpipeline.pipeline import Pipeline
     from smartpipeline.stage import Stage, NameMixin
-    from smartpipeline.item import DataItem
+    from smartpipeline.item import Item
     from smartpipeline.error.handling import ErrorManager
     from smartpipeline.error.exceptions import SoftError
     from smartpipeline.helpers import LocalFilesSource, FilePathItem
@@ -235,7 +235,7 @@ More, executables examples can be found in the root sub-directory ``examples``.
             self.es_client = Elasticsearch(self.es_host)
 
         def handle(
-            self, error: Exception, stage: NameMixin, item: DataItem
+            self, error: Exception, stage: NameMixin, item: Item
         ) -> Optional[Exception]:
             if isinstance(error, SoftError):
                 error = error.get_exception()
@@ -254,10 +254,10 @@ More, executables examples can be found in the root sub-directory ``examples``.
     class TextExtractor(Stage):
         """Read the text content of files"""
 
-        def process(self, item: FilePathItem) -> DataItem:
+        def process(self, item: FilePathItem) -> Item:
             try:
                 with open(item.path) as f:
-                    item.payload["text"] = f.read()
+                    item.data["text"] = f.read()
             except IOError as e:
                 # even if we are unable to read the file content the item will processed by next stages
                 # we encapsulate the exception in a "soft error"
@@ -273,11 +273,11 @@ More, executables examples can be found in the root sub-directory ``examples``.
                 "^[A-Za-z]{2,4}(?=.{2,12}$)[-_\s0-9]*(?:[a-zA-Z][-_\s0-9]*){0,2}$"
             )
 
-        def process(self, item: DataItem) -> DataItem:
+        def process(self, item: Item) -> Item:
             vat_codes = []
-            for vat_match in self.regex.finditer(item.payload.get("text", "")):
+            for vat_match in self.regex.finditer(item.data.get("text", "")):
                 vat_codes.append((vat_match.start(), vat_match.end()))
-            item.payload["vat_codes"] = vat_codes
+            item.data["vat_codes"] = vat_codes
             return item
 
 
@@ -289,8 +289,8 @@ More, executables examples can be found in the root sub-directory ``examples``.
             self.es_index = es_index
             self.es_client = Elasticsearch(self.es_host)
 
-        def process(self, item: DataItem) -> DataItem:
-            self.es_client.index(index=self.es_index, body=item.payload)
+        def process(self, item: Item) -> Item:
+            self.es_client.index(index=self.es_index, body=item.data)
             return item
 
 

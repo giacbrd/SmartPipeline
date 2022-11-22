@@ -1,7 +1,7 @@
 import os
 from typing import Any, Generator, Optional
 
-from smartpipeline.item import DataItem
+from smartpipeline.item import Item
 from smartpipeline.stage import Source
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -22,7 +22,7 @@ class LocalFilesSource(Source):
             if fname.endswith(self.postfix) and not fname.startswith("."):
                 yield os.path.join(self.dir_path, fname)
 
-    def pop(self) -> Optional[DataItem]:
+    def pop(self) -> Optional[Item]:
         file_path = next(self._iterator, None)
         if file_path:
             item = FilePathItem(file_path)
@@ -31,7 +31,7 @@ class LocalFilesSource(Source):
             self.stop()
 
 
-class FilePathItem(DataItem):
+class FilePathItem(Item):
     """
     An item with a pointer to a file path
     """
@@ -41,7 +41,7 @@ class FilePathItem(DataItem):
         self.path = path
 
     def __str__(self) -> str:
-        return f"Data item {self.id}, file path {self.path}, with payload {self.payload_snippet()}..."
+        return f"Data item {self.id}, file path {self.path}, with payload {self.data_snippet()}..."
 
     @property
     def id(self) -> Any:

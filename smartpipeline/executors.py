@@ -10,7 +10,7 @@ from typing import Callable, List, Optional, Sequence
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager, RetryManager
-from smartpipeline.item import DataItem, Stop
+from smartpipeline.item import Item, Stop
 from smartpipeline.stage import BatchStage, ItemsQueue, Stage, StageType
 from smartpipeline.utils import ConcurrentCounter, ProcessCounter
 
@@ -19,10 +19,10 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 def process(
     stage: Stage,
-    item: DataItem,
+    item: Item,
     error_manager: ErrorManager,
     retry_manager: RetryManager,
-) -> DataItem:
+) -> Item:
     """
     Execute the :meth:`.stage.Stage.process` method of a stage for an item
     """
@@ -70,14 +70,14 @@ def process(
 
 def process_batch(
     stage: BatchStage,
-    items: Sequence[DataItem],
+    items: Sequence[Item],
     error_manager: ErrorManager,
     retry_manager: RetryManager,
-) -> List[Optional[DataItem]]:
+) -> List[Optional[Item]]:
     """
     Execute the :meth:`.stage.BatchStage.process_batch` method of a batch stage for a batch of items
     """
-    ret: List[Optional[DataItem]] = [None] * len(items)
+    ret: List[Optional[Item]] = [None] * len(items)
     to_process = {}
     for i, item in enumerate(items):
         if error_manager.check_critical_errors(item):

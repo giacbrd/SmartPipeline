@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from logging import Logger, getLogger
 from typing import Any, Optional, Sequence, Union
 
-from smartpipeline.item import DataItem
+from smartpipeline.item import Item
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -53,7 +53,7 @@ class ConstructorMixin:
 
 class Processor(ABC):
     @abstractmethod
-    def process(self, item: DataItem) -> DataItem:
+    def process(self, item: Item) -> Item:
         """
         Process a single item received by the stage.
         Must be overridden for properly defining a stage
@@ -65,7 +65,7 @@ class Processor(ABC):
 
 class BatchProcessor(ABC):
     @abstractmethod
-    def process_batch(self, items: Sequence[DataItem]) -> Sequence[DataItem]:
+    def process_batch(self, items: Sequence[Item]) -> Sequence[Item]:
         """
         Process a batch of items received by the stage.
         Must be overridden for properly defining a batch stage
@@ -121,7 +121,7 @@ class Source(ABC, AliveMixin):
     """
 
     @abstractmethod
-    def pop(self) -> Optional[DataItem]:
+    def pop(self) -> Optional[Item]:
         """
         Generate items for feeding a pipeline.
         Must be overridden for properly defining a source.
@@ -145,5 +145,5 @@ class Source(ABC, AliveMixin):
         return getattr(self, "_is_stopped", False)
 
 
-ItemsQueue = "Queue[DataItem]"
+ItemsQueue = "Queue[Item]"
 StageType = Union[Stage, BatchStage]

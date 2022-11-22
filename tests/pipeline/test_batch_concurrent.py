@@ -25,9 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def _check(items, num, pipeline=None):
-    diff = frozenset(range(1, num + 1)).difference(
-        item.payload["count"] for item in items
-    )
+    diff = frozenset(range(1, num + 1)).difference(item.data["count"] for item in items)
     assert not diff, "Not found items: {}".format(", ".join(str(x) for x in diff))
     if pipeline:
         assert len(items) == num == pipeline.count
@@ -267,7 +265,7 @@ def test_concurrency_errors():
     for item in pipeline.run():
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
-        assert any(k.startswith("text_") for k in item.payload.keys())
+        assert any(k.startswith("text_") for k in item.data.keys())
         assert item.get_timing("error")
     assert pipeline.count == 29
     with pytest.raises(Exception):
@@ -319,7 +317,7 @@ def test_concurrency_errors():
     for item in pipeline.run():
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
-        assert any(k.startswith("text_") for k in item.payload.keys())
+        assert any(k.startswith("text_") for k in item.data.keys())
         assert item.get_timing("error")
     assert pipeline.count == 29
 
@@ -535,8 +533,8 @@ def test_timeouts():
 
 
 def _check_item(item):
-    assert item.payload
-    item.set_metadata("check", True)
+    assert item.data
+    item.metadata["check"] = True
 
 
 def test_single_items(items_generator_fx):
@@ -553,8 +551,8 @@ def test_single_items(items_generator_fx):
         pipeline.process_async(copy.deepcopy(item), callback=_check_item)
     result = pipeline.get_item()
     assert result.id == item.id
-    assert result.get_metadata("check")
-    assert result.payload["text"] != item.payload["text"]
+    assert result.metadata["check"]
+    assert result.data["text"] != item.data["text"]
     for _ in range(87):
         pipeline.get_item()
     pipeline.stop()
@@ -576,8 +574,8 @@ def test_single_items(items_generator_fx):
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
-    assert result.get_metadata("check")
-    assert result.payload["text"] != item.payload["text"]
+    assert result.metadata["check"]
+    assert result.data["text"] != item.data["text"]
 
     pipeline = (
         get_pipeline()
@@ -603,9 +601,9 @@ def test_single_items(items_generator_fx):
     for _ in range(88):
         result = pipeline.get_item()
         assert result.id == item.id
-        assert result.get_metadata("check")
-        assert result.payload["text"]
-        assert result.payload["text"] != item.payload["text"]
+        assert result.metadata["check"]
+        assert result.data["text"]
+        assert result.data["text"] != item.data["text"]
     pipeline.stop()
 
     pipeline = (
@@ -620,8 +618,8 @@ def test_single_items(items_generator_fx):
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
-    assert result.get_metadata("check")
-    assert result.payload["text"] == item.payload["text"]
+    assert result.metadata["check"]
+    assert result.data["text"] == item.data["text"]
 
     pipeline = (
         get_pipeline()
@@ -635,8 +633,8 @@ def test_single_items(items_generator_fx):
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
-    assert result.get_metadata("check")
-    assert result.payload["text"] != item.payload["text"]
+    assert result.metadata["check"]
+    assert result.data["text"] != item.data["text"]
 
     pipeline = (
         get_pipeline()
@@ -650,8 +648,8 @@ def test_single_items(items_generator_fx):
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
-    assert result.get_metadata("check")
-    assert result.payload["text"] != item.payload["text"]
+    assert result.metadata["check"]
+    assert result.data["text"] != item.data["text"]
 
     pipeline = (
         get_pipeline(max_init_workers=2)
@@ -675,9 +673,9 @@ def test_single_items(items_generator_fx):
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
-    assert result.get_metadata("check")
-    assert result.payload["text"] == item.payload["text"]
-    assert len(result.payload.keys()) > len(item.payload.keys())
+    assert result.metadata["check"]
+    assert result.data["text"] == item.data["text"]
+    assert len(result.data.keys()) > len(item.data.keys())
 
 
 def test_mixed_single_items(items_generator_fx):
@@ -694,8 +692,8 @@ def test_mixed_single_items(items_generator_fx):
         pipeline.process_async(copy.deepcopy(item), callback=_check_item)
     result = pipeline.get_item()
     assert result.id == item.id
-    assert result.get_metadata("check")
-    assert result.payload["text"] != item.payload["text"]
+    assert result.metadata["check"]
+    assert result.data["text"] != item.data["text"]
     for _ in range(87):
         pipeline.get_item()
     pipeline.stop()
@@ -717,8 +715,8 @@ def test_mixed_single_items(items_generator_fx):
     result = pipeline.get_item()
     pipeline.stop()
     assert result.id == item.id
-    assert result.get_metadata("check")
-    assert result.payload["text"] != item.payload["text"]
+    assert result.metadata["check"]
+    assert result.data["text"] != item.data["text"]
 
     pipeline = (
         get_pipeline()
@@ -744,7 +742,7 @@ def test_mixed_single_items(items_generator_fx):
     for _ in range(88):
         result = pipeline.get_item()
         assert result.id == item.id
-        assert result.get_metadata("check")
-        assert result.payload["text"]
-        assert result.payload["text"] != item.payload["text"]
+        assert result.metadata["check"]
+        assert result.data["text"]
+        assert result.data["text"] != item.data["text"]
     pipeline.stop()

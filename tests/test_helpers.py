@@ -16,4 +16,4 @@ def test_file_items(file_directory_source_fx):
     assert len(items) == len(TEXT_SAMPLES)
     for item in items:
         assert isinstance(item, FilePathItem)
-        assert item.payload.get("text") in TEXT_SAMPLES
+        assert item.data.get("text") in TEXT_SAMPLES

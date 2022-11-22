@@ -5,7 +5,7 @@ import uuid
 from typing import Any, Optional, Tuple, Type, Union
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
-from smartpipeline.item import DataItem
+from smartpipeline.item import Item
 from smartpipeline.stage import AliveMixin
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -53,7 +53,7 @@ class ErrorManager:
         pass
 
     def handle(
-        self, error: Exception, stage: AliveMixin, item: DataItem
+        self, error: Exception, stage: AliveMixin, item: Item
     ) -> Optional[CriticalError]:
         """
         Manage an error produced by a stage
@@ -99,7 +99,7 @@ class ErrorManager:
         elif self._skip_on_critical:
             return ex or error
 
-    def check_critical_errors(self, item: DataItem) -> Optional[Exception]:
+    def check_critical_errors(self, item: Item) -> Optional[Exception]:
         """
         Check the critical errors registered for an item
         """

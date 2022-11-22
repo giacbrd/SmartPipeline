@@ -2,7 +2,7 @@ import pytest
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager
-from smartpipeline.item import DataItem
+from smartpipeline.item import Item
 from tests.utils import TextReverser
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -11,21 +11,21 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 def test_manager(caplog):
     manager = ErrorManager()
     stage = TextReverser()
-    item = DataItem()
+    item = Item()
     manager.handle(SoftError(), stage, item)
     assert any(caplog.records)
-    assert item.has_errors()
+    assert item.has_soft_errors()
     assert not item.has_critical_errors()
-    item = DataItem()
+    item = Item()
     manager.handle(CriticalError(), stage, item)
-    assert not item.has_errors()
+    assert not item.has_soft_errors()
     assert item.has_critical_errors()
     assert any(caplog.records)
-    item = DataItem()
+    item = Item()
     manager.handle(ValueError(), stage, item)
     manager.handle(KeyError(), stage, item)
     manager.handle(KeyError(), stage, item)
-    assert not item.has_errors()
+    assert not item.has_soft_errors()
     assert item.has_critical_errors()
     assert len(list(item.critical_errors())) == 3
     for record in caplog.records:
@@ -35,11 +35,11 @@ def test_manager(caplog):
 def test_critical_errors(caplog):
     stage = TextReverser()
     manager = ErrorManager()
-    item = DataItem()
+    item = Item()
     error = CriticalError()
     error.with_exception(Exception())
     managed_critical_error = manager.handle(error, stage, item)
-    assert not item.has_errors()
+    assert not item.has_soft_errors()
     assert item.has_critical_errors()
     assert isinstance(
         next(item.critical_errors()).get_exception(),
@@ -47,7 +47,7 @@ def test_critical_errors(caplog):
     )
     assert any(caplog.records)
     manager = ErrorManager().raise_on_critical_error()
-    item = DataItem()
+    item = Item()
     with pytest.raises(CriticalError):
         manager.handle(CriticalError(), stage, item)
     with pytest.raises(Exception):
@@ -55,18 +55,18 @@ def test_critical_errors(caplog):
         manager.handle(error, stage, item)
     assert any(caplog.records)
     assert item.has_critical_errors()
-    assert not item.has_errors()
+    assert not item.has_soft_errors()
     manager = ErrorManager().no_skip_on_critical_error()
-    item = DataItem()
+    item = Item()
     assert manager.handle(CriticalError(), stage, item) is None
-    assert not item.has_errors()
+    assert not item.has_soft_errors()
     assert item.has_critical_errors()
     assert any(caplog.records)
-    item = DataItem()
+    item = Item()
     manager.handle(ValueError(), stage, item)
     manager.handle(KeyError(), stage, item)
     manager.handle(KeyError(), stage, item)
-    assert not item.has_errors()
+    assert not item.has_soft_errors()
     assert item.has_critical_errors()
     assert len(list(item.critical_errors())) == 3
     for record in caplog.records:

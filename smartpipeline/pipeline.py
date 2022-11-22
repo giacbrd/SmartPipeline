@@ -33,7 +33,7 @@ from smartpipeline.containers import (
 )
 from smartpipeline.defaults import CONCURRENCY_WAIT, MAX_QUEUES_SIZE
 from smartpipeline.error.handling import ErrorManager, RetryManager
-from smartpipeline.item import DataItem, Stop
+from smartpipeline.item import Item, Stop
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, StageType
 from smartpipeline.utils import (
     LastOrderedDict,
@@ -222,7 +222,7 @@ class Pipeline:
         self.shutdown()
         self._count += 1
 
-    def run(self) -> Generator[DataItem, None, None]:
+    def run(self) -> Generator[Item, None, None]:
         """
         Run the pipeline given a source and a concatenation of stages.
         Get the sequence of items through iteration
@@ -356,7 +356,7 @@ class Pipeline:
             )
         )
 
-    def process(self, item: DataItem) -> DataItem:
+    def process(self, item: Item) -> Item:
         """
         Process a single item synchronously (no concurrency) through the pipeline
         """
@@ -369,7 +369,7 @@ class Pipeline:
                 return container.get_processed(block=True)
 
     def process_async(
-        self, item: DataItem, callback: Optional[Callable[[DataItem], Any]] = None
+        self, item: Item, callback: Optional[Callable[[Item], Any]] = None
     ):
         """
         Process a single item asynchronously through the pipeline, stages may run concurrently.
@@ -392,7 +392,7 @@ class Pipeline:
         """
         self._source_container.stop()
 
-    def get_item(self, block: bool = True) -> DataItem:
+    def get_item(self, block: bool = True) -> Item:
         """
         Get a single item from the asynchronous execution of the pipeline on single items from :meth:`.Pipeline.process_async`
 
