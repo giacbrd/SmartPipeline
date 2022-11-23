@@ -36,19 +36,8 @@ class Item:
         """
         return self._payload
 
-    @property
-    def payload(self) -> Dict[str, Any]:
-        """
-        Alias for the data
-        """
-        return self._payload
-
-    @property
-    def d(self) -> Dict[str, Any]:
-        """
-        Alias for the data
-        """
-        return self._payload
+    # deprecated
+    payload = data
 
     def data_snippet(self, max_size: int = DATA_SNIPPET_SIZE):
         """
@@ -60,7 +49,7 @@ class Item:
 
     def set_metadata(self, field: str, value: Any) -> Item:
         """
-        Add a metadata, something we want to remember but keep outside the actual data in :attr:`.Item.data`
+        DEPRECATED: Add a metadata, something we want to remember but keep outside the actual data in :attr:`.Item.data`
 
         :param field: Name of the metadata variable
         """
@@ -69,7 +58,7 @@ class Item:
 
     def get_metadata(self, field: str) -> Any:
         """
-        Get a metadata value by its name
+        DEPRECATED: Get a metadata value by its name
 
         :return: A value or None if the metadata does not exist in the item
         """
@@ -204,6 +193,7 @@ class Item:
         raise ValueError("Add a pipeline CriticalError or a generic exception")
 
 
+# deprecated
 DataItem = Item
 
 

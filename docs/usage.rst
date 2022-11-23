@@ -120,7 +120,7 @@ Setting and running the pipeline
 --------------------------------
 
 Once you have your set of stages you can add them in sequence to a Pipeline instance that behave as a "builder".
-:meth:`.Pipeline.append_stage` is the main method for adding stages to a pipeline,
+:meth:`.Pipeline.append` is the main method for adding stages to a pipeline,
 it must define their unique names and eventually their concurrency.
 The ``concurrency`` parameter is default to 0, a stage is concurrent when the value is 1 or greater.
 In case of values greater than 1, and by setting ``parallel`` to ``True``,
@@ -135,10 +135,10 @@ while with concurrency Python queues are involved and items may be serialized.
 If you intend to define stages that can run on multiple processes,
 please read :ref:`concurrency-section` about further, important details.
 
-Through :meth:`.Pipeline.append_stage` one can also define a retry policy on some specific errors
+Through :meth:`.Pipeline.append` one can also define a retry policy on some specific errors
 (see method documentation for further details).
 
-Another method is :meth:`.Pipeline.append_stage_concurrently`,
+Another method is :meth:`.Pipeline.append_concurrently`,
 which allows to execute stages creation concurrently with other stages appending calls.
 Useful when long tasks must be executed at creation,
 e.g., the stage carries the construction of big data structures.
@@ -157,8 +157,8 @@ Finally, from the previous example, we define another stage that reduces text si
     pipeline = (
         Pipeline()
         .set_source(RandomTextSource())
-        .append_stage("text_replacer", TextReplacer(substitution="XXX"))
-        .append_stage("text_reducer", TextReducer())
+        .append("text_replacer", TextReplacer(substitution="XXX"))
+        .append("text_reducer", TextReducer())
         .build()
     )
 
@@ -173,8 +173,8 @@ Note that no source is defined here.
 
     pipeline = (
         Pipeline()
-        .append_stage("text_replacer", TextReplacer(substitution="XXX"), concurrency=3)
-        .append_stage("text_reducer", TextReducer(), concurrency=1)
+        .append("text_replacer", TextReplacer(substitution="XXX"), concurrency=3)
+        .append("text_reducer", TextReducer(), concurrency=1)
         .build()
     )
     # "manually" send 100 items to the pipeline
@@ -302,9 +302,9 @@ More, executables examples can be found in the root sub-directory ``examples``.
             ).raise_on_critical_error()
         )
         .set_source(LocalFilesSource("./document_files", postfix=".html"))
-        .append_stage("text_extractor", TextExtractor(), concurrency=2)
-        .append_stage("vat_finder", VatFinder())
-        .append_stage("indexer", Indexer(es_host="localhost:9200", es_index="documents"))
+        .append("text_extractor", TextExtractor(), concurrency=2)
+        .append("vat_finder", VatFinder())
+        .append("indexer", Indexer(es_host="localhost:9200", es_index="documents"))
         .build()
     )
 

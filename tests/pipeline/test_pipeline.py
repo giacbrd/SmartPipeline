@@ -27,8 +27,8 @@ def test_run():
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(10))
-        .append_stage("reverser", TextReverser())
-        .append_stage("duplicator", TextDuplicator())
+        .append("reverser", TextReverser())
+        .append("duplicator", TextDuplicator())
         .build()
     )
     assert pipeline.name.startswith("Pipeline-")
@@ -43,17 +43,15 @@ def test_run():
         assert item.get_timing("duplicator")
     assert pipeline.count == 10
     with pytest.raises(ValueError):
-        Pipeline().append_stage("reverser", TextReverser()).append_stage(
-            "reverser", TextReverser()
-        )
+        Pipeline().append("reverser", TextReverser()).append("reverser", TextReverser())
 
 
 def test_errors(caplog):
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(10))
-        .append_stage("reverser", TextReverser())
-        .append_stage("error", ErrorStage())
+        .append("reverser", TextReverser())
+        .append("error", ErrorStage())
         .build()
     )
     error_manager = ErrorManager()
@@ -77,9 +75,9 @@ def test_errors(caplog):
         get_pipeline()
         .set_error_manager(ErrorManager())
         .set_source(RandomTextSource(10))
-        .append_stage("reverser", TextReverser())
-        .append_stage("error", ErrorStage())
-        .append_stage("duplicator", TextDuplicator())
+        .append("reverser", TextReverser())
+        .append("error", ErrorStage())
+        .append("duplicator", TextDuplicator())
         .build()
     )
     caplog.clear()
@@ -103,8 +101,8 @@ def test_errors(caplog):
         get_pipeline()
         .set_error_manager(ErrorManager())
         .set_source(RandomTextSource(10))
-        .append_stage("reverser", TextReverser())
-        .append_stage("error1", CriticalIOErrorStage())
+        .append("reverser", TextReverser())
+        .append("error1", CriticalIOErrorStage())
         .build()
     )
     for item in pipeline.run():
@@ -118,9 +116,9 @@ def test_errors(caplog):
         get_pipeline()
         .set_error_manager(ErrorManager())
         .set_source(RandomTextSource(10))
-        .append_stage("reverser", TextReverser())
-        .append_stage("error1", ExceptionStage())
-        .append_stage("error2", ErrorStage())
+        .append("reverser", TextReverser())
+        .append("error1", ExceptionStage())
+        .append("error2", ErrorStage())
         .build()
     )
     caplog.clear()
@@ -147,8 +145,8 @@ def test_errors(caplog):
         pipeline = (
             get_pipeline()
             .set_source(RandomTextSource(10))
-            .append_stage("reverser", TextReverser())
-            .append_stage("error", ExceptionStage())
+            .append("reverser", TextReverser())
+            .append("error", ExceptionStage())
             .build()
         )
         try:
@@ -162,9 +160,9 @@ def test_errors(caplog):
         get_pipeline()
         .set_error_manager(ErrorManager().no_skip_on_critical_error())
         .set_source(RandomTextSource(10))
-        .append_stage("reverser1", TextReverser())
-        .append_stage("error", ExceptionStage())
-        .append_stage("reverser2", TextReverser())
+        .append("reverser1", TextReverser())
+        .append("error", ExceptionStage())
+        .append("reverser2", TextReverser())
         .build()
     )
     for item in pipeline.run():
@@ -179,9 +177,9 @@ def test_retryable_stage(items_generator_fx):
     item = next(items_generator_fx)
     pipeline = (
         Pipeline()
-        .append_stage("reverser0", TextReverser())
-        .append_stage("broken_stage", CustomizableBrokenStage([ValueError]))
-        .append_stage("reverser1", TextReverser())
+        .append("reverser0", TextReverser())
+        .append("broken_stage", CustomizableBrokenStage([ValueError]))
+        .append("reverser1", TextReverser())
     )
     item = pipeline.process(item)
     assert not item.has_soft_errors()  # no soft errors
@@ -194,14 +192,14 @@ def test_retryable_stage(items_generator_fx):
     item = next(items_generator_fx)
     pipeline = (
         Pipeline()
-        .append_stage("reverser0", TextReverser())
-        .append_stage(
+        .append("reverser0", TextReverser())
+        .append(
             "broken_stage",
             CustomizableBrokenStage([ValueError]),
             backoff=1,
             max_retries=1,
         )
-        .append_stage("reverser1", TextReverser())
+        .append("reverser1", TextReverser())
         .build()
     )
     item = pipeline.process(item)
@@ -215,15 +213,15 @@ def test_retryable_stage(items_generator_fx):
     item = next(items_generator_fx)
     pipeline = (
         Pipeline()
-        .append_stage("reverser0", TextReverser())
-        .append_stage(
+        .append("reverser0", TextReverser())
+        .append(
             "broken_stage",
             CustomizableBrokenStage([ValueError]),
             backoff=1,
             max_retries=1,
             retryable_errors=(ValueError,),
         )
-        .append_stage("reverser1", TextReverser())
+        .append("reverser1", TextReverser())
         .build()
     )
     item = pipeline.process(item)
@@ -238,15 +236,15 @@ def test_retryable_stage(items_generator_fx):
     item = next(items_generator_fx)
     pipeline = (
         Pipeline()
-        .append_stage("reverser0", TextReverser())
-        .append_stage(
+        .append("reverser0", TextReverser())
+        .append(
             "broken_stage",
             CustomizableBrokenStage([ValueError]),
             backoff=0,
             max_retries=0,
             retryable_errors=(ValueError,),
         )
-        .append_stage("reverser1", TextReverser())
+        .append("reverser1", TextReverser())
         .build()
     )
     item = pipeline.process(item)
@@ -261,16 +259,16 @@ def test_retryable_stage(items_generator_fx):
     item = next(items_generator_fx)
     pipeline = (
         Pipeline()
-        .append_stage("reverser0", TextReverser())
-        .append_stage(
+        .append("reverser0", TextReverser())
+        .append(
             "broken_stage0",
             CustomizableBrokenStage([CustomException]),
             backoff=1,
             max_retries=1,
             retryable_errors=(ValueError, CustomException),
         )
-        .append_stage("reverser1", TextReverser())
-        .append_stage(
+        .append("reverser1", TextReverser())
+        .append(
             "broken_stage1",
             CustomizableBrokenStage([CustomException]),
             backoff=1,
@@ -292,7 +290,7 @@ def test_retryable_stage(items_generator_fx):
         for err in soft_errors
     )
     with pytest.raises(ValueError):
-        Pipeline().append_stage(
+        Pipeline().append(
             "broken_stage",
             CustomizableBrokenStage([CustomException]),
             backoff=1,
@@ -300,7 +298,7 @@ def test_retryable_stage(items_generator_fx):
             retryable_errors=[ValueError, CustomException],
         )
     with pytest.raises(ValueError):
-        Pipeline().append_stage(
+        Pipeline().append(
             "broken_stage",
             CustomizableBrokenStage([CustomException]),
             backoff="1.2",
@@ -308,7 +306,7 @@ def test_retryable_stage(items_generator_fx):
             retryable_errors=(ValueError, CustomException),
         )
     with pytest.raises(ValueError):
-        Pipeline().append_stage(
+        Pipeline().append(
             "broken_stage",
             CustomizableBrokenStage([CustomException]),
             backoff=1,
@@ -321,15 +319,15 @@ def test_retry_on_different_errors(items_generator_fx):
     item = next(items_generator_fx)
     pipeline = (
         Pipeline()
-        .append_stage("reverser0", TextReverser())
-        .append_stage(
+        .append("reverser0", TextReverser())
+        .append(
             "broken_stage",
             CustomizableBrokenStage([CustomException, ValueError]),
             backoff=0,
             max_retries=2,
             retryable_errors=(CustomException, ValueError),
         )
-        .append_stage("reverser1", TextReverser())
+        .append("reverser1", TextReverser())
         .build()
     )
     item = pipeline.process(item)
@@ -349,15 +347,15 @@ def test_exponential_backoff_retry_strategy(items_generator_fx):
     item = next(items_generator_fx)
     pipeline = (
         Pipeline()
-        .append_stage("reverser0", TextReverser())
-        .append_stage(
+        .append("reverser0", TextReverser())
+        .append(
             "broken_stage",
             CustomizableBrokenStage([CustomException]),
             backoff=1,
             max_retries=0,
             retryable_errors=(CustomException,),
         )
-        .append_stage("reverser1", TextReverser())
+        .append("reverser1", TextReverser())
         .build()
     )
     item = pipeline.process(item)
@@ -365,15 +363,15 @@ def test_exponential_backoff_retry_strategy(items_generator_fx):
     item = next(items_generator_fx)
     pipeline = (
         Pipeline()
-        .append_stage("reverser0", TextReverser())
-        .append_stage(
+        .append("reverser0", TextReverser())
+        .append(
             "broken_stage",
             CustomizableBrokenStage([CustomException]),
             backoff=1,
             max_retries=3,
             retryable_errors=(CustomException,),
         )
-        .append_stage("reverser1", TextReverser())
+        .append("reverser1", TextReverser())
         .build()
     )
     item = pipeline.process(item)

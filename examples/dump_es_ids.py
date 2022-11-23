@@ -93,13 +93,13 @@ def get_pipeline(input_file, output_file, es_hosts, es_indices):
     return (
         Pipeline()
         .set_source(FileIter(file_obj=input_file))
-        .append_stage(
+        .append(
             "es_retrieve",
             ESRetrieve(es_hosts=es_hosts, es_indices=es_indices),
             concurrency=4,
             parallel=True,
         )
-        .append_stage("jsonl_dump", JsonlDump(file_obj=output_file))
+        .append("jsonl_dump", JsonlDump(file_obj=output_file))
         .build()
     )
 

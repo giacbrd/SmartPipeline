@@ -9,7 +9,7 @@ def test_file_items(file_directory_source_fx):
     pipeline = (
         Pipeline()
         .set_source(LocalFilesSource(dir_path=file_directory_source_fx))
-        .append_stage("extractor", TextExtractor())
+        .append("extractor", TextExtractor())
         .build()
     )
     items = list(pipeline.run())

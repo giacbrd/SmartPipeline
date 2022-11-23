@@ -30,9 +30,9 @@ def test_run():
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(35))
-        .append_stage("reverser", BatchTextReverser())
-        .append_stage("duplicator", TextDuplicator())
-        .append_stage("batch_duplicator", BatchTextDuplicator())
+        .append("reverser", BatchTextReverser())
+        .append("duplicator", TextDuplicator())
+        .append("batch_duplicator", BatchTextDuplicator())
         .build()
     )
     for item in pipeline.run():
@@ -45,9 +45,9 @@ def test_run():
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(40))
-        .append_stage("reverser", TextReverser())
-        .append_stage("duplicator", TextDuplicator())
-        .append_stage("batch_duplicator", BatchTextDuplicator(check_batch=True))
+        .append("reverser", TextReverser())
+        .append("duplicator", TextDuplicator())
+        .append("batch_duplicator", BatchTextDuplicator(check_batch=True))
         .build()
     )
     for _ in pipeline.run():
@@ -59,8 +59,8 @@ def test_run_different_sizes():
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
-        .append_stage("reverser", BatchTextReverser(size=4))
-        .append_stage("duplicator", BatchTextDuplicator(size=20))
+        .append("reverser", BatchTextReverser(size=4))
+        .append("duplicator", BatchTextDuplicator(size=20))
         .build()
     )
     n = 0
@@ -72,8 +72,8 @@ def test_run_different_sizes():
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(6))
-        .append_stage("reverser", BatchTextReverser(size=1))
-        .append_stage("duplicator", BatchTextDuplicator(size=20))
+        .append("reverser", BatchTextReverser(size=1))
+        .append("duplicator", BatchTextDuplicator(size=20))
         .build()
     )
     for n, item in enumerate(pipeline.run()):
@@ -88,8 +88,8 @@ def test_errors(caplog):
         get_pipeline()
         .set_error_manager(ErrorManager())
         .set_source(RandomTextSource(22))
-        .append_stage("reverser", BatchTextReverser(size=5))
-        .append_stage("error", ErrorStage())
+        .append("reverser", BatchTextReverser(size=5))
+        .append("error", ErrorStage())
         .build()
     )
     for item in pipeline.run():
@@ -109,9 +109,9 @@ def test_errors(caplog):
         get_pipeline()
         .set_error_manager(ErrorManager())
         .set_source(RandomTextSource(28))
-        .append_stage("reverser", BatchTextReverser(size=8))
-        .append_stage("error", ErrorStage())
-        .append_stage("duplicator", BatchTextDuplicator(size=5))
+        .append("reverser", BatchTextReverser(size=8))
+        .append("error", ErrorStage())
+        .append("duplicator", BatchTextDuplicator(size=5))
         .build()
     )
     caplog.clear()
@@ -130,9 +130,9 @@ def test_errors(caplog):
         get_pipeline()
         .set_error_manager(ErrorManager())
         .set_source(RandomTextSource(10))
-        .append_stage("reverser", BatchTextReverser(size=3))
-        .append_stage("error1", ExceptionStage())
-        .append_stage("error2", ErrorStage())
+        .append("reverser", BatchTextReverser(size=3))
+        .append("error1", ExceptionStage())
+        .append("error2", ErrorStage())
         .build()
     )
     caplog.clear()
@@ -153,8 +153,8 @@ def test_errors(caplog):
         pipeline = (
             get_pipeline()
             .set_source(RandomTextSource(10))
-            .append_stage("reverser", BatchTextReverser(size=4))
-            .append_stage("error", ExceptionStage())
+            .append("reverser", BatchTextReverser(size=4))
+            .append("error", ExceptionStage())
             .build()
         )
         for _ in pipeline.run():
@@ -164,9 +164,9 @@ def test_errors(caplog):
         get_pipeline()
         .set_error_manager(ErrorManager().no_skip_on_critical_error())
         .set_source(RandomTextSource(10))
-        .append_stage("reverser1", BatchTextReverser(size=1))
-        .append_stage("error", ExceptionStage())
-        .append_stage("reverser2", BatchTextReverser(size=4))
+        .append("reverser1", BatchTextReverser(size=1))
+        .append("error", ExceptionStage())
+        .append("reverser2", BatchTextReverser(size=4))
         .build()
     )
     for item in pipeline.run():
@@ -181,8 +181,8 @@ def test_batch_errors(caplog):
         get_pipeline()
         .set_error_manager(ErrorManager())
         .set_source(RandomTextSource(22))
-        .append_stage("reverser", BatchTextReverser(size=5))
-        .append_stage("error", BatchErrorStage(size=3))
+        .append("reverser", BatchTextReverser(size=5))
+        .append("error", BatchErrorStage(size=3))
         .build()
     )
     for item in pipeline.run():
@@ -198,9 +198,9 @@ def test_batch_errors(caplog):
         get_pipeline()
         .set_error_manager(ErrorManager())
         .set_source(RandomTextSource(28))
-        .append_stage("reverser", BatchTextReverser(size=8))
-        .append_stage("error", BatchErrorStage(size=7))
-        .append_stage("duplicator", BatchTextDuplicator(size=5))
+        .append("reverser", BatchTextReverser(size=8))
+        .append("error", BatchErrorStage(size=7))
+        .append("duplicator", BatchTextDuplicator(size=5))
         .build()
     )
     for item in pipeline.run():
@@ -218,9 +218,9 @@ def test_batch_errors(caplog):
         get_pipeline()
         .set_error_manager(ErrorManager())
         .set_source(RandomTextSource(10))
-        .append_stage("reverser", BatchTextReverser(size=3))
-        .append_stage("error1", BatchExceptionStage(size=7))
-        .append_stage("error2", BatchErrorStage(size=1))
+        .append("reverser", BatchTextReverser(size=3))
+        .append("error1", BatchExceptionStage(size=7))
+        .append("error2", BatchErrorStage(size=1))
         .build()
     )
     for item in pipeline.run():
@@ -240,8 +240,8 @@ def test_batch_errors(caplog):
         pipeline = (
             get_pipeline()
             .set_source(RandomTextSource(10))
-            .append_stage("reverser", BatchTextReverser(size=4))
-            .append_stage("error", BatchExceptionStage(size=3))
+            .append("reverser", BatchTextReverser(size=4))
+            .append("error", BatchExceptionStage(size=3))
             .build()
         )
         for _ in pipeline.run():
@@ -253,8 +253,8 @@ def test_retryable_batch_stages(items_generator_fx):
     pipeline = (
         Pipeline()
         .set_source(RandomTextSource(10))
-        .append_stage("reverser0", TextReverser())
-        .append_stage(
+        .append("reverser0", TextReverser())
+        .append(
             "broken_batch_stage1",
             CustomizableBrokenBatchStage(
                 size=10, timeout=5, exceptions_to_raise=[CustomException, ValueError]
@@ -263,7 +263,7 @@ def test_retryable_batch_stages(items_generator_fx):
             max_retries=1,
             retryable_errors=(CustomException, ValueError),
         )
-        .append_stage(
+        .append(
             "broken_batch_stage2",
             CustomizableBrokenBatchStage(
                 size=10, timeout=5, exceptions_to_raise=[IOError]
@@ -272,7 +272,7 @@ def test_retryable_batch_stages(items_generator_fx):
             max_retries=0,
             retryable_errors=(IOError,),
         )
-        .append_stage("reverser1", TextReverser())
+        .append("reverser1", TextReverser())
         .build()
     )
     item = next(items_generator_fx)

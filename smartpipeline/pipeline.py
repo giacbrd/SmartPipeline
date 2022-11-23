@@ -529,7 +529,7 @@ class Pipeline:
         """
         return self._containers.get(name).stage
 
-    def append_stage(
+    def append(
         self,
         name: str,
         stage: StageType,
@@ -570,7 +570,10 @@ class Pipeline:
         self._containers[name] = container
         return self
 
-    def append_stage_concurrently(
+    # deprecated
+    append_stage = append
+
+    def append_concurrently(
         self,
         name: str,
         stage_class: Callable,
@@ -640,6 +643,9 @@ class Pipeline:
 
         future.add_done_callback(append_stage)
         return self
+
+    # deprecated
+    append_stage_concurrently = append_concurrently
 
     def _get_init_executor(self, parallel: bool = False) -> Executor:
         """
