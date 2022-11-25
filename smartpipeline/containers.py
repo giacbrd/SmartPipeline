@@ -253,10 +253,11 @@ class SourceContainer(BaseContainer):
         Only used with concurrent stages
         """
         while True:
-            item = self._get_next_item()
             if self._stop_sent:
+                time.sleep(CONCURRENCY_WAIT)
                 return
-            elif item is None:
+            item = self._get_next_item()
+            if item is None:
                 continue
             else:
                 self.out_queue.put(item, block=True)
@@ -264,6 +265,7 @@ class SourceContainer(BaseContainer):
                     self.increase_count()
             if isinstance(item, Stop):
                 self._stop_sent = True
+                time.sleep(CONCURRENCY_WAIT)
                 return
 
     def prepend_item(self, item: Optional[Item]):

@@ -571,7 +571,7 @@ class Pipeline:
         return self
 
     # deprecated
-    append_stage = append
+    append_stage = append  # pragma: no cover
 
     def append_concurrently(
         self,

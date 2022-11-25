@@ -37,7 +37,7 @@ class Item:
         return self._payload
 
     # deprecated
-    payload = data
+    payload = data  # pragma: no cover
 
     def data_snippet(self, max_size: int = DATA_SNIPPET_SIZE):
         """
@@ -47,7 +47,7 @@ class Item:
         """
         return str(self.data)[:max_size]
 
-    def set_metadata(self, field: str, value: Any) -> Item:
+    def set_metadata(self, field: str, value: Any) -> Item:  # pragma: no cover
         """
         DEPRECATED: Add a metadata, something we want to remember but keep outside the actual data in :attr:`.Item.data`
 
@@ -56,7 +56,7 @@ class Item:
         self._meta[field] = value
         return self
 
-    def get_metadata(self, field: str) -> Any:
+    def get_metadata(self, field: str) -> Any:  # pragma: no cover
         """
         DEPRECATED: Get a metadata value by its name
 
@@ -194,7 +194,7 @@ class Item:
 
 
 # deprecated
-DataItem = Item
+DataItem = Item  # pragma: no cover
 
 
 class Stop(Item):
