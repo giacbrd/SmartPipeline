@@ -45,7 +45,6 @@ def test_data():
     assert item.metadata["source"] == "remote"
     assert item.metadata["version"] == 3
     assert not item.metadata.get("head")
-    assert item.data == item
 
 
 def test_error():
