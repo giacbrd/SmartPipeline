@@ -7,8 +7,7 @@ Data items
 The unit of data of a pipeline is the item,
 which is represented by :class:`.Item` class or a subclass of it.
 Data is kept in the :attr:`.Item.data`, a read-only dictionary.
-Other methods allow to enrich an item with metadata, extra stuff as temporary data or descriptors of the item,
-so as to isolate in the data all, and only, the data the pipeline produces.
+:attr:`.Item.metadata` is for extra stuff as temporary data or descriptors of the item.
 If the pipeline is going to work on more processes (see later the ``parallel`` parameter)
 an item must me serializable with `pickle <https://docs.python.org/3/library/pickle.html>`_ module,
 both its data and metadata.
@@ -56,22 +55,22 @@ the data of each one.
                     "text": text,
                     "id": hash(text)
                 })
-                item.set_metadata('count', self._counter)
+                item.metadata['count'] = self._counter
                 return item
 
 Defining your stages
 --------------------
 
-A stage is also defined as a class and created when added to a pipeline.
+A stage is a subclass of :class:`.Stage` or :class:`.BatchStage`.
 
-The stage method :meth:`.Stage.process` (or :meth:`.BatchStage.process_batch`) is where the actual
-item data processing happens.
+The actual item data processing happens in the stage method :meth:`.Stage.process`,
+or :meth:`.BatchStage.process_batch` for lists of items.
+
 A stage receives a single item and returns it, enriched with stage computations.
-
 A batch stage, instead, processes multiple items at once.
-This is useful when the computation can exploit handling more data instead of single items,
+This is useful when the computation can exploit handling more data together,
 e.g.: on a HTTP API that accepts lists of values, one would benefit by making less calls;
-on a machine learning model that is optimized for predicting multiple samples.
+on a machine learning model that is optimized for predicting on multiple samples.
 
 Concurrent stages will call the method on different subsets of the data flow, concurrently.
 
@@ -104,12 +103,12 @@ By extending :class:`.ErrorManager` you can define custom handling for these kin
 but also for all other exceptions.
 
 :class:`.SoftError` exceptions have to be explicitly raised.
-A stage soft error does not interrupt an item processing through the pipeline,
+A soft error does not interrupt an item processing through the pipeline,
 the item processing is skipped just for the stage.
 Be careful on batch stages: raising a soft error, while iterating on batch items, will make skip
 also all the items of the batch following the item that has produced the error.
 
-A :class:`.CriticalError` is raised for any non captured exception, or may be raised explicitly:
+A :class:`.CriticalError` is raised for any non captured exception, or it may be raised explicitly:
 it stops the processing of an item so that the pipeline goes ahead with the next one.
 
 It is recommended to use the
@@ -119,13 +118,13 @@ when explicitly raising a :class:`.SoftError` or a :class:`.CriticalError` excep
 Setting and running the pipeline
 --------------------------------
 
-Once you have your set of stages you can add them in sequence to a Pipeline instance that behave as a "builder".
-:meth:`.Pipeline.append` is the main method for adding stages to a pipeline,
-it must define their unique names and eventually their concurrency.
+Once you have your set of stages you can add them in sequence to a Pipeline instance, following a "builder" pattern.
+:meth:`.Pipeline.append` is the main method for adding stages to a pipeline.
+One must define their unique names and eventually their concurrency.
 The ``concurrency`` parameter is default to 0, a stage is concurrent when the value is 1 or greater.
 In case of values greater than 1, and by setting ``parallel`` to ``True``,
 Python multiprocessing is used: stage concurrent executions will run in parallel,
-thus stage instances will be copied in each process.
+stage instances will be copied in each process.
 
 Consider using threads when I/O blocking operations are prevalent,
 while using multiprocessing when stages execute long computations on data.
@@ -216,10 +215,10 @@ More, executables examples can be found in the root sub-directory ``examples``.
 .. code-block:: python
 
     from smartpipeline.pipeline import Pipeline
-    from smartpipeline.stage import Stage, NameMixin
+    from smartpipeline.stage import Stage, AliveMixin
     from smartpipeline.item import Item
     from smartpipeline.error.handling import ErrorManager
-    from smartpipeline.error.exceptions import SoftError
+    from smartpipeline.error.exceptions import SoftError, CriticalError
     from smartpipeline.helpers import LocalFilesSource, FilePathItem
     from elasticsearch import Elasticsearch
     from typing import Optional
@@ -235,8 +234,8 @@ More, executables examples can be found in the root sub-directory ``examples``.
             self.es_client = Elasticsearch(self.es_host)
 
         def handle(
-            self, error: Exception, stage: NameMixin, item: Item
-        ) -> Optional[Exception]:
+            self, error: Exception, stage: AliveMixin, item: Item
+        ) -> Optional[CriticalError]:
             if isinstance(error, SoftError):
                 error = error.get_exception()
             self.es_client.index(
@@ -337,7 +336,7 @@ we must find a way generate these attributes for each object copy in each proces
 This is what :meth:`.Stage.on_start` method solves. It is simply used to initialize attributes "a posteriori".
 It is normally called after ``__init__``, but in case of execution on multiple processes,
 it is called once, on the stage copy, at process start.
-This allow stateful stages, locally to each process;
+This allows stateful stages, locally to each process;
 it is also useful for safety and for avoiding copying large data.
 
 Also for :class:`.ErrorManager` it is necessary to define :meth:`.ErrorManager.on_start`,
@@ -376,7 +375,7 @@ This is how we refactor the original ``__init__`` methods
 
 The effort for the developer is minimal, but the advantage big.
 We can now execute these pipeline abstractions in parallel,
-not just stateless methods as we would normally do with multiprocessing.
+not limited to stateless methods as we would normally do with multiprocessing.
 In general, it is convenient to always override ``on_start`` if attributes we are going to construct require
 this special treatment, so that the stage will be always compatible with both three ways of run it: sequentially,
 concurrently on threads or on processes.
