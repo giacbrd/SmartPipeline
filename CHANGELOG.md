@@ -1,5 +1,11 @@
 # SmartPipeline changelog
 
+## Version 0.6.0 [2022-11-28]
+
+- Logging now roks properly
+- Tests coverage
+- Refactoring, also of class/method names
+
 ## Version 0.5.0 [2022-08-01]
 
 - retry policy on stage failures on items
