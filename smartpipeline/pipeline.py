@@ -561,7 +561,7 @@ class Pipeline:
             name, stage, concurrency, parallel, retryable_errors, max_retries, backoff
         )
         if concurrency > 0:
-            # if it is concurrent and it is the first stage, make the source working on a output queue
+            # if it is concurrent and it is the first stage, make the source work on a output queue
             if not self._containers:
                 self._enqueue_source = True
         self._wait_for_previous(
@@ -611,7 +611,7 @@ class Pipeline:
             args = []
         self._check_stage_name(name)
         self._check_retries_params(retryable_errors, max_retries, backoff)
-        # if it is concurrent and it is the first stage, make the source working on a output queue
+        # if it is concurrent and it is the first stage, make the source work on a output queue
         if concurrency > 0 and not self._containers:
             self._enqueue_source = True
         last_stage_name = self._last_stage_name()
