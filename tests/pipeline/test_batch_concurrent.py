@@ -513,13 +513,13 @@ def test_single_items(items_generator_fx):
     item = next(items_generator_fx)
     for _ in range(88):
         pipeline.process_async(copy.deepcopy(item), callback=_check_item)
+    pipeline.stop()
     result = pipeline.get_item()
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
     for _ in range(87):
         pipeline.get_item()
-    pipeline.stop()
 
     pipeline = (
         get_pipeline()
@@ -533,8 +533,8 @@ def test_single_items(items_generator_fx):
     )
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=_check_item)
-    result = pipeline.get_item()
     pipeline.stop()
+    result = pipeline.get_item()
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
@@ -560,13 +560,13 @@ def test_single_items(items_generator_fx):
     item = next(items_generator_fx)
     for _ in range(88):
         pipeline.process_async(item, callback=_check_item)
+    pipeline.stop()
     for _ in range(88):
         result = pipeline.get_item()
         assert result.id == item.id
         assert result.metadata["check"]
         assert result.data["text"]
         assert result.data["text"] != item.data["text"]
-    pipeline.stop()
 
     pipeline = (
         get_pipeline()
@@ -577,8 +577,8 @@ def test_single_items(items_generator_fx):
     )
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=_check_item)
-    result = pipeline.get_item()
     pipeline.stop()
+    result = pipeline.get_item()
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] == item.data["text"]
@@ -592,8 +592,8 @@ def test_single_items(items_generator_fx):
     )
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=_check_item)
-    result = pipeline.get_item()
     pipeline.stop()
+    result = pipeline.get_item()
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
@@ -607,8 +607,8 @@ def test_single_items(items_generator_fx):
     )
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=_check_item)
-    result = pipeline.get_item()
     pipeline.stop()
+    result = pipeline.get_item()
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
@@ -632,8 +632,8 @@ def test_single_items(items_generator_fx):
     )
     item = next(items_generator_fx)
     pipeline.process_async(item, callback=_check_item)
-    result = pipeline.get_item()
     pipeline.stop()
+    result = pipeline.get_item()
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] == item.data["text"]
@@ -652,13 +652,13 @@ def test_mixed_single_items(items_generator_fx):
     item = next(items_generator_fx)
     for _ in range(88):
         pipeline.process_async(copy.deepcopy(item), callback=_check_item)
+    pipeline.stop()
     result = pipeline.get_item()
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
     for _ in range(87):
         pipeline.get_item()
-    pipeline.stop()
 
     pipeline = (
         get_pipeline()
@@ -672,8 +672,8 @@ def test_mixed_single_items(items_generator_fx):
     )
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=_check_item)
-    result = pipeline.get_item()
     pipeline.stop()
+    result = pipeline.get_item()
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
@@ -697,10 +697,10 @@ def test_mixed_single_items(items_generator_fx):
     item = next(items_generator_fx)
     for _ in range(88):
         pipeline.process_async(item, callback=_check_item)
+    pipeline.stop()
     for _ in range(88):
         result = pipeline.get_item()
         assert result.id == item.id
         assert result.metadata["check"]
         assert result.data["text"]
         assert result.data["text"] != item.data["text"]
-    pipeline.stop()
