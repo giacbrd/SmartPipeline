@@ -148,6 +148,7 @@ def stage_executor(
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
     logs_queue: queue.Queue[logging.LogRecord],
+    queue_timeout: float = CONCURRENCY_WAIT,
 ):
     """
     Consume items from an input queue, process and put them in an output queue, indefinitely,
@@ -176,7 +177,7 @@ def stage_executor(
                 stage.on_end()
             return
         try:
-            item = in_queue.get(block=True, timeout=CONCURRENCY_WAIT)
+            item = in_queue.get(block=True, timeout=queue_timeout)
         except queue.Empty:
             continue
         if isinstance(item, Stop):
