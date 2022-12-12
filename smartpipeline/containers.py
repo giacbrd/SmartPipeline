@@ -624,7 +624,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
     def _run(
         self,
         stage: StageType,
-        _executor: StageExecutor,
+        executor: StageExecutor,
         in_queue: ItemsQueue,
         out_queue: ItemsQueue,
         error_manager: ErrorManager,
@@ -636,7 +636,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         The stage will consume and produce from input/output queues concurrently
 
         :param stage: Stage instance
-        :param _executor: Function to run concurrently in the executor, which performs the stage executions
+        :param executor: Function to run concurrently in the executor, which performs the stage executions
         :param in_queue: Previous stage output queue
         :param out_queue: Output queue
         :param error_manager: Error manager instance
@@ -649,7 +649,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         for _ in range(self._concurrency):
             self._futures.append(
                 ex.submit(
-                    _executor,
+                    executor,
                     stage,
                     in_queue,
                     out_queue,
@@ -707,16 +707,16 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
             logs_queue,
         )
 
-    def run(self, _executor: StageExecutor = stage_executor):
+    def run(self, executor: StageExecutor = stage_executor):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
 
-        :param _executor: Function to run in the executor, which performs the stage executions
+        :param executor: Function to run in the executor, which performs the stage executions
         """
         super()._run(
             self.stage,
-            _executor,
+            executor,
             self._previous_queue,
             self.out_queue,
             self.error_manager,
@@ -764,16 +764,16 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
             logs_queue,
         )
 
-    def run(self, _executor: StageExecutor = batch_stage_executor):
+    def run(self, executor: StageExecutor = batch_stage_executor):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
 
-        :param _executor: Function to run in the executor, which performs the stage executions
+        :param executor: Function to run in the executor, which performs the stage executions
         """
         super()._run(
             self.stage,
-            _executor,
+            executor,
             self._previous_queue,
             self.out_queue,
             self.error_manager,
