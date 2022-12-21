@@ -23,7 +23,7 @@ Data Items
 
 The unit of data in a pipeline
 
-.. autoclass:: smartpipeline.item.DataItem
+.. autoclass:: smartpipeline.item.Item
    :inherited-members:
    :members:
 

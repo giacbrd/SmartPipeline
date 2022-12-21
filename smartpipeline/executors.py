@@ -1,27 +1,28 @@
+from __future__ import annotations
+
 import logging
 import queue
 import time
+from logging.handlers import QueueHandler
 from threading import Event
-from typing import Sequence, Callable, Optional, List
+from typing import Callable, List, Optional, Sequence
 
-from smartpipeline.error.exceptions import RetryError
-from smartpipeline.utils import ConcurrentCounter, ProcessCounter
 from smartpipeline.defaults import CONCURRENCY_WAIT
+from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager, RetryManager
-from smartpipeline.item import DataItem, Stop
-from smartpipeline.stage import Stage, BatchStage, ItemsQueue, StageType
+from smartpipeline.item import Item, Stop
+from smartpipeline.stage import BatchStage, ItemsQueue, Stage, StageType
+from smartpipeline.utils import ConcurrentCounter, ProcessCounter
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
-
-_logger = logging.getLogger(__name__)
 
 
 def process(
     stage: Stage,
-    item: DataItem,
+    item: Item,
     error_manager: ErrorManager,
     retry_manager: RetryManager,
-) -> DataItem:
+) -> Item:
     """
     Execute the :meth:`.stage.Stage.process` method of a stage for an item
     """
@@ -35,9 +36,9 @@ def process(
         or retry_manager.max_retries == 0
     ):
         try:
-            _logger.debug(f"{stage} is processing {item}")
+            stage.logger.debug("%s is processing %s", stage, item)
             processed_item = stage.process(item)
-            _logger.debug(f"{stage} has finished processing {processed_item}")
+            stage.logger.debug("%s has finished processing %s", stage, processed_item)
             # this can't be in a finally, otherwise it would register the `error_manager.handle` time
             processed_item.set_timing(stage.name, time.time() - time1)
             return processed_item
@@ -51,12 +52,15 @@ def process(
                 pow(2, len(caught_retryable_exceptions) - 1) * retry_manager.backoff
             )
         except Exception as e:
-            _logger.debug(f"{stage} has failed processing {item}")
+            stage.logger.debug("%s has failed processing %s", stage, item)
             item.set_timing(stage.name, time.time() - time1)
             error_manager.handle(e, stage, item)
             return item
-    _logger.debug(
-        f"{stage} has failed processing the {item} many times with {len(caught_retryable_exceptions)} errors"
+    stage.logger.debug(
+        "%s has failed processing the %s many times with %s errors",
+        stage,
+        item,
+        len(caught_retryable_exceptions),
     )
     item.set_timing(stage.name, time.time() - time1)
     for rexc in caught_retryable_exceptions:
@@ -66,20 +70,20 @@ def process(
 
 def process_batch(
     stage: BatchStage,
-    items: Sequence[DataItem],
+    items: Sequence[Item],
     error_manager: ErrorManager,
     retry_manager: RetryManager,
-) -> List[Optional[DataItem]]:
+) -> List[Optional[Item]]:
     """
     Execute the :meth:`.stage.BatchStage.process_batch` method of a batch stage for a batch of items
     """
-    ret: List[Optional[DataItem]] = [None] * len(items)
+    ret: List[Optional[Item]] = [None] * len(items)
     to_process = {}
     for i, item in enumerate(items):
         if error_manager.check_critical_errors(item):
             ret[i] = item
         else:
-            _logger.debug(f"{stage} is going to process {item}")
+            stage.logger.debug("%s is going to process %s", stage, item)
             to_process[i] = item
     time1 = time.time()
     # keeping track of caught exceptions
@@ -89,9 +93,11 @@ def process_batch(
         or retry_manager.max_retries == 0
     ):
         try:
-            _logger.debug(f"{stage} is processing {len(to_process)} items")
+            stage.logger.debug("%s is processing %s items", stage, len(to_process))
             processed = stage.process_batch(list(to_process.values()))
-            _logger.debug(f"{stage} has finished processing {len(to_process)} items")
+            stage.logger.debug(
+                "%s has finished processing %s items", stage, len(to_process)
+            )
             spent = (time.time() - time1) / (len(to_process) or 1.0)
             for n, i in enumerate(to_process.keys()):
                 item = processed[n]
@@ -108,15 +114,20 @@ def process_batch(
                 pow(2, len(caught_retryable_exceptions) - 1) * retry_manager.backoff
             )
         except Exception as e:
-            _logger.debug(f"{stage} had failures in processing {len(to_process)} items")
+            stage.logger.debug(
+                "%s had failures in processing %s items", stage, len(to_process)
+            )
             spent = (time.time() - time1) / (len(to_process) or 1.0)
             for i, item in to_process.items():
                 item.set_timing(stage.name, spent)
                 error_manager.handle(e, stage, item)
                 ret[i] = item
             return ret
-    _logger.debug(
-        f"{stage} has failed in processing {len(to_process)} items many times with {len(caught_retryable_exceptions)} errors"
+    stage.logger.debug(
+        "%s has failed in processing %s items many times with %s errors",
+        stage,
+        len(to_process),
+        len(caught_retryable_exceptions),
     )
     spent = (time.time() - time1) / (len(to_process) or 1.0)
     for i, item in to_process.items():
@@ -136,12 +147,24 @@ def stage_executor(
     terminated: Event,
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
+    logs_queue: queue.Queue[logging.LogRecord],
+    queue_timeout: float = CONCURRENCY_WAIT,
 ):
     """
     Consume items from an input queue, process and put them in an output queue, indefinitely,
     until a termination event is set
     """
     if isinstance(counter, ProcessCounter):
+        if logs_queue is not None:
+            root_logger = logging.getLogger()
+            # only by comparing string of queues we obtain their "original" address
+            if not any(
+                isinstance(handler, QueueHandler)
+                and str(handler.queue) == str(logs_queue)
+                for handler in root_logger.handlers
+            ):
+                handler = QueueHandler(logs_queue)
+                root_logger.addHandler(handler)
         # call these only if the stage and the error manager are copies of the original,
         # ergo this executor is running in a child process
         error_manager.on_start()
@@ -154,7 +177,7 @@ def stage_executor(
                 stage.on_end()
             return
         try:
-            item = in_queue.get(block=True, timeout=CONCURRENCY_WAIT)
+            item = in_queue.get(block=True, timeout=queue_timeout)
         except queue.Empty:
             continue
         if isinstance(item, Stop):
@@ -186,12 +209,23 @@ def batch_stage_executor(
     terminated: Event,
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
+    logs_queue: queue.Queue[logging.LogRecord],
 ):
     """
     Consume items in batches from an input queue, process and put them in an output queue, indefinitely,
     until a termination event is set
     """
     if isinstance(counter, ProcessCounter):
+        if logs_queue is not None:
+            root_logger = logging.getLogger()
+            # only by comparing string of queues we obtain their "original" address
+            if not any(
+                isinstance(handler, QueueHandler)
+                and str(handler.queue) == str(logs_queue)
+                for handler in root_logger.handlers
+            ):
+                handler = QueueHandler(logs_queue)
+                root_logger.addHandler(handler)
         # call these only if the stage and the error manager are copies of the original,
         # ergo this executor is running in a child process
         error_manager.on_start()

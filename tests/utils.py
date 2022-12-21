@@ -1,3 +1,4 @@
+import logging
 import random
 import time
 from datetime import datetime
@@ -7,8 +8,9 @@ from typing import List, Type
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.helpers import FilePathItem
-from smartpipeline.stage import Source, Stage, BatchStage
-from smartpipeline.item import DataItem
+from smartpipeline.item import Item
+from smartpipeline.pipeline import Pipeline
+from smartpipeline.stage import BatchStage, Source, Stage
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -40,8 +42,8 @@ class RandomTextSource(Source):
         if self.counter > self.total:
             self.stop()
             return
-        item = DataItem()
-        item.payload.update({"text": random_text(), "count": self.counter})
+        item = Item()
+        item.data.update({"text": random_text(), "count": self.counter})
         return item
 
 
@@ -57,8 +59,8 @@ class ListSource(Source):
 
 
 class TextGenerator(Stage):
-    def process(self, item: DataItem):
-        item.payload["text"] = random_text()
+    def process(self, item: Item):
+        item.data["text"] = random_text()
         return item
 
 
@@ -66,9 +68,9 @@ class TextReverser(Stage):
     def __init__(self, cycles=1):
         self._cycles = cycles
 
-    def process(self, item: DataItem):
+    def process(self, item: Item):
         for _ in range(self._cycles):
-            item.payload["text"] = item.payload["text"][::-1]
+            item.data["text"] = item.data["text"][::-1]
         return item
 
 
@@ -76,9 +78,17 @@ class TextDuplicator(Stage):
     def __init__(self, cycles=1):
         self._cycles = cycles
 
-    def process(self, item: DataItem):
+    def process(self, item: Item):
         for _ in range(self._cycles):
-            item.payload["text_" + str(random.randint(1, 1000))] = item.payload["text"]
+            item.data["text_" + str(random.randint(1, 1000))] = item.data["text"]
+        return item
+
+
+class SlowInitializer(Stage):
+    def __init__(self, wait_time=2):
+        time.sleep(wait_time)
+
+    def process(self, item: Item):
         return item
 
 
@@ -87,7 +97,7 @@ class CustomizableBrokenStage(Stage):
         self._exceptions_to_raise = exceptions_to_raise
         self._last_processed = 0
 
-    def process(self, item: DataItem):
+    def process(self, item: Item):
         to_raise = self._exceptions_to_raise[
             self._last_processed % len(self._exceptions_to_raise)
         ]
@@ -98,7 +108,19 @@ class CustomizableBrokenStage(Stage):
 class TextExtractor(Stage):
     def process(self, item: FilePathItem):
         with open(item.path) as f:
-            item.payload["text"] = f.read()
+            item.data["text"] = f.read()
+        return item
+
+
+class Logger(Stage):
+    def __init__(self):
+        self.logger.warning("testing concurrent initialization")
+
+    def on_start(self):
+        self.logger.setLevel(logging.INFO)
+
+    def process(self, item: Item):
+        self.logger.info("logging item %s", item)
         return item
 
 
@@ -108,7 +130,7 @@ class BatchTextGenerator(BatchStage):
 
     def process_batch(self, items):
         for item in items:
-            item.payload["text"] = random_text()
+            item.data["text"] = random_text()
         return items
 
 
@@ -120,7 +142,7 @@ class BatchTextReverser(BatchStage):
     def process_batch(self, items):
         for item in items:
             for _ in range(self._cycles):
-                item.payload["text"] = item.payload["text"][::-1]
+                item.data["text"] = item.data["text"][::-1]
         return items
 
 
@@ -140,9 +162,9 @@ class BatchTextDuplicator(BatchStage):
                 )
         for item in items:
             for c in range(self._cycles):
-                item.payload[
+                item.data[
                     "text_b_{}_{}".format(c, random.randint(1, 1000))
-                ] = item.payload["text"]
+                ] = item.data["text"]
         return items
 
 
@@ -164,24 +186,24 @@ class TimeWaster(Stage):
     def __init__(self, time=1):
         self._time = time
 
-    def process(self, item: DataItem):
+    def process(self, item: Item):
         time.sleep(self._time)
         return item
 
 
 class ExceptionStage(Stage):
-    def process(self, item: DataItem):
+    def process(self, item: Item):
         time.sleep(0.3)
         raise Exception("test exception")
 
 
 class ErrorStage(Stage):
-    def process(self, item: DataItem):
+    def process(self, item: Item):
         raise SoftError("test pipeline error")
 
 
 class CriticalIOErrorStage(Stage):
-    def process(self, item: DataItem):
+    def process(self, item: Item):
         raise CriticalError("test pipeline critical IO error") from IOError()
 
 
@@ -215,10 +237,23 @@ class SerializableStage(Stage):
     def is_closed(self):
         return self._file.closed
 
-    def process(self, item: DataItem):
+    def process(self, item: Item):
+        if item.data.get("file"):
+            raise ValueError("bad item")
         if self._file is not None and self._file.name == __file__:
-            item.payload["file"] = self._file.name
+            item.data["file"] = self._file.name
         return item
+
+
+class SerializableBatchStage(BatchStage, SerializableStage):
+    def __init__(self, size: int, timeout: int):
+        super().__init__(size, timeout)
+        self._file = None
+
+    def process_batch(self, items):
+        for item in items:
+            self.process(item)
+        return items
 
 
 class ErrorSerializableStage(Stage):
@@ -228,7 +263,7 @@ class ErrorSerializableStage(Stage):
     def on_start(self):
         raise IOError
 
-    def process(self, item: DataItem):
+    def process(self, item: Item):
         return item
 
 
@@ -252,3 +287,9 @@ def wait_service(timeout, predicate, args):
         sleep(1)
         if (datetime.now() - start).seconds > timeout:
             raise TimeoutError()
+
+
+def get_pipeline(*args, **kwargs):
+    return Pipeline(*args, **kwargs).set_error_manager(
+        ErrorManager().raise_on_critical_error()
+    )

@@ -1,6 +1,6 @@
 import os
 
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -12,7 +12,7 @@ def readfile(fname):
 
 setup(
     name="SmartPipeline",
-    version="0.5.0",
+    version="0.6.0",
     description="A framework for fast developing scalable data pipelines following a simple design pattern",
     long_description=readfile("README.rst"),
     long_description_content_type="text/x-rst",
@@ -25,6 +25,8 @@ setup(
         "Operating System :: OS Independent",
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
         "Development Status :: 4 - Beta",
     ],
     url="https://github.com/giacbrd/SmartPipeline",
@@ -42,6 +44,6 @@ setup(
     author="Giacomo Berardi",
     author_email="barnets@gmail.com",
     packages=find_packages(exclude=["tests"]),
-    tests_require=["pytest", "black", "flake8"],
+    tests_require=["pytest", "coverage"],
     python_requires=">=3.7",
 )

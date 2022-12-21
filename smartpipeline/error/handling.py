@@ -1,14 +1,14 @@
 from __future__ import annotations
+
 import logging
-from typing import Optional, Union, Any, Tuple, Type
+import uuid
+from typing import Any, Optional, Tuple, Type, Union
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
-from smartpipeline.item import DataItem
-from smartpipeline.stage import NameMixin
+from smartpipeline.item import Item
+from smartpipeline.stage import AliveMixin
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
-
-_logger = logging.getLogger(__name__)
 
 
 class ErrorManager:
@@ -53,7 +53,7 @@ class ErrorManager:
         pass
 
     def handle(
-        self, error: Exception, stage: NameMixin, item: DataItem
+        self, error: Exception, stage: AliveMixin, item: Item
     ) -> Optional[CriticalError]:
         """
         Manage an error produced by a stage
@@ -70,15 +70,21 @@ class ErrorManager:
             # any un-managed exception is a potential critical error
             item_error = item.add_critical_error(stage.name, error)
         exc_info = (type(item_error), item_error, item_error.__traceback__)
-        _logger.exception(self._generate_message(stage, item), exc_info=exc_info)
+        self.logger.exception(
+            "%s has generated an error on item %s", stage, item, exc_info=exc_info
+        )
         if isinstance(item_error, CriticalError):
             exception = self._check_critical(item_error)
             if exception:
                 return item_error
 
-    @staticmethod
-    def _generate_message(stage: NameMixin, item: DataItem) -> str:
-        return f"{stage} has generated an error on item {item}"
+    @property
+    def logger(self) -> logging.Logger:
+        if getattr(self, "_logger", None) is None:
+            self._logger = logging.getLogger(
+                f"{self.__class__.__name__}-{str(uuid.uuid4())[:8]}"
+            )
+        return self._logger
 
     def _check_critical(self, error: CriticalError) -> Union[Exception, CriticalError]:
         """
@@ -93,7 +99,7 @@ class ErrorManager:
         elif self._skip_on_critical:
             return ex or error
 
-    def check_critical_errors(self, item: DataItem) -> Optional[Exception]:
+    def check_critical_errors(self, item: Item) -> Optional[Exception]:
         """
         Check the critical errors registered for an item
         """

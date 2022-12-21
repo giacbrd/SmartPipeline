@@ -10,12 +10,13 @@ from typing import IO, Optional, Sequence
 
 from elasticsearch import Elasticsearch
 
-from smartpipeline.item import DataItem
+from smartpipeline.item import Item
 from smartpipeline.pipeline import Pipeline
-from smartpipeline.stage import Source, BatchStage, Stage
+from smartpipeline.stage import BatchStage, Source, Stage
 
 logging.basicConfig(
-    format="%(asctime)s - %(message)s", level=logging.INFO,
+    format="%(asctime)s - %(message)s",
+    level=logging.INFO,
 )
 
 _logger = logging.getLogger(__name__)
@@ -25,14 +26,14 @@ class FileIter(Source):
     def __init__(self, file_obj: IO):
         self._file_obj = file_obj
 
-    def pop(self) -> Optional[DataItem]:
+    def pop(self) -> Optional[Item]:
         line = next(self._file_obj, None)
         if line is not None:
             line = line.strip()
             # send only non-empty lines of a file to the pipeline
             if line:
-                item = DataItem()
-                item.payload["_id"] = line
+                item = Item()
+                item.data["_id"] = line
                 return item
         else:
             self.stop()
@@ -56,25 +57,26 @@ class ESRetrieve(BatchStage):
             self._retrieve = self._mget
         else:
             self._retrieve = self._search
+        self.logger.setLevel(logging.INFO)
 
     @staticmethod
-    def _mget(self, items: Sequence[DataItem]) -> Sequence[DataItem]:
-        body = {"docs": [{"_id": item.payload["_id"]} for item in items]}
+    def _mget(self, items: Sequence[Item]) -> Sequence[Item]:
+        body = {"docs": [{"_id": item.data["_id"]} for item in items]}
         resp = self._es_client.mget(body=body, index=self._es_indices)
         for i, doc in enumerate(resp["docs"]):
             if "error" not in doc:
-                items[i].payload.update(doc)
+                items[i].data.update(doc)
         return items
 
     @staticmethod
-    def _search(self, items: Sequence[DataItem]) -> Sequence[DataItem]:
-        query = {"query": {"ids": {"values": [item.payload["_id"] for item in items]}}}
+    def _search(self, items: Sequence[Item]) -> Sequence[Item]:
+        query = {"query": {"ids": {"values": [item.data["_id"] for item in items]}}}
         resp = self._es_client.search(body=query, index=self._es_indices)
         for i, doc in enumerate(resp["hits"]["hits"]):
-            items[i].payload.update(doc)
+            items[i].data.update(doc)
         return items
 
-    def process_batch(self, items: Sequence[DataItem]) -> Sequence[DataItem]:
+    def process_batch(self, items: Sequence[Item]) -> Sequence[Item]:
         return self._retrieve(self, items)
 
 
@@ -82,8 +84,8 @@ class JsonlDump(Stage):
     def __init__(self, file_obj: IO):
         self._file_obj = file_obj
 
-    def process(self, item: DataItem) -> DataItem:
-        self._file_obj.write(f"{json.dumps(item.payload)}\n")
+    def process(self, item: Item) -> Item:
+        self._file_obj.write(f"{json.dumps(item.data)}\n")
         return item
 
 
@@ -91,13 +93,13 @@ def get_pipeline(input_file, output_file, es_hosts, es_indices):
     return (
         Pipeline()
         .set_source(FileIter(file_obj=input_file))
-        .append_stage(
+        .append(
             "es_retrieve",
             ESRetrieve(es_hosts=es_hosts, es_indices=es_indices),
             concurrency=4,
             parallel=True,
         )
-        .append_stage("jsonl_dump", JsonlDump(file_obj=output_file))
+        .append("jsonl_dump", JsonlDump(file_obj=output_file))
         .build()
     )
 
@@ -112,7 +114,7 @@ def main(args):
                 es_indices=args.indices,
             )
             for item in pipeline.run():
-                _logger.info(f"Processed {item}")
+                _logger.info("Processed %s", item)
 
 
 if __name__ == "__main__":

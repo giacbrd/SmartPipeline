@@ -16,7 +16,6 @@ import sys
 sys.path.insert(0, os.path.abspath(".."))
 import sphinx_rtd_theme
 
-
 # -- Project information -----------------------------------------------------
 
 project = "SmartPipeline"
@@ -24,7 +23,7 @@ copyright = "2022, Giacomo Berardi"
 author = "Giacomo Berardi"
 
 # The full version, including alpha/beta/rc tags
-release = "0.5.0"
+release = "0.6.0"
 
 
 # -- General configuration ---------------------------------------------------

@@ -2,33 +2,34 @@
 Containers encapsulate stages and manage their execution
 """
 
+from __future__ import annotations
+
 import concurrent
 import logging
 import queue
 import time
 from abc import ABC, abstractmethod
-from concurrent.futures import wait, Executor, Future
+from concurrent.futures import Executor, Future, wait
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
+from multiprocessing import get_context
 from threading import Event
-from typing import Sequence, Optional, Callable, Union, Tuple, Type
+from typing import Callable, List, Optional, Sequence
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
-from smartpipeline.utils import ConcurrentCounter
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.executors import (
+    StageExecutor,
+    batch_stage_executor,
     process,
     process_batch,
     stage_executor,
-    batch_stage_executor,
-    StageExecutor,
 )
-from smartpipeline.stage import Stage, BatchStage, Source, ItemsQueue, StageType
-from smartpipeline.item import DataItem, Stop
+from smartpipeline.item import Item, Stop
+from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage, StageType
+from smartpipeline.utils import ConcurrentCounter
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
-
-_logger = logging.getLogger(__name__)
 
 
 QueueInitializer = Callable[[], ItemsQueue]
@@ -71,7 +72,7 @@ class BaseContainer(InQueued):
     @abstractmethod
     def get_processed(
         self, block: bool = False, timeout: Optional[int] = None
-    ) -> Optional[DataItem]:
+    ) -> Optional[Item]:
         """
         Get the oldest processed item waiting to be retrieved
 
@@ -141,7 +142,8 @@ class ConnectedStageMixin:
 
 class FallibleMixin:
     """
-    A mixin for the containers that encapsulate stages that can produce errors during processing
+    A mixin for the containers that encapsulate stages that can produce errors during processing,
+    and that can retry on errors
     """
 
     def set_error_manager(self, error_manager: ErrorManager):
@@ -151,8 +153,15 @@ class FallibleMixin:
     def error_manager(self) -> ErrorManager:
         return self._error_manager
 
+    def set_retry_manager(self, retry_manager: RetryManager):
+        self._retry_manager = retry_manager
 
-class NamedStageMixin:
+    @property
+    def retry_manager(self) -> RetryManager:
+        return self._retry_manager
+
+
+class AliveStageMixin:
     """
     A mixin for basic containers of stages
     """
@@ -171,25 +180,12 @@ class NamedStageMixin:
         return self._stage
 
 
-class RetryableMixin:
-    """
-    A mixin for basic containers of retryable stages
-    """
-
-    def set_retry_manager(self, retry_manager: RetryManager):
-        self._retry_manager = retry_manager
-
-    @property
-    def retry_manager(self) -> RetryManager:
-        return self._retry_manager
-
-
 class SourceContainer(BaseContainer):
     """
     A container specific for sources
     """
 
-    def __init__(self):
+    def __init__(self, name=None):
         super().__init__()
         self._source = None
         # the next two attributes are used jointly for "manually" prepending items
@@ -197,6 +193,7 @@ class SourceContainer(BaseContainer):
         self._internal_queue_obj = None
         self._stop_sent = False
         self._queue_initializer = None
+        self._logger = logging.getLogger(name or self.__class__.__name__)
 
     @property
     def _internal_queue(self) -> ItemsQueue:
@@ -213,13 +210,14 @@ class SourceContainer(BaseContainer):
         self._queue_initializer = initializer
 
     def __str__(self) -> str:
-        return "Base container for source {}".format(self._source)
+        return f"Base container for source {self._source}"
 
     def set(self, source: Source):
         """
         Set the actual source for this container
         """
         self._source = source
+        self._logger = source.logger
 
     def is_set(self) -> bool:
         """
@@ -244,21 +242,24 @@ class SourceContainer(BaseContainer):
         """
         Stop this source, the container won't produce items anymore
         """
-        _logger.debug("Stopping from the source")
+        self._logger.debug("Stop from the source")
         if self._source is not None:
             self._source.stop()
         self._is_stopped = True
 
-    def pop_into_queue(self):
+    def pop_into_queue(self, pause_on_empty: float = CONCURRENCY_WAIT):
         """
         Pop from the source but put the item in the queue that will be read from the first stage of the pipeline.
         Only used with concurrent stages
+
+        :param pause_on_empty: Time to sleep in loop if next item is empty
         """
         while True:
-            item = self._get_next_item()
             if self._stop_sent:
                 return
-            elif item is None:
+            item = self._get_next_item()
+            if item is None:
+                time.sleep(pause_on_empty)
                 continue
             else:
                 self.out_queue.put(item, block=True)
@@ -268,7 +269,7 @@ class SourceContainer(BaseContainer):
                 self._stop_sent = True
                 return
 
-    def prepend_item(self, item: Optional[DataItem]):
+    def prepend_item(self, item: Optional[Item]):
         """
         Enrich the source with items "manually".
         Only used for processing single items
@@ -280,7 +281,7 @@ class SourceContainer(BaseContainer):
 
     def get_processed(
         self, block: bool = True, timeout: Optional[int] = None
-    ) -> Optional[DataItem]:
+    ) -> Optional[Item]:
         if self.out_queue is not None:
             item = self.out_queue.get(block=block, timeout=timeout)
         else:
@@ -289,7 +290,7 @@ class SourceContainer(BaseContainer):
                 self.increase_count()
         return item
 
-    def _get_next_item(self) -> DataItem:
+    def _get_next_item(self) -> Item:
         """
         Obtain the next item to send to output according to the source status and "manually" added items
         """
@@ -302,14 +303,14 @@ class SourceContainer(BaseContainer):
             except queue.Empty:
                 if self.is_stopped():
                     self._next_item = Stop()
-            _logger.debug(f"{ret} produced by the source")
+            self._logger.debug("%s produced by the source", ret)
             return ret
         elif self._source is not None:
             ret = self._source.pop()
             if self.is_stopped():
                 return Stop()
             else:
-                _logger.debug(f"{ret} produced by the source")
+                self._logger.debug("%s produced by the source", ret)
                 return ret
         elif self.is_stopped():
             return Stop()
@@ -317,10 +318,9 @@ class SourceContainer(BaseContainer):
 
 class StageContainer(
     BaseContainer,
-    NamedStageMixin,
+    AliveStageMixin,
     FallibleMixin,
     ConnectedStageMixin,
-    RetryableMixin,
 ):
     """
     The standard container for basic stages
@@ -340,9 +340,13 @@ class StageContainer(
         self._last_processed = None
 
     def __str__(self) -> str:
-        return "Container for {}".format(self._stage)
+        return f"Container for {self._stage}"
 
-    def process(self) -> DataItem:
+    def process(self) -> Item:
+        """
+        Get item from the previous container, process it with stage, put it in the output queue
+        :return: The same processed item put in the output queue
+        """
         item = self.previous.get_processed()
         if isinstance(item, Stop):
             self.stop()
@@ -353,7 +357,7 @@ class StageContainer(
 
     def get_processed(
         self, block: bool = False, timeout: Optional[int] = None
-    ) -> Optional[DataItem]:
+    ) -> Optional[Item]:
         ret = self._last_processed
         self._last_processed = None
         # if we are in a concurrent stage the items are obtained exclusively from the output queue
@@ -365,7 +369,7 @@ class StageContainer(
                 return None
         return ret
 
-    def _put_item(self, item: DataItem):
+    def _put_item(self, item: Item):
         """
         A processed item is set as next output.
         If we are processing asynchronously (e.g. concurrent stage) it is put in the output queue,
@@ -384,10 +388,9 @@ class StageContainer(
 
 class BatchStageContainer(
     BaseContainer,
-    NamedStageMixin,
+    AliveStageMixin,
     FallibleMixin,
     ConnectedStageMixin,
-    RetryableMixin,
 ):
     """
     Container for batch stages
@@ -404,11 +407,15 @@ class BatchStageContainer(
         self.set_error_manager(error_manager)
         self.set_retry_manager(retry_manager)
         self.set_stage(name, stage)
-        # TODO next two varibales are for non-concurrent container, that is currently never used, it doesn't work
+        # TODO next two variables should help for non-concurrent container, that is currently never created
         self.__result_queue: ItemsQueue = queue.SimpleQueue()
-        self._last_processed: Sequence[DataItem] = []
+        self._last_processed: Sequence[Item] = []
 
-    def process(self) -> Sequence[DataItem]:
+    def process(self) -> Sequence[Item]:
+        """
+        Get items from the previous container, process them with stage, put them in the output queue
+        :return: The same processed items put in the output queue
+        """
         items = []
         # items that we want to put as last in a batch, ergo in output
         extra_items = []
@@ -429,7 +436,7 @@ class BatchStageContainer(
 
     def get_processed(
         self, block: bool = False, timeout: Optional[int] = None
-    ) -> Optional[DataItem]:
+    ) -> Optional[Item]:
         if (
             self.out_queue is not None
             and self.__result_queue.qsize() < self.out_queue.qsize()
@@ -455,7 +462,7 @@ class BatchStageContainer(
         except queue.Empty:
             return None
 
-    def _put_item(self, items: Sequence[DataItem]):
+    def _put_item(self, items: Sequence[Item]):
         """
         A batch of processed items is set as next output.
         If we are processing asynchronously (e.g. concurrent stage) they are put in the output queue,
@@ -490,6 +497,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
         parallel: bool = False,
+        logs_queue: queue.Queue[logging.LogRecord] = None,
     ):
         """
         Initialization of instance members
@@ -499,18 +507,20 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
+        :param logs_queue: The queue in which all stages in processes will send their logs records through a `QueueHandler`
         """
         self._concurrency = concurrency
         self._parallel = parallel
         self._stage_executor = None
         self._previous_queue = None
-        self._futures: Sequence[Future] = []
+        self._futures: List[Future] = []
         self._queue_initializer = queue_initializer
         self._out_queue = self._queue_initializer()
         self._counter = counter_initializer()
         self._has_started_counter = counter_initializer()
         self._counter_initializer = counter_initializer
         self._terminate_event = terminate_event_initializer()
+        self._logs_queue = logs_queue
 
     def queues_empty(self) -> bool:
         """
@@ -553,9 +563,12 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         Get and eventually generate a pool executor where concurrent stage executions run
         """
         if self._stage_executor is None:
-            executor = ThreadPoolExecutor if not self._parallel else ProcessPoolExecutor
-            # TODO one executor per stage? why max_workers are equivalent to concurrency?
-            self._stage_executor = executor(max_workers=self._concurrency)
+            if not self._parallel:
+                self._stage_executor = ThreadPoolExecutor(max_workers=self._concurrency)
+            else:
+                self._stage_executor = ProcessPoolExecutor(
+                    max_workers=self._concurrency, mp_context=get_context("spawn")
+                )
         return self._stage_executor
 
     @property
@@ -572,10 +585,10 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         for future in self._futures:
             future.cancel()
         if self._stage_executor is not None:
-            self._stage_executor.shutdown()
-
-    def __del__(self):
-        self.shutdown()
+            try:
+                self._stage_executor.shutdown()
+            except OSError as e:
+                logging.warning("Problems in shutting down %s: %s", self, e)
 
     def check_errors(self):
         """
@@ -611,21 +624,23 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
     def _run(
         self,
         stage: StageType,
-        _executor: StageExecutor,
+        executor: StageExecutor,
         in_queue: ItemsQueue,
         out_queue: ItemsQueue,
         error_manager: ErrorManager,
         retry_manager: RetryManager,
+        loop_wait: float = CONCURRENCY_WAIT,
     ):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
 
         :param stage: Stage instance
-        :param _executor: Function to run concurrently in the executor, which performs the stage executions
+        :param executor: Function to run concurrently in the executor, which performs the stage executions
         :param in_queue: Previous stage output queue
         :param out_queue: Output queue
         :param error_manager: Error manager instance
+        :param loop_wait: Time to wait in loop of executor checks
         """
         ex = self._get_stage_executor()
         self._counter = self._counter_initializer()
@@ -634,7 +649,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         for _ in range(self._concurrency):
             self._futures.append(
                 ex.submit(
-                    _executor,
+                    executor,
                     stage,
                     in_queue,
                     out_queue,
@@ -643,12 +658,13 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
                     self._terminate_event,
                     self._has_started_counter,
                     self._counter,
+                    self._logs_queue,
                 )
             )
         # wait every executor internal loops have started
         while self._has_started_counter.value < self._concurrency:
             self.check_errors()
-            time.sleep(CONCURRENCY_WAIT)
+            time.sleep(loop_wait)
 
 
 class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
@@ -667,6 +683,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
         parallel: bool = False,
+        logs_queue: queue.Queue[logging.LogRecord] = None,
     ):
         """
         :param name: Stage name
@@ -678,6 +695,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
+        :param logs_queue: The queue in which all stages in processes will send their logs records through a `QueueHandler`
         """
         super().__init__(name, stage, error_manager, retry_manager)
         self.init_concurrency(
@@ -686,18 +704,19 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
             terminate_event_initializer,
             concurrency,
             parallel,
+            logs_queue,
         )
 
-    def run(self, _executor: StageExecutor = stage_executor):
+    def run(self, executor: StageExecutor = stage_executor):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
 
-        :param _executor: Function to run in the executor, which performs the stage executions
+        :param executor: Function to run in the executor, which performs the stage executions
         """
         super()._run(
             self.stage,
-            _executor,
+            executor,
             self._previous_queue,
             self.out_queue,
             self.error_manager,
@@ -721,6 +740,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
         parallel: bool = False,
+        logs_queue: queue.Queue[logging.LogRecord] = None,
     ):
         """
         :param name: Stage name
@@ -732,6 +752,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
+        :param logs_queue: The queue in which all stages in processes will send their logs records through a `QueueHandler`
         """
         super().__init__(name, stage, error_manager, retry_manager)
         self.init_concurrency(
@@ -740,18 +761,19 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
             terminate_event_initializer,
             concurrency,
             parallel,
+            logs_queue,
         )
 
-    def run(self, _executor: StageExecutor = batch_stage_executor):
+    def run(self, executor: StageExecutor = batch_stage_executor):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
 
-        :param _executor: Function to run in the executor, which performs the stage executions
+        :param executor: Function to run in the executor, which performs the stage executions
         """
         super()._run(
             self.stage,
-            _executor,
+            executor,
             self._previous_queue,
             self.out_queue,
             self.error_manager,
