@@ -1,8 +1,8 @@
 # SmartPipeline changelog
 
-## Version 0.6.0 [2022-11-28]
+## Version 0.6.0 [2022-12-21]
 
-- Logging now roks properly
+- Logging now works properly
 - Tests coverage
 - Refactoring, also of class/method names
 
