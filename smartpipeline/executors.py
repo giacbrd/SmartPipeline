@@ -267,5 +267,16 @@ def batch_stage_executor(
 
 
 StageExecutor = Callable[
-    [StageType, ItemsQueue, ItemsQueue, ErrorManager, Event, ConcurrentCounter], None
+    [
+        StageType,
+        ItemsQueue,
+        ItemsQueue,
+        ErrorManager,
+        RetryManager,
+        Event,
+        ConcurrentCounter,
+        ConcurrentCounter,
+        queue.Queue,
+    ],
+    None,
 ]

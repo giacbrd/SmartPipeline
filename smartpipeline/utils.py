@@ -25,6 +25,7 @@ class ConcurrentCounter(ABC):
     def __iadd__(self, incr: int) -> ConcurrentCounter:
         return self
 
+    @property
     @abstractmethod
     def value(self) -> int:
         return 0
