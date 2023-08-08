@@ -13,3 +13,11 @@ repos:
     hooks:
       - id: isort
         args: [ "--profile", "black", "--filter-files" ]
+#  - repo: https://github.com/pre-commit/mirrors-mypy
+#    rev: 1.4.1
+#    hooks:
+#      - id: mypy
+#        args: [ "smartpipeline" ]
+#        pass_filenames: false
+#        language: system
+#        types: [ python ]
