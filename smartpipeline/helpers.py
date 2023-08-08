@@ -29,6 +29,7 @@ class LocalFilesSource(Source):
             return item
         else:
             self.stop()
+            return None
 
 
 class FilePathItem(Item):

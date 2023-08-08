@@ -4,7 +4,7 @@ import logging
 import threading
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from multiprocessing import Manager
+from multiprocessing.managers import SyncManager
 from queue import Queue
 from typing import Hashable
 
@@ -56,9 +56,7 @@ class ProcessCounter(ConcurrentCounter):
     Process safe counter
     """
 
-    def __init__(self, manager: Manager):
-        # we use the `multiprocessing.Manager` instead of "original" types for convenience,
-        # so we can pass this counter as argument to processes in an executor
+    def __init__(self, manager: SyncManager):
         self._value = manager.Value("i", 0)
         self._lock = manager.Lock()
 
