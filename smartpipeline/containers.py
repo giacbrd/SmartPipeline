@@ -516,11 +516,11 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         self._futures: List[Future] = []
         self._queue_initializer = queue_initializer
         self._out_queue = self._queue_initializer()
-        self._counter = counter_initializer()
-        self._has_started_counter = counter_initializer()
         self._counter_initializer = counter_initializer
         self._terminate_event = terminate_event_initializer()
         self._logs_queue = logs_queue
+        self._counter = None
+        self._has_started_counter = None
 
     def queues_empty(self) -> bool:
         """
