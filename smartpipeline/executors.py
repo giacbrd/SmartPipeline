@@ -147,7 +147,7 @@ def stage_executor(
     terminated: Event,
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
-    logs_queue: queue.Queue[logging.LogRecord],
+    logs_queue: Optional[queue.Queue[logging.LogRecord]],
     queue_timeout: float = CONCURRENCY_WAIT,
 ):
     """
@@ -210,7 +210,7 @@ def batch_stage_executor(
     terminated: Event,
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
-    logs_queue: queue.Queue[logging.LogRecord],
+    logs_queue: Optional[queue.Queue[logging.LogRecord]],
 ):
     """
     Consume items in batches from an input queue, process and put them in an output queue, indefinitely,
