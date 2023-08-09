@@ -146,5 +146,5 @@ class Source(ABC, AliveMixin):
         return getattr(self, "_is_stopped", False)
 
 
-ItemsQueue = Queue[Item]
+ItemsQueue = Queue[Optional[Item]]
 StageType = Union[Stage, BatchStage]
