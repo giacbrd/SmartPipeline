@@ -5,7 +5,7 @@ import queue
 import time
 from logging.handlers import QueueHandler
 from threading import Event
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence, TypeVar
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.exceptions import RetryError
@@ -148,8 +148,7 @@ def stage_executor(
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
     logs_queue: Optional[queue.Queue[logging.LogRecord]],
-    queue_timeout: float = CONCURRENCY_WAIT,
-):
+) -> None:
     """
     Consume items from an input queue, process and put them in an output queue, indefinitely,
     until a termination event is set
@@ -178,7 +177,7 @@ def stage_executor(
                 stage.on_end()
             return
         try:
-            item = in_queue.get(block=True, timeout=queue_timeout)
+            item = in_queue.get(block=True, timeout=CONCURRENCY_WAIT)
         except queue.Empty:
             continue
         if isinstance(item, Stop):
@@ -211,7 +210,7 @@ def batch_stage_executor(
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
     logs_queue: Optional[queue.Queue[logging.LogRecord]],
-):
+) -> None:
     """
     Consume items in batches from an input queue, process and put them in an output queue, indefinitely,
     until a termination event is set
@@ -270,9 +269,12 @@ def batch_stage_executor(
                             counter += 1
 
 
+T = TypeVar("T", bound=StageType)
+
+
 StageExecutor = Callable[
     [
-        StageType,
+        T,
         ItemsQueue,
         ItemsQueue,
         ErrorManager,
@@ -280,7 +282,7 @@ StageExecutor = Callable[
         Event,
         ConcurrentCounter,
         ConcurrentCounter,
-        queue.Queue,
+        Optional[queue.Queue[logging.LogRecord]],
     ],
     None,
 ]
