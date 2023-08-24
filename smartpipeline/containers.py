@@ -510,16 +510,16 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         """
         self._concurrency = concurrency
         self._parallel = parallel
-        self._stage_executor = None
-        self._previous_queue = None
+        self._stage_executor: Optional[Executor] = None
+        self._previous_queue: ItemsQueue = queue.Queue()
         self._futures: List[Future] = []
         self._queue_initializer = queue_initializer
         self._out_queue = self._queue_initializer()
         self._counter_initializer = counter_initializer
         self._terminate_event = terminate_event_initializer()
         self._logs_queue = logs_queue
-        self._counter = None
-        self._has_started_counter = None
+        self._counter: Optional[ConcurrentCounter] = None
+        self._has_started_counter: Optional[ConcurrentCounter] = None
 
     def queues_empty(self) -> bool:
         """
@@ -602,7 +602,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
                 raise ex
 
     def count(self) -> int:
-        return self._counter.value if self._counter else 0
+        return self._counter.value if self._counter is not None else 0
 
     def terminate(self):
         """
@@ -682,7 +682,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
         parallel: bool = False,
-        logs_queue: queue.Queue[logging.LogRecord] = None,
+        logs_queue: Optional[queue.Queue[logging.LogRecord]] = None,
     ):
         """
         :param name: Stage name
@@ -706,7 +706,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
             logs_queue,
         )
 
-    def run(self, executor: StageExecutor = stage_executor):
+    def run(self, executor: StageExecutor[Stage] = stage_executor):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
@@ -739,7 +739,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
         parallel: bool = False,
-        logs_queue: queue.Queue[logging.LogRecord] = None,
+        logs_queue: Optional[queue.Queue[logging.LogRecord]] = None,
     ):
         """
         :param name: Stage name
@@ -763,7 +763,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
             logs_queue,
         )
 
-    def run(self, executor: StageExecutor = batch_stage_executor):
+    def run(self, executor: StageExecutor[BatchStage] = batch_stage_executor):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
