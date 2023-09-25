@@ -14,7 +14,7 @@ from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from multiprocessing import get_context
 from threading import Event
-from typing import Callable, Generic, List, Optional, TypeVar
+from typing import Callable, Generic, List, Optional, TypeVar, Union
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.handling import ErrorManager, RetryManager
@@ -778,3 +778,6 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
             self.error_manager,
             self.retry_manager,
         )
+
+
+ContainerType = Union[StageContainer, BatchStageContainer]

@@ -3,17 +3,16 @@ from __future__ import annotations
 import logging
 import threading
 from abc import ABC, abstractmethod
-from collections import OrderedDict
 from multiprocessing.managers import SyncManager
 from queue import Queue
-from typing import Hashable
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
+from typing import Any, OrderedDict
 
-class LastOrderedDict(OrderedDict):
-    def last_key(self) -> Hashable:
-        return next(reversed(self.keys()))
+
+def last_key(ordered_dict: OrderedDict[str, Any]) -> str:
+    return next(reversed(ordered_dict.keys()))
 
 
 class ConcurrentCounter(ABC):
