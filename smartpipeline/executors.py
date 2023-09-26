@@ -5,13 +5,13 @@ import queue
 import time
 from logging.handlers import QueueHandler
 from threading import Event
-from typing import Callable, List, Optional, Sequence, TypeVar
+from typing import Callable, List, Optional, Sequence
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import Item, Stop
-from smartpipeline.stage import BatchStage, ItemsQueue, Stage, StageType
+from smartpipeline.stage import BatchStage, ItemsQueue, Stage, StageTypeVar
 from smartpipeline.utils import ConcurrentCounter, ProcessCounter
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -269,12 +269,9 @@ def batch_stage_executor(
                             counter += 1
 
 
-T = TypeVar("T", bound=StageType)
-
-
 StageExecutor = Callable[
     [
-        T,
+        StageTypeVar,
         ItemsQueue,
         ItemsQueue,
         ErrorManager,

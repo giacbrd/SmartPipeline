@@ -28,13 +28,15 @@ from smartpipeline.containers import (
 from smartpipeline.defaults import CONCURRENCY_WAIT, MAX_QUEUES_SIZE
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import Item, Stop
-from smartpipeline.stage import BatchStage, ItemsQueue, Source, StageType
+from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage, StageType
 from smartpipeline.utils import LogsReceiver, ProcessCounter, ThreadCounter, last_key
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
-def _stage_initialization_with_logger(logs_queue, stage_class, args, kwargs):
+def _stage_initialization_with_logger(
+    logs_queue: Queue, stage_class: Type[StageType], args: Sequence, kwargs: Mapping
+) -> StageType:
     root_logger = logging.getLogger()
     # only by comparing string of queues we obtain their "original" address
     if not any(
@@ -44,6 +46,11 @@ def _stage_initialization_with_logger(logs_queue, stage_class, args, kwargs):
         handler = QueueHandler(logs_queue)
         root_logger.addHandler(handler)
     return stage_class(*args, **kwargs)
+
+
+class EmptyStage(Stage):
+    def process(self, item: Item) -> Item:
+        return item
 
 
 class Pipeline:
@@ -59,9 +66,9 @@ class Pipeline:
         self._containers: OrderedDictType[str, ContainerType] = OrderedDict()
         self._error_manager = ErrorManager()
         self._max_init_workers = max_init_workers
-        self._init_executor = None
-        self._wait_previous_executor = None
-        self._pipeline_executor = None
+        self._init_executor: Optional[Executor] = None
+        self._wait_previous_executor: Optional[Executor] = None
+        self._pipeline_executor: Optional[Thread] = None
         self._max_queues_size = max_queues_size
         self._out_queue = None
         self._enqueue_source = False
@@ -75,6 +82,10 @@ class Pipeline:
         self._source_name = f"SourceOf{self._name}"
         # a support source for the pipeline, on which we can only occasionally send items
         self._source_container = SourceContainer(self._source_name)
+        # a fake container for the pipeline to support data structures initialization
+        self._fake_container = StageContainer(
+            f"FakeContainerOf{self._name}", EmptyStage(), ErrorManager(), RetryManager()
+        )
 
     def _start_logs_receiver(self) -> LogsReceiver:
         if self._logs_receiver is None:
@@ -570,9 +581,9 @@ class Pipeline:
     def append_concurrently(
         self,
         name: str,
-        stage_class: Callable,
-        args: Sequence = None,
-        kwargs: Mapping = None,
+        stage_class: Type[StageType],
+        args: Optional[Sequence] = None,
+        kwargs: Optional[Mapping] = None,
         concurrency: int = 0,
         parallel: bool = False,
         retryable_errors: Tuple[Type[Exception], ...] = tuple(),
@@ -605,12 +616,12 @@ class Pipeline:
             args = []
         self._check_stage_name(name)
         self._check_retries_params(retryable_errors, max_retries, backoff)
-        # if it is concurrent and it is the first stage, make the source work on a output queue
+        # if it is concurrent, and it is the first stage, make the source work on a output queue
         if concurrency > 0 and not self._containers:
             self._enqueue_source = True
         last_stage_name = self._last_stage_name()
-        # set it immediately so the order of the calls of this method is followed in `_containers`
-        self._containers[name] = None
+        # set it immediately with an empty stage container so the order of the calls of this method is followed in `_containers`
+        self._containers[name] = self._fake_container
         self._start_logs_receiver()
         logs_queue = self._get_logs_receiver_queue()
         executor = self._get_init_executor(parallel_construction)
