@@ -450,7 +450,7 @@ class Pipeline:
 
         def _waiter():
             if last_stage_name is not None:
-                while self._containers[last_stage_name] is None:
+                while self._containers[last_stage_name] is self._fake_container:
                     time.sleep(wait_seconds)
                 container.set_previous(self._containers[last_stage_name])
             else:
