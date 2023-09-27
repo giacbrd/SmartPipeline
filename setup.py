@@ -23,8 +23,6 @@ setup(
         "Intended Audience :: Science/Research",
         "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
         "Operating System :: OS Independent",
-        "Programming Language :: Python :: 3.7",
-        "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
@@ -46,5 +44,5 @@ setup(
     author_email="barnets@gmail.com",
     packages=find_packages(exclude=["tests"]),
     tests_require=["pytest", "coverage"],
-    python_requires=">=3.7",
+    python_requires=">=3.9",
 )

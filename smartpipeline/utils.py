@@ -3,17 +3,16 @@ from __future__ import annotations
 import logging
 import threading
 from abc import ABC, abstractmethod
-from collections import OrderedDict
-from multiprocessing import Manager
+from multiprocessing.managers import SyncManager
 from queue import Queue
-from typing import Hashable
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
+from typing import Any, OrderedDict
 
-class LastOrderedDict(OrderedDict):
-    def last_key(self) -> Hashable:
-        return next(reversed(self.keys()))
+
+def last_key(ordered_dict: OrderedDict[str, Any]) -> str:
+    return next(reversed(ordered_dict.keys()))
 
 
 class ConcurrentCounter(ABC):
@@ -56,9 +55,7 @@ class ProcessCounter(ConcurrentCounter):
     Process safe counter
     """
 
-    def __init__(self, manager: Manager):
-        # we use the `multiprocessing.Manager` instead of "original" types for convenience,
-        # so we can pass this counter as argument to processes in an executor
+    def __init__(self, manager: SyncManager):
         self._value = manager.Value("i", 0)
         self._lock = manager.Lock()
 
