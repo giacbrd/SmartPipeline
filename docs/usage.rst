@@ -164,7 +164,8 @@ Finally, from the previous example, we define another stage that reduces text si
     for item in pipeline.run():
         print(item.data["text"])
 
-A different example in which we process 100 items concurrently with :meth:`.Pipeline.process_async`,
+A different example in which we process 100 items concurrently with :meth:`.Pipeline.process_async`
+(here "async" is not related to Python asyncio),
 without running the pipeline but explicitly executing a pipeline processing on each one.
 Note that no source is defined here.
 

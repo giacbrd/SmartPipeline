@@ -64,6 +64,7 @@ class ErrorManager:
         :return: If the handled error results to be critical return the generated :class:`.exceptions.CriticalError`
         :raises Exception: When a :meth:`.ErrorManager.raise_on_critical_error` has been set and the error is critical
         """
+        item_error: Union[SoftError, CriticalError]
         if isinstance(error, SoftError):
             item_error = item.add_soft_error(stage.name, error)
         else:
@@ -77,6 +78,7 @@ class ErrorManager:
             exception = self._check_critical(item_error)
             if exception:
                 return item_error
+        return None
 
     @property
     def logger(self) -> logging.Logger:
@@ -86,7 +88,9 @@ class ErrorManager:
             )
         return self._logger
 
-    def _check_critical(self, error: CriticalError) -> Union[Exception, CriticalError]:
+    def _check_critical(
+        self, error: CriticalError
+    ) -> Optional[Union[BaseException, CriticalError]]:
         """
         Manage a critical error, usually after an item has been processed by a stage
 
@@ -98,8 +102,9 @@ class ErrorManager:
             raise ex or error
         elif self._skip_on_critical:
             return ex or error
+        return None
 
-    def check_critical_errors(self, item: Item) -> Optional[Exception]:
+    def check_critical_errors(self, item: Item) -> Optional[BaseException]:
         """
         Check the critical errors registered for an item
         """
@@ -108,6 +113,7 @@ class ErrorManager:
                 ex = self._check_critical(er)
                 if ex:
                     return ex
+        return None
 
 
 class RetryManager:

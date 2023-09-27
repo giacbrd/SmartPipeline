@@ -1,7 +1,8 @@
 import uuid
 from abc import ABC, abstractmethod
 from logging import Logger, getLogger
-from typing import Any, Optional, Sequence, Union
+from queue import Queue
+from typing import Any, Optional, Sequence, TypeVar, Union
 
 from smartpipeline.item import Item
 
@@ -145,5 +146,6 @@ class Source(ABC, AliveMixin):
         return getattr(self, "_is_stopped", False)
 
 
-ItemsQueue = "Queue[Item]"
+ItemsQueue = Queue[Optional[Item]]
 StageType = Union[Stage, BatchStage]
+StageTypeVar = TypeVar("StageTypeVar", bound=StageType)

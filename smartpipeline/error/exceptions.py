@@ -31,7 +31,7 @@ class Error(Exception):
         self._exception_cause = exception
         return self
 
-    def get_exception(self) -> Optional[Exception]:
+    def get_exception(self) -> Optional[BaseException]:
         """
         Get the original exception (if any) that has generated this error,
         equivalent to the `__cause__ <https://www.python.org/dev/peps/pep-3134/#explicit-exception-chaining>`_ attribute

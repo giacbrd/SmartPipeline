@@ -32,9 +32,9 @@ stages can run concurrently and scale on heavy tasks,
 they can process batch of items at once,
 moreover executions and errors can be monitored easily.
 
-It is a framework for engineering sequences of data operations:
+It is a framework for engineering sequences of data operations and making them concurrent:
 an optimal solution for fast and clean data analysis prototypes (small/medium projects and POC)
-and production code, as an alternative to plain scripts.
+but also production code, as an alternative to plain scripts.
 Consider it as a solution for problems where big task queues and workflow frameworks are overkill.
 No dependencies are required.
 
@@ -59,11 +59,11 @@ i.e. serialization and copies of the data are minimized.
 Main features:
 
 - Define a pipeline object as a sequence of stateful stage objects,
-  optionally set a source on which the pipeline iterates
-- A pipeline can run indefinitely on the source or it can be used to process single items
-- Stages can run concurrently on the source or on single asynchronously processed items
-- A stage can be designed for processing batches, i.e. sequences of consecutive items, at once
-- Custom error handling can be set for logging and monitoring at stage level
+  optionally set a source on which the pipeline iterates.
+- A pipeline can run indefinitely on the source or it can be used to process single items.
+- Stages can run concurrently on the source or on single asynchronously processed items.
+- A stage can be designed for processing batches, i.e. sequences of consecutive items, at once.
+- Custom error handling can be set for logging and monitoring at stage level.
 
 An example of a trivial pipeline definition and run:
 
@@ -96,7 +96,7 @@ An example of a trivial pipeline definition and run:
         Pipeline()
         .set_source(RandomGenerator())
         .append("adder", Adder(1), concurrency=2)
-        .append("rounder", Rounder(size=100))
+        .append("rounder", Rounder(size=100))  # process 100 items at a time
         .build()
     )
 
@@ -104,11 +104,11 @@ An example of a trivial pipeline definition and run:
     for item in pipeline.run():
         print(item)
 
-`Read the documentation <https://smartpipeline.readthedocs.io>`_ for an exhaustive guide
+`Read the documentation <https://smartpipeline.readthedocs.io>`_ for an exhaustive guide.
 
-The `examples` folder contains full working sample pipelines
+The `examples` folder contains full working sample pipelines.
 
 Future improvements:
 
-- Stages can be memory profiled
-- Processed items can be cached at stage level
+- Stages can be memory profiled.
+- Processed items can be cached at stage level.

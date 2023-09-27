@@ -11,7 +11,7 @@ from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import Item, Stop
-from smartpipeline.stage import BatchStage, ItemsQueue, Stage, StageType
+from smartpipeline.stage import BatchStage, ItemsQueue, Stage, StageTypeVar
 from smartpipeline.utils import ConcurrentCounter, ProcessCounter
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -30,7 +30,7 @@ def process(
         return item
     time1 = time.time()
     # keeping track of caught exceptions
-    caught_retryable_exceptions = []
+    caught_retryable_exceptions: List[Exception] = []
     while (
         len(caught_retryable_exceptions) <= retry_manager.max_retries
         or retry_manager.max_retries == 0
@@ -42,8 +42,8 @@ def process(
             # this can't be in a finally, otherwise it would register the `error_manager.handle` time
             processed_item.set_timing(stage.name, time.time() - time1)
             return processed_item
-        except retry_manager.retryable_errors as rexc:
-            caught_retryable_exceptions.append(rexc)
+        except retry_manager.retryable_errors as retryable_exc:
+            caught_retryable_exceptions.append(retryable_exc)
             if (
                 retry_manager.max_retries == 0
             ):  # we have already done an attempt, no more retries
@@ -87,7 +87,7 @@ def process_batch(
             to_process[i] = item
     time1 = time.time()
     # keeping track of caught exceptions
-    caught_retryable_exceptions = []
+    caught_retryable_exceptions: List[Exception] = []
     while (
         len(caught_retryable_exceptions) <= retry_manager.max_retries
         or retry_manager.max_retries == 0
@@ -104,8 +104,8 @@ def process_batch(
                 item.set_timing(stage.name, spent)
                 ret[i] = item
             return ret
-        except retry_manager.retryable_errors as rexc:
-            caught_retryable_exceptions.append(rexc)
+        except retry_manager.retryable_errors as retryable_exc:
+            caught_retryable_exceptions.append(retryable_exc)
             if (
                 retry_manager.max_retries == 0
             ):  # we have already done an attempt, no more retries
@@ -147,14 +147,14 @@ def stage_executor(
     terminated: Event,
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
-    logs_queue: queue.Queue[logging.LogRecord],
-    queue_timeout: float = CONCURRENCY_WAIT,
-):
+    logs_queue: Optional[queue.Queue[logging.LogRecord]],
+) -> None:
     """
     Consume items from an input queue, process and put them in an output queue, indefinitely,
     until a termination event is set
     """
-    if isinstance(counter, ProcessCounter):
+    on_multiprocess = isinstance(counter, ProcessCounter)
+    if on_multiprocess:
         if logs_queue is not None:
             root_logger = logging.getLogger()
             # only by comparing string of queues we obtain their "original" address
@@ -172,12 +172,12 @@ def stage_executor(
     has_started_counter += 1
     while True:
         if terminated.is_set() and in_queue.empty():
-            if isinstance(counter, ProcessCounter):
+            if on_multiprocess:
                 error_manager.on_end()
                 stage.on_end()
             return
         try:
-            item = in_queue.get(block=True, timeout=queue_timeout)
+            item = in_queue.get(block=True, timeout=CONCURRENCY_WAIT)
         except queue.Empty:
             continue
         if isinstance(item, Stop):
@@ -187,7 +187,7 @@ def stage_executor(
             try:
                 item = process(stage, item, error_manager, retry_manager)
             except Exception as e:
-                if isinstance(counter, ProcessCounter):
+                if on_multiprocess:
                     error_manager.on_end()
                     stage.on_end()
                 raise e
@@ -209,13 +209,14 @@ def batch_stage_executor(
     terminated: Event,
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
-    logs_queue: queue.Queue[logging.LogRecord],
-):
+    logs_queue: Optional[queue.Queue[logging.LogRecord]],
+) -> None:
     """
     Consume items in batches from an input queue, process and put them in an output queue, indefinitely,
     until a termination event is set
     """
-    if isinstance(counter, ProcessCounter):
+    on_multiprocess = isinstance(counter, ProcessCounter)
+    if on_multiprocess:
         if logs_queue is not None:
             root_logger = logging.getLogger()
             # only by comparing string of queues we obtain their "original" address
@@ -233,11 +234,11 @@ def batch_stage_executor(
     has_started_counter += 1
     while True:
         if terminated.is_set() and in_queue.empty():
-            if isinstance(counter, ProcessCounter):
+            if on_multiprocess:
                 error_manager.on_end()
                 stage.on_end()
             return
-        items = []
+        items: List[Item] = []
         try:
             for _ in range(stage.size):
                 item = in_queue.get(block=True, timeout=stage.timeout)
@@ -252,20 +253,33 @@ def batch_stage_executor(
                 continue
         if any(items):
             try:
-                items = process_batch(stage, items, error_manager, retry_manager)
+                processed_items = process_batch(
+                    stage, items, error_manager, retry_manager
+                )
             except Exception as e:
-                if isinstance(counter, ProcessCounter):
+                if on_multiprocess:
                     error_manager.on_end()
                     stage.on_end()
                 raise e
             else:
-                for item in items:
-                    if item is not None:
-                        out_queue.put(item, block=True)
-                        if not isinstance(item, Stop):
+                for final_item in processed_items:
+                    if final_item is not None:
+                        out_queue.put(final_item, block=True)
+                        if not isinstance(final_item, Stop):
                             counter += 1
 
 
 StageExecutor = Callable[
-    [StageType, ItemsQueue, ItemsQueue, ErrorManager, Event, ConcurrentCounter], None
+    [
+        StageTypeVar,
+        ItemsQueue,
+        ItemsQueue,
+        ErrorManager,
+        RetryManager,
+        Event,
+        ConcurrentCounter,
+        ConcurrentCounter,
+        Optional[queue.Queue[logging.LogRecord]],
+    ],
+    None,
 ]

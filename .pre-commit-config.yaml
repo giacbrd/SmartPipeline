@@ -1,15 +1,23 @@
 repos:
   - repo: https://github.com/psf/black
-    rev: 22.6.0
+    rev: 23.7.0
     hooks:
       - id: black
         language_version: python3
-  - repo: https://gitlab.com/pycqa/flake8
-    rev: 4.0.1
+  - repo: https://github.com/pycqa/flake8
+    rev: 6.1.0
     hooks:
       - id: flake8
   - repo: https://github.com/pycqa/isort
-    rev: 5.10.1
+    rev: 5.12.0
     hooks:
       - id: isort
         args: [ "--profile", "black", "--filter-files" ]
+#  - repo: https://github.com/pre-commit/mirrors-mypy
+#    rev: 1.4.1
+#    hooks:
+#      - id: mypy
+#        args: [ "smartpipeline" ]
+#        pass_filenames: false
+#        language: system
+#        types: [ python ]
