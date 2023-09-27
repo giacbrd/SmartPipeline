@@ -1,5 +1,9 @@
 # SmartPipeline changelog
 
+## Version 0.7.0 [2023-09-27]
+
+- Mypy checked
+
 ## Version 0.6.0 [2022-12-21]
 
 - Logging now works properly
