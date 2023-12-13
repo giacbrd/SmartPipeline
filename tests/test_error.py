@@ -76,7 +76,9 @@ def test_critical_errors(caplog):
 
 def test_source_errors():
     source = ErrorSource()
-    pipeline = Pipeline().set_source(source).append("text_generator", TextGenerator())
+    pipeline = (
+        Pipeline().set_source(source).append("text_generator", TextGenerator()).build()
+    )
     run = pipeline.run()
     assert next(run)
     assert next(run)
