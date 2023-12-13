@@ -80,9 +80,9 @@ class Pipeline:
         self._name = f"{self.__class__.__name__}-{str(uuid.uuid4())[:8]}"
         self._logger = logging.getLogger(self._name)
         self._source_name = f"SourceOf{self._name}"
-        # a support source for the pipeline, on which we can only occasionally send items
+        # Initialize with a trivial "support" source, on which we can eventually send items when using `process` methods
         self._source_container = SourceContainer(self._source_name)
-        # a fake container for the pipeline to support data structures initialization
+        # A fake container for the pipeline to support data structures initialization
         self._fake_container = StageContainer(
             f"FakeContainerOf{self._name}", EmptyStage(), ErrorManager(), RetryManager()
         )
@@ -237,14 +237,24 @@ class Pipeline:
         counter = 0
         last_stage_name = self._last_stage_name()
         terminator_thread = None
+        source_errors = None
         source_thread = None
         # in case the first stage is concurrent
         if self._enqueue_source:
-            source_thread = Thread(target=self._source_container.pop_into_queue)
+            source_errors = Queue()
+            source_thread = Thread(
+                target=self._source_container.pop_into_queue,
+                kwargs={"errors_queue": source_errors},
+            )
             source_thread.start()
         while True:
             for name, container in self._containers.items():
                 try:
+                    # first, check errors from the source
+                    if source_errors is not None and not source_errors.empty():
+                        source_error = source_errors.get(block=False)
+                        if source_error is not None:
+                            raise source_error
                     # concurrent stages run by themselves in threads/processes
                     if not isinstance(
                         container,

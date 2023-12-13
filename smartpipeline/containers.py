@@ -243,17 +243,26 @@ class SourceContainer(BaseContainer):
             self._source.stop()
         self._is_stopped = True
 
-    def pop_into_queue(self, pause_on_empty: float = CONCURRENCY_WAIT):
+    def pop_into_queue(
+        self,
+        errors_queue: queue.Queue[Exception],
+        pause_on_empty: float = CONCURRENCY_WAIT,
+    ):
         """
-        Pop from the source but put the item in the queue that will be read from the first stage of the pipeline.
+        Pop from the source but put the item in the queue that will be read by the first stage of the pipeline.
         Only used with concurrent stages
 
+        :param errors_queue: A queue where to put exceptions produced by the source's pop()
         :param pause_on_empty: Time to sleep in loop if next item is empty
         """
         while True:
             if self._stop_sent:
                 return
-            item = self._get_next_item()
+            try:
+                item = self._get_next_item()
+            except Exception as e:
+                errors_queue.put(e, block=False)
+                return
             if item is None:
                 time.sleep(pause_on_empty)
                 continue

@@ -58,6 +58,17 @@ class ListSource(Source):
             self.stop()
 
 
+class ErrorSource(Source):
+    def __init__(self):
+        self.items = iter([Item() for _ in range(3)])
+
+    def pop(self):
+        try:
+            return next(self.items)
+        except StopIteration:
+            raise ValueError()
+
+
 class TextGenerator(Stage):
     def process(self, item: Item):
         item.data["text"] = random_text()
