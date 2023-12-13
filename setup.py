@@ -43,6 +43,9 @@ setup(
     author="Giacomo Berardi",
     author_email="barnets@gmail.com",
     packages=find_packages(exclude=["tests"]),
+    package_data={
+        "smartpipeline": ["py.typed"],
+    },
     tests_require=["pytest", "coverage"],
     python_requires=">=3.9",
 )
