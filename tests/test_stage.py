@@ -109,7 +109,7 @@ def test_source_container():
     item.metadata["id"] = 1004
     queue.put(item)
     assert container.get_processed().metadata["id"] == 1004
-    container.pop_into_queue()
+    container.pop_into_queue(Queue())
     assert container.get_processed().metadata["id"] == 4
 
     container = SourceContainer()
@@ -202,9 +202,9 @@ def test_stage_container():
     )
     container.set_previous(source)
     container.run()
-    source.pop_into_queue()
+    source.pop_into_queue(Queue())
     assert container.get_processed(block=True)
-    source.pop_into_queue()
+    source.pop_into_queue(Queue())
     assert isinstance(container.get_processed(block=True), Stop)
     container.terminate()
     source.prepend_item(None)
@@ -488,7 +488,7 @@ def test_batch_concurrent_stage_container2():
     container.set_previous(source)
     container.run()
     for _ in range(10):
-        source.pop_into_queue()
+        source.pop_into_queue(Queue())
     time.sleep(2)
     assert list(_get_items(container))
     container.terminate()
