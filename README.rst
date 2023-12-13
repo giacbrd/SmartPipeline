@@ -32,8 +32,9 @@ stages can run concurrently and scale on heavy tasks,
 they can process batch of items at once,
 moreover executions and errors can be monitored easily.
 
-It is a framework for engineering sequences of data operations and making them concurrent:
-an optimal solution for fast and clean data analysis prototypes (small/medium projects and POC)
+It is a framework for engineering sequences of data operations
+and making them concurrent, following an optimized but transparent producer-consumer pattern:
+an excellent solution for fast and clean data analysis prototypes (small/medium projects and POC)
 but also production code, as an alternative to plain scripts.
 Consider it as a solution for problems where big task queues and workflow frameworks are overkill.
 No dependencies are required.
