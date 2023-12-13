@@ -75,13 +75,27 @@ def test_critical_errors(caplog):
 
 
 def test_source_errors():
-    source = ErrorSource()
-    pipeline = (
-        Pipeline().set_source(source).append("text_generator", TextGenerator()).build()
-    )
-    run = pipeline.run()
-    assert next(run)
-    assert next(run)
-    assert next(run)
-    with pytest.raises(ValueError):
-        next(run)
+    for concurrency, parallel in ((0, False), (2, False), (2, True)):
+        source = ErrorSource()
+        pipeline = (
+            Pipeline()
+            .set_source(source)
+            .append(
+                "text_generator",
+                TextGenerator(),
+                concurrency=concurrency,
+                parallel=parallel,
+            )
+            .build()
+        )
+        run = pipeline.run()
+        if concurrency == 0:
+            assert next(run)
+            assert next(run)
+            assert next(run)
+        assert not source.is_stopped
+        with pytest.raises(ValueError):
+            # in case of concurrent pipeline the exception can raise immediately, or after we consume some item
+            for _ in range(3):
+                next(run)
+        assert source.is_stopped
