@@ -16,7 +16,6 @@ from smartpipeline.containers import (
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.executors import batch_stage_executor, stage_executor
-from smartpipeline.helpers import FilePathItem
 from smartpipeline.item import Item, Stop
 from smartpipeline.utils import ProcessCounter, ThreadCounter
 from tests.utils import (
@@ -64,13 +63,6 @@ def test_error():
         item.add_soft_error(stage.name, CriticalError())
     with pytest.raises(ValueError):
         item.add_critical_error(stage.name, SoftError())
-
-
-def test_fileitem():
-    item = FilePathItem("/path/to/file")
-    assert item.id
-    assert not item.data
-    assert item.path in str(item)
 
 
 def test_source_container():

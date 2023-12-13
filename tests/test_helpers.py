@@ -17,3 +17,10 @@ def test_file_items(file_directory_source_fx):
     for item in items:
         assert isinstance(item, FilePathItem)
         assert item.data.get("text") in TEXT_SAMPLES
+
+
+def test_fileitem():
+    item = FilePathItem("/path/to/file")
+    assert item.id
+    assert not item.data
+    assert item.path in str(item)

@@ -3,7 +3,8 @@ import pytest
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import Item
-from tests.utils import TextReverser
+from smartpipeline.pipeline import Pipeline
+from tests.utils import ErrorSource, TextGenerator, TextReverser
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -71,3 +72,14 @@ def test_critical_errors(caplog):
     assert len(list(item.critical_errors())) == 3
     for record in caplog.records:
         assert "has generated an error" in record.message
+
+
+def test_source_errors():
+    source = ErrorSource()
+    pipeline = Pipeline().set_source(source).append("text_generator", TextGenerator())
+    run = pipeline.run()
+    assert next(run)
+    assert next(run)
+    assert next(run)
+    with pytest.raises(ValueError):
+        next(run)
