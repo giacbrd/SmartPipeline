@@ -270,9 +270,9 @@ class SourceContainer(BaseContainer):
                 self.out_queue.put(item, block=True)
                 if not isinstance(item, Stop):
                     self.increase_count()
-            if isinstance(item, Stop):
-                self._stop_sent = True
-                return
+                else:
+                    self._stop_sent = True
+                    return
 
     def prepend_item(self, item: Item):
         """
@@ -413,7 +413,7 @@ class BatchStageContainer(
         self.set_error_manager(error_manager)
         self.set_retry_manager(retry_manager)
         self.set_stage(name, stage)
-        # TODO next two variables should help for non-concurrent container, that is currently never created
+        # TODO next two variables should help when container is not concurrent, that is currently never the case
         self.__result_queue: queue.SimpleQueue[Optional[Item]] = queue.SimpleQueue()
         self._last_processed: List[Optional[Item]] = []
 

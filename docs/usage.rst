@@ -343,10 +343,10 @@ it is also useful for safety and for avoiding copying large data.
 Also for :class:`.ErrorManager` it is necessary to define :meth:`.ErrorManager.on_start`,
 because the manager must be coupled with a stage when it is copied.
 
-Let's take back the previous examples, the error manger and a stage needs to be modified if we want to run the stage in
+Let's take back the previous examples, the error manger and a stage need to be modified if we want to run the stage in
 parallel. The inconvenience here is the Elasticsearch client,
 which is not serializable (try it by yourself, e.g., :code:`pickle.dumps(Elasticsearch('localhost'))`).
-Moreover, an Elasticsearch client open a connection, consequently it is obvious we desire an independent connection in
+Moreover, an Elasticsearch client opens a connection, consequently we desire an independent connection for
 each process, sharing one is unpractical.
 
 This is how we refactor the original ``__init__`` methods
@@ -377,9 +377,9 @@ This is how we refactor the original ``__init__`` methods
 The effort for the developer is minimal, but the advantage big.
 We can now execute these pipeline abstractions in parallel,
 not limited to stateless methods as we would normally do with multiprocessing.
-In general, it is convenient to always override ``on_start`` if attributes we are going to construct require
-this special treatment, so that the stage will be always compatible with both three ways of run it: sequentially,
-concurrently on threads or on processes.
+In general, it is convenient to always override ``on_start`` if the attributes we are going to construct require
+this special treatment, so that the stage will be always compatible with both the three ways of running it:
+sequentially, concurrently on threads and on processes.
 
 A complementary method is ``on_end``, both for stages and error manager,
 which allows to call operations at pipeline exit, even when this is caused by an error.
