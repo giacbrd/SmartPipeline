@@ -300,7 +300,7 @@ def wait_service(timeout, predicate, args):
             raise TimeoutError()
 
 
-def get_pipeline(*args, **kwargs):
+def get_pipeline(*args, **kwargs) -> Pipeline:
     return Pipeline(*args, **kwargs).set_error_manager(
         ErrorManager().raise_on_critical_error()
     )

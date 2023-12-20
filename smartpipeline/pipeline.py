@@ -7,6 +7,7 @@ from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures._base import Executor, Future
 from concurrent.futures.thread import ThreadPoolExecutor
+from inspect import isclass
 from logging.handlers import QueueHandler
 from multiprocessing import Manager, get_context
 from multiprocessing.managers import SyncManager
@@ -614,9 +615,13 @@ class Pipeline:
         :param max_retries: maximum number of retries for the stage before raising a RetryError(SoftError) (default 0)
         :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
         """
+        if not isclass(stage_class):
+            raise ValueError(
+                "Must pass stage classes, and not stage instances, as argument"
+            )
         self._executors_ready = False
         parallel_construction = parallel
-        # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
+        # FIXME here we force a BatchStage to run on a thread, but we would like to leave it on the main thread
         if concurrency < 1 and issubclass(stage_class, BatchStage):
             parallel = False
             concurrency = 1
