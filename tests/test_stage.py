@@ -15,8 +15,8 @@ from smartpipeline.containers import (
 )
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager, RetryManager
-from smartpipeline.executors import batch_stage_executor, stage_executor
 from smartpipeline.item import Item, Stop
+from smartpipeline.runners import batch_stage_runner, stage_runner
 from smartpipeline.utils import ProcessCounter, ThreadCounter
 from tests.utils import (
     BatchTextGenerator,
@@ -215,7 +215,7 @@ def test_stage_container():
     del container
 
 
-def test_executors():
+def test_runners():
     manager = Manager()
     terminated = manager.Event()
     in_queue = manager.Queue()
@@ -227,7 +227,7 @@ def test_executors():
     in_queue.put(item)
     terminated.set()
     with pytest.raises(ValueError) as excinfo:
-        stage_executor(
+        stage_runner(
             SerializableStage(),
             in_queue,
             out_queue,
@@ -249,7 +249,7 @@ def test_executors():
     in_queue.put(item)
     terminated.set()
     with pytest.raises(ValueError) as excinfo:
-        batch_stage_executor(
+        batch_stage_runner(
             SerializableBatchStage(100, 1),
             in_queue,
             out_queue,
@@ -273,7 +273,7 @@ def test_executors():
     in_queue.put(item)
     terminated.set()
     with pytest.raises(ValueError) as excinfo:
-        batch_stage_executor(
+        batch_stage_runner(
             SerializableBatchStage(100, 1),
             in_queue,
             out_queue,
@@ -292,7 +292,7 @@ def test_executors():
     # also test when running concurrently, both on processes and threads, that is how batch stages always run
     terminated = manager.Event()
     future = ProcessPoolExecutor(mp_context=get_context("spawn")).submit(
-        batch_stage_executor,
+        batch_stage_runner,
         SerializableBatchStage(100, 1),
         in_queue,
         out_queue,
@@ -320,7 +320,7 @@ def test_executors():
     stage = SerializableBatchStage(100, 1)
     stage.on_start()
     future = ThreadPoolExecutor().submit(
-        batch_stage_executor,
+        batch_stage_runner,
         stage,
         in_queue,
         out_queue,

@@ -138,7 +138,7 @@ def process_batch(
     return ret
 
 
-def stage_executor(
+def stage_runner(
     stage: Stage,
     in_queue: ItemsQueue,
     out_queue: ItemsQueue,
@@ -200,7 +200,7 @@ def stage_executor(
                 in_queue.task_done()
 
 
-def batch_stage_executor(
+def batch_stage_runner(
     stage: BatchStage,
     in_queue: ItemsQueue,
     out_queue: ItemsQueue,
@@ -269,7 +269,7 @@ def batch_stage_executor(
                             counter += 1
 
 
-StageExecutor = Callable[
+StageRunner = Callable[
     [
         StageTypeVar,
         ItemsQueue,
