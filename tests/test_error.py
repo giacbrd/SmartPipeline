@@ -3,7 +3,8 @@ import pytest
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import Item
-from tests.utils import TextReverser
+from smartpipeline.pipeline import Pipeline
+from tests.utils import ErrorSource, TextGenerator, TextReverser
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -71,3 +72,30 @@ def test_critical_errors(caplog):
     assert len(list(item.critical_errors())) == 3
     for record in caplog.records:
         assert "has generated an error" in record.message
+
+
+def test_source_errors():
+    for concurrency, parallel in ((0, False), (2, False), (2, True)):
+        source = ErrorSource()
+        pipeline = (
+            Pipeline()
+            .set_source(source)
+            .append(
+                "text_generator",
+                TextGenerator(),
+                concurrency=concurrency,
+                parallel=parallel,
+            )
+            .build()
+        )
+        run = pipeline.run()
+        if concurrency == 0:
+            assert next(run)
+            assert next(run)
+            assert next(run)
+        assert not source.is_stopped
+        with pytest.raises(ValueError):
+            # in case of concurrent pipeline the exception can raise immediately, or after we consume some item
+            for _ in range(3):
+                next(run)
+        assert source.is_stopped

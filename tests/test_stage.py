@@ -15,9 +15,8 @@ from smartpipeline.containers import (
 )
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager, RetryManager
-from smartpipeline.executors import batch_stage_executor, stage_executor
-from smartpipeline.helpers import FilePathItem
 from smartpipeline.item import Item, Stop
+from smartpipeline.runners import batch_stage_runner, stage_runner
 from smartpipeline.utils import ProcessCounter, ThreadCounter
 from tests.utils import (
     BatchTextGenerator,
@@ -66,13 +65,6 @@ def test_error():
         item.add_critical_error(stage.name, SoftError())
 
 
-def test_fileitem():
-    item = FilePathItem("/path/to/file")
-    assert item.id
-    assert not item.data
-    assert item.path in str(item)
-
-
 def test_source_container():
     manager = Manager()
     data = [Item() for _ in range(100)]
@@ -117,7 +109,7 @@ def test_source_container():
     item.metadata["id"] = 1004
     queue.put(item)
     assert container.get_processed().metadata["id"] == 1004
-    container.pop_into_queue()
+    container.pop_into_queue(Queue())
     assert container.get_processed().metadata["id"] == 4
 
     container = SourceContainer()
@@ -210,9 +202,10 @@ def test_stage_container():
     )
     container.set_previous(source)
     container.run()
-    source.pop_into_queue()
+    source_errors = Queue()
+    source.pop_into_queue(source_errors)
     assert container.get_processed(block=True)
-    source.pop_into_queue()
+    source.pop_into_queue(source_errors)
     assert isinstance(container.get_processed(block=True), Stop)
     container.terminate()
     source.prepend_item(None)
@@ -222,7 +215,7 @@ def test_stage_container():
     del container
 
 
-def test_executors():
+def test_runners():
     manager = Manager()
     terminated = manager.Event()
     in_queue = manager.Queue()
@@ -234,7 +227,7 @@ def test_executors():
     in_queue.put(item)
     terminated.set()
     with pytest.raises(ValueError) as excinfo:
-        stage_executor(
+        stage_runner(
             SerializableStage(),
             in_queue,
             out_queue,
@@ -256,7 +249,7 @@ def test_executors():
     in_queue.put(item)
     terminated.set()
     with pytest.raises(ValueError) as excinfo:
-        batch_stage_executor(
+        batch_stage_runner(
             SerializableBatchStage(100, 1),
             in_queue,
             out_queue,
@@ -280,7 +273,7 @@ def test_executors():
     in_queue.put(item)
     terminated.set()
     with pytest.raises(ValueError) as excinfo:
-        batch_stage_executor(
+        batch_stage_runner(
             SerializableBatchStage(100, 1),
             in_queue,
             out_queue,
@@ -299,7 +292,7 @@ def test_executors():
     # also test when running concurrently, both on processes and threads, that is how batch stages always run
     terminated = manager.Event()
     future = ProcessPoolExecutor(mp_context=get_context("spawn")).submit(
-        batch_stage_executor,
+        batch_stage_runner,
         SerializableBatchStage(100, 1),
         in_queue,
         out_queue,
@@ -327,7 +320,7 @@ def test_executors():
     stage = SerializableBatchStage(100, 1)
     stage.on_start()
     future = ThreadPoolExecutor().submit(
-        batch_stage_executor,
+        batch_stage_runner,
         stage,
         in_queue,
         out_queue,
@@ -495,8 +488,9 @@ def test_batch_concurrent_stage_container2():
     )
     container.set_previous(source)
     container.run()
+    source_errors = Queue()
     for _ in range(10):
-        source.pop_into_queue()
+        source.pop_into_queue(source_errors)
     time.sleep(2)
     assert list(_get_items(container))
     container.terminate()

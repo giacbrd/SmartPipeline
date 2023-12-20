@@ -8,7 +8,8 @@ from logging.handlers import QueueHandler
 import pytest
 
 from smartpipeline.error.exceptions import RetryError
-from smartpipeline.pipeline import _stage_initialization_with_logger
+from smartpipeline.error.handling import ErrorManager
+from smartpipeline.pipeline import Pipeline, _stage_initialization_with_logger
 from tests.utils import (
     CriticalIOErrorStage,
     CustomizableBrokenStage,
@@ -339,6 +340,10 @@ def test_concurrent_constructions():
 
 
 def test_concurrent_initialization():
+    with pytest.raises(ValueError):
+        get_pipeline().append_concurrently(
+            "reverser0", TextReverser(), kwargs={"cycles": 3}, concurrency=2
+        )
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(100))
@@ -422,6 +427,70 @@ def test_concurrent_initialization():
     pipeline._terminate_all()
     pipeline.shutdown()
     assert pipeline._containers["slow_init"]
+
+
+def test_build():
+    """Test the build pattern with non-conventional order of the method calls"""
+    pipeline1 = (
+        Pipeline()
+        .append("reverser", TextReverser(), concurrency=2)
+        .append("duplicator", TextDuplicator())
+        .set_source(RandomTextSource(10))
+        .build()
+    )
+    pipeline2 = (
+        Pipeline()
+        .append("reverser", TextReverser())
+        .append_concurrently("duplicator", TextDuplicator, concurrency=2)
+        .set_source(RandomTextSource(10))
+        .build()
+    )
+    pipeline3 = (
+        Pipeline()
+        .append_concurrently("reverser", TextReverser, concurrency=1, parallel=True)
+        .append_concurrently("duplicator", TextDuplicator, concurrency=2)
+        .set_source(RandomTextSource(10))
+        .build()
+    )
+    for pipeline in (pipeline1, pipeline2, pipeline3):
+        for item in pipeline.run():
+            assert len([x for x in item.data.keys() if x.startswith("text")]) == 2
+            assert item.get_timing("reverser")
+            assert item.get_timing("duplicator")
+        assert pipeline.count == 10
+
+    pipeline3 = (
+        Pipeline()
+        .set_source(RandomTextSource(10))
+        .append("reverser", TextReverser(), concurrency=2)
+        .append("error", ErrorStage(), concurrency=2, parallel=True)
+        .set_error_manager(ErrorManager())
+        .build()
+    )
+    pipeline4 = (
+        Pipeline()
+        .set_source(RandomTextSource(10))
+        .append("reverser", TextReverser(), concurrency=2)
+        .append_concurrently("error", ErrorStage, concurrency=2, parallel=True)
+        .set_error_manager(ErrorManager())
+        .build()
+    )
+    pipeline5 = (
+        Pipeline()
+        .set_source(RandomTextSource(10))
+        .append_concurrently("reverser", TextReverser, concurrency=2)
+        .append("error", ErrorStage(), concurrency=2, parallel=True)
+        .set_error_manager(ErrorManager())
+        .build()
+    )
+    for pipeline in (pipeline3, pipeline4, pipeline5):
+        assert all(
+            isinstance(c.error_manager, ErrorManager)
+            for c in pipeline._containers.values()
+        )
+        for item in pipeline.run():
+            assert item.has_soft_errors()
+        assert pipeline.count == 10
 
 
 # one core machines can have problems with this test

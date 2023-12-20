@@ -21,8 +21,8 @@ class ErrorManager:
 
     def raise_on_critical_error(self) -> ErrorManager:
         """
-        Set the error manager so that if a :class:`.exceptions.CriticalError` or any un-managed exception is met,
-        raise it "externally", killing the pipeline
+        Set the error manager so that if a :class:`.exceptions.CriticalError` (or any un-managed exception)
+        is encountered, it raises it "externally", at the pipeline run level, killing the pipeline
         """
         self._raise_on_critical = True
         return self

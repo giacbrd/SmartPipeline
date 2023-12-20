@@ -11,7 +11,7 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 class AliveMixin:
     """
-    Simple mixin for setting a name and a logger to an object
+    Simple mixin for defining an object that can "exist and communicate"
     """
 
     def set_name(self, name: str):

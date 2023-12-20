@@ -17,7 +17,7 @@ Defining the source
 
 For defining your own processing pipeline you need to define the source and the stages.
 The :class:`.Source` should be extended and the :meth:`.Source.pop` method overridden.
-This method returns a single new item every time is called,
+This method returns a single new item every time it is called,
 it can also return ``None`` if it cannot provide a new item when called.
 When the source has no more items to generate,
 the method :meth:`.Source.stop` must be called.
@@ -72,7 +72,8 @@ This is useful when the computation can exploit handling more data together,
 e.g.: on a HTTP API that accepts lists of values, one would benefit by making less calls;
 on a machine learning model that is optimized for predicting on multiple samples.
 
-Concurrent stages will call the method on different subsets of the data flow, concurrently.
+When using concurrency, each concurrent stage will call the process method
+on different subsets of the data flow, concurrently.
 
 Each stage provides its own logger in :attr:`.Stage.logger`.
 
@@ -108,7 +109,7 @@ the item processing is skipped just for the stage.
 Be careful on batch stages: raising a soft error, while iterating on batch items, will make skip
 also all the items of the batch following the item that has produced the error.
 
-A :class:`.CriticalError` is raised for any non captured exception, or it may be raised explicitly:
+A :class:`.CriticalError` is raised for any non-captured exception, or it may be raised explicitly:
 it stops the processing of an item so that the pipeline goes ahead with the next one.
 
 It is recommended to use the
@@ -120,9 +121,9 @@ Setting and running the pipeline
 
 Once you have your set of stages you can add them in sequence to a Pipeline instance, following a "builder" pattern.
 :meth:`.Pipeline.append` is the main method for adding stages to a pipeline.
-One must define their unique names and eventually their concurrency.
+One must define stages unique names and eventually their concurrency.
 The ``concurrency`` parameter is default to 0, a stage is concurrent when the value is 1 or greater.
-In case of values greater than 1, and by setting ``parallel`` to ``True``,
+In case of values equal or greater than 1, and by setting ``parallel`` to ``True``,
 Python multiprocessing is used: stage concurrent executions will run in parallel,
 stage instances will be copied in each process.
 
@@ -207,7 +208,7 @@ Example of a pipeline that processes local files contained in ``./document_files
 extracts texts and finds VAT codes occurrences.
 Finally it indexes the result in an Elasticsearch cluster.
 Errors are eventually logged in the Elasticsearch cluster.
-Here the developer has defined his own custom error manager and obviously the stages.
+Here the developer has defined his own custom error manager and, obviously, the stages.
 The source must be usually defined, here a trivial one (from the codebase) has been used,
 together with a custom data item type that provides a file reference.
 
@@ -343,10 +344,10 @@ it is also useful for safety and for avoiding copying large data.
 Also for :class:`.ErrorManager` it is necessary to define :meth:`.ErrorManager.on_start`,
 because the manager must be coupled with a stage when it is copied.
 
-Let's take back the previous examples, the error manger and a stage needs to be modified if we want to run the stage in
+Let's take back the previous examples, the error manger and a stage need to be modified if we want to run the stage in
 parallel. The inconvenience here is the Elasticsearch client,
 which is not serializable (try it by yourself, e.g., :code:`pickle.dumps(Elasticsearch('localhost'))`).
-Moreover, an Elasticsearch client open a connection, consequently it is obvious we desire an independent connection in
+Moreover, an Elasticsearch client opens a connection, consequently we desire an independent connection for
 each process, sharing one is unpractical.
 
 This is how we refactor the original ``__init__`` methods
@@ -377,9 +378,9 @@ This is how we refactor the original ``__init__`` methods
 The effort for the developer is minimal, but the advantage big.
 We can now execute these pipeline abstractions in parallel,
 not limited to stateless methods as we would normally do with multiprocessing.
-In general, it is convenient to always override ``on_start`` if attributes we are going to construct require
-this special treatment, so that the stage will be always compatible with both three ways of run it: sequentially,
-concurrently on threads or on processes.
+In general, it is convenient to always override ``on_start`` if the attributes we are going to construct require
+this special treatment, so that the stage will be always compatible with both the three ways of running it:
+sequentially, concurrently on threads and on processes.
 
 A complementary method is ``on_end``, both for stages and error manager,
 which allows to call operations at pipeline exit, even when this is caused by an error.

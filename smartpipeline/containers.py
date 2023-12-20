@@ -18,14 +18,14 @@ from typing import Callable, Generic, List, Optional, TypeVar, Union
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.handling import ErrorManager, RetryManager
-from smartpipeline.executors import (
-    StageExecutor,
-    batch_stage_executor,
+from smartpipeline.item import Item, Stop
+from smartpipeline.runners import (
+    StageRunner,
+    batch_stage_runner,
     process,
     process_batch,
-    stage_executor,
+    stage_runner,
 )
-from smartpipeline.item import Item, Stop
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage, StageType
 from smartpipeline.utils import ConcurrentCounter
 
@@ -243,17 +243,26 @@ class SourceContainer(BaseContainer):
             self._source.stop()
         self._is_stopped = True
 
-    def pop_into_queue(self, pause_on_empty: float = CONCURRENCY_WAIT):
+    def pop_into_queue(
+        self,
+        errors_queue: queue.Queue[Exception],
+        pause_on_empty: float = CONCURRENCY_WAIT,
+    ):
         """
-        Pop from the source but put the item in the queue that will be read from the first stage of the pipeline.
+        Pop from the source but put the item in the queue that will be read by the first stage of the pipeline.
         Only used with concurrent stages
 
+        :param errors_queue: A queue where to put exceptions produced by the source's pop()
         :param pause_on_empty: Time to sleep in loop if next item is empty
         """
         while True:
             if self._stop_sent:
                 return
-            item = self._get_next_item()
+            try:
+                item = self._get_next_item()
+            except Exception as e:
+                errors_queue.put(e, block=False)
+                return
             if item is None:
                 time.sleep(pause_on_empty)
                 continue
@@ -261,9 +270,9 @@ class SourceContainer(BaseContainer):
                 self.out_queue.put(item, block=True)
                 if not isinstance(item, Stop):
                     self.increase_count()
-            if isinstance(item, Stop):
-                self._stop_sent = True
-                return
+                else:
+                    self._stop_sent = True
+                    return
 
     def prepend_item(self, item: Item):
         """
@@ -404,7 +413,7 @@ class BatchStageContainer(
         self.set_error_manager(error_manager)
         self.set_retry_manager(retry_manager)
         self.set_stage(name, stage)
-        # TODO next two variables should help for non-concurrent container, that is currently never created
+        # TODO next two variables should help when container is not concurrent, that is currently never the case
         self.__result_queue: queue.SimpleQueue[Optional[Item]] = queue.SimpleQueue()
         self._last_processed: List[Optional[Item]] = []
 
@@ -502,7 +511,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         Initialization of instance members
 
         :param queue_initializer: Constructor for output, and eventually input, queue
-        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage executors that have successfully started their internal loop
+        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage runners that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
@@ -606,7 +615,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
 
     def terminate(self):
         """
-        Alert stage executors for termination
+        Alert stage runners for termination
         """
         self._terminate_event.set()
         wait(self._futures)
@@ -623,7 +632,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
     def _run(
         self,
         stage: StageType,
-        executor: StageExecutor,
+        runner: StageRunner,
         in_queue: ItemsQueue,
         out_queue: ItemsQueue,
         error_manager: ErrorManager,
@@ -635,20 +644,20 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         The stage will consume and produce from input/output queues concurrently
 
         :param stage: Stage instance
-        :param executor: Function to run concurrently in the executor, which performs the stage executions
+        :param runner: Function to run concurrently in the executor, which performs the stage executions
         :param in_queue: Previous stage output queue
         :param out_queue: Output queue
         :param error_manager: Error manager instance
-        :param loop_wait: Time to wait in loop of executor checks
+        :param loop_wait: Time to wait in loop of runner checks
         """
-        ex = self._get_stage_executor()
+        executor = self._get_stage_executor()
         self._counter = self._counter_initializer()
         self._has_started_counter = self._counter_initializer()
         self._terminate_event.clear()
         for _ in range(self._concurrency):
             self._futures.append(
-                ex.submit(
-                    executor,
+                executor.submit(
+                    runner,
                     stage,
                     in_queue,
                     out_queue,
@@ -660,7 +669,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
                     self._logs_queue,
                 )
             )
-        # wait every executor internal loops have started
+        # wait every runner internal loops have started
         while self._has_started_counter.value < self._concurrency:
             self.check_errors()
             time.sleep(loop_wait)
@@ -690,7 +699,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         :param error_manager: ErrorManager instance
         :param retry_manager: RetryManager instance
         :param queue_initializer: Constructor for output, and eventually input, queue
-        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage executors that have successfully started their internal loop
+        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage runners that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
@@ -706,16 +715,16 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
             logs_queue,
         )
 
-    def run(self, executor: StageExecutor[Stage] = stage_executor):
+    def run(self, runner: StageRunner[Stage] = stage_runner):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
 
-        :param executor: Function to run in the executor, which performs the stage executions
+        :param runner: Function to run in the executor, which performs the stage executions
         """
         super()._run(
             self.stage,
-            executor,
+            runner,
             self._previous_queue,
             self.out_queue,
             self.error_manager,
@@ -747,7 +756,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         :param error_manager: ErrorManager instance
         :param retry_manager: RetryManager instance
         :param queue_initializer: Constructor for output, and eventually input, queue
-        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage executors that have successfully started their internal loop
+        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage runners that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
         :param parallel: True for using multiprocessing for concurrency, otherwise use threads
@@ -763,16 +772,16 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
             logs_queue,
         )
 
-    def run(self, executor: StageExecutor[BatchStage] = batch_stage_executor):
+    def run(self, runner: StageRunner[BatchStage] = batch_stage_runner):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
 
-        :param executor: Function to run in the executor, which performs the stage executions
+        :param runner: Function to run in the executor, which performs the stage executions
         """
         super()._run(
             self.stage,
-            executor,
+            runner,
             self._previous_queue,
             self.out_queue,
             self.error_manager,
