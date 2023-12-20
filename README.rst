@@ -33,9 +33,9 @@ they can process batch of items at once,
 moreover executions and errors can be monitored easily.
 
 It is a framework for engineering sequences of data operations
-and making them concurrent, following an optimized but transparent producer-consumer pattern:
-an excellent solution for fast and clean data analysis prototypes (small/medium projects and POC)
-but also production code, as an alternative to plain scripts.
+and making them concurrent, following an optimized but transparent producer-consumer pattern.
+An excellent solution for fast and clean data analysis prototypes (small/medium projects and POC)
+but also for production code, as an alternative to plain scripts.
 Consider it as a solution for problems where big task queues and workflow frameworks are overkill.
 No dependencies are required.
 
@@ -62,13 +62,13 @@ Main features:
 - Define a pipeline object as a sequence of stateful stage objects,
   optionally set a source on which the pipeline iterates.
 - A pipeline can run indefinitely on the source or it can be used to process single items.
-- Stages can run concurrently on the source or on single asynchronously processed items.
+- Concurrency can be set independently for each stage and single items can be processed asynchronously.
 - A stage can be designed for processing batches, i.e. sequences of consecutive items, at once.
 - Custom error handling can be set for logging and monitoring at stage level.
 
 An example of a trivial pipeline for retrieving news from a feed
 and generating text embeddings of the raw pages content.
-We define the source of data and two stages, then we build and run the pipeline.
+We define the source of the data and two stages, then we build and run the pipeline.
 
 .. code-block:: python
 
@@ -105,7 +105,7 @@ We define the source of data and two stages, then we build and run the pipeline.
             self.model = SentenceTransformer("all-MiniLM-L6-v2")
 
         def process_batch(self, items):
-            # efficiently compute embeddings by batching page texts,
+            # efficiently compute embeddings by batching pages texts,
             # instead of processing one page at a time
             vectors = self.model.encode([item.data["content"] for item in items])
             for vector, item in zip(vectors, items):
