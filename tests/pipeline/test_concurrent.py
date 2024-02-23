@@ -211,6 +211,27 @@ def test_concurrency_errors(caplog):
         )
         assert pipeline.count == 1
     caplog.clear()
+    # next two: test pipeline don't get stuck on many item that fill the queues
+    with pytest.raises(Exception):
+        pipeline = (
+            get_pipeline(max_queues_size=10)
+            .set_source(RandomTextSource(1000))
+            .append("reverser", TextReverser(), concurrency=2)
+            .append("error", ExceptionStage(counter=100), concurrency=6)
+            .build()
+        )
+        for _ in pipeline.run():
+            pass
+    with pytest.raises(Exception):
+        pipeline = (
+            get_pipeline(max_queues_size=10)
+            .set_source(RandomTextSource(1000))
+            .append("reverser", TextReverser())
+            .append("error", ExceptionStage(counter=100), concurrency=6)
+            .build()
+        )
+        for _ in pipeline.run():
+            pass
     with pytest.raises(Exception):
         pipeline = (
             get_pipeline()

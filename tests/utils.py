@@ -203,9 +203,15 @@ class TimeWaster(Stage):
 
 
 class ExceptionStage(Stage):
+    def __init__(self, counter: int = 3):
+        self._counter = counter
+
     def process(self, item: Item):
+        self._counter -= 1
         time.sleep(0.3)
-        raise Exception("test exception")
+        if self._counter < 0:
+            raise Exception("test exception")
+        return item
 
 
 class ErrorStage(Stage):

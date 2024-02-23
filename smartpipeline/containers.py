@@ -121,6 +121,17 @@ class BaseContainer(InQueued):
         """
         self._counter += 1
 
+    def empty_out_queue(self):
+        """
+        Utility for deleting all items in the output queue
+        """
+        while True:
+            try:
+                self.out_queue.get_nowait()
+                self.out_queue.task_done()
+            except queue.Empty:
+                break
+
 
 class ConnectedStageMixin:
     """
