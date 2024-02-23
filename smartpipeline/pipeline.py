@@ -213,7 +213,10 @@ class Pipeline:
         self._wait_executors()
         return self
 
-    def _exit_run(self, source_thread, terminator_thread):
+    def _exit_run(
+        self, source_thread: Optional[Thread], terminator_thread: Optional[Thread]
+    ):
+        self._source_container.empty_out_queue()
         self.stop()
         if source_thread is not None:
             source_thread.join()
@@ -238,22 +241,25 @@ class Pipeline:
         counter = 0
         last_stage_name = self._last_stage_name()
         terminator_thread = None
-        source_errors = None
+        source_errors_queue = None
         source_thread = None
         # in case the first stage is concurrent
         if self._enqueue_source:
-            source_errors = Queue()
+            source_errors_queue = Queue()
             source_thread = Thread(
                 target=self._source_container.pop_into_queue,
-                kwargs={"errors_queue": source_errors},
+                kwargs={"errors_queue": source_errors_queue},
             )
             source_thread.start()
         while True:
             for name, container in self._containers.items():
                 try:
                     # first, check errors from the source
-                    if source_errors is not None and not source_errors.empty():
-                        source_error = source_errors.get(block=False)
+                    if (
+                        source_errors_queue is not None
+                        and not source_errors_queue.empty()
+                    ):
+                        source_error = source_errors_queue.get(block=False)
                         if source_error is not None:
                             raise source_error
                     # concurrent stages run by themselves in threads/processes
@@ -276,26 +282,23 @@ class Pipeline:
                         else 1
                     ):
                         item = container.get_processed()
-                        if item is not None:
-                            if not isinstance(item, Stop):
-                                try:
-                                    yield item
-                                except GeneratorExit:
-                                    # when the caller exits the run loop terminates everything
-                                    self._exit_run(source_thread, terminator_thread)
-                                    return
-                                finally:
-                                    counter += 1
-                                self._count += 1
-                            # if a stop is finally signaled, start termination of all containers
-                            elif (
-                                not self._all_terminated() and terminator_thread is None
-                            ):
-                                terminator_thread = Thread(target=self._terminate_all)
-                                terminator_thread.start()
                         # an item is None if the final output queue is empty
-                        else:
+                        if item is None:
                             break
+                        if not isinstance(item, Stop):
+                            try:
+                                yield item
+                            except GeneratorExit:
+                                # when the caller kills the run loop terminate everything
+                                self._exit_run(source_thread, terminator_thread)
+                                return
+                            finally:
+                                counter += 1
+                            self._count += 1
+                        # if a stop is finally signaled, start termination of all containers
+                        elif not self._all_terminated() and terminator_thread is None:
+                            terminator_thread = Thread(target=self._terminate_all)
+                            terminator_thread.start()
             # exit the loop only when all items have been returned
             if self._all_empty() and counter >= self._source_container.count():
                 if source_thread is not None:
