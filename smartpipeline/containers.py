@@ -9,7 +9,7 @@ import logging
 import queue
 import time
 from abc import ABC, abstractmethod
-from concurrent.futures import Executor, Future, wait
+from concurrent.futures import Executor, Future
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from multiprocessing import get_context
@@ -125,12 +125,13 @@ class BaseContainer(InQueued):
         """
         Utility for deleting all items in the output queue
         """
-        while True:
-            try:
-                self.out_queue.get_nowait()
-                self.out_queue.task_done()
-            except queue.Empty:
-                break
+        if self.out_queue is not None:
+            while True:
+                try:
+                    self.out_queue.get_nowait()
+                    self.out_queue.task_done()
+                except queue.Empty:
+                    break
 
 
 class ConnectedStageMixin:
@@ -629,7 +630,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         Alert stage runners for termination
         """
         self._terminate_event.set()
-        wait(self._futures)
+        # wait(self._futures)
 
     def is_terminated(self) -> bool:
         """
