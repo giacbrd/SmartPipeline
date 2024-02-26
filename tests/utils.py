@@ -203,7 +203,7 @@ class TimeWaster(Stage):
 
 
 class ExceptionStage(Stage):
-    def __init__(self, counter: int = 3):
+    def __init__(self, counter: int = 0):
         self._counter = counter
 
     def process(self, item: Item):

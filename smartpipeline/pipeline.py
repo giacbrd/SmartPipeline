@@ -216,8 +216,8 @@ class Pipeline:
     def _exit_run(
         self, source_thread: Optional[Thread], terminator_thread: Optional[Thread]
     ):
-        self._source_container.empty_out_queue()
         self.stop()
+        self._source_container.empty_out_queue()
         if source_thread is not None:
             source_thread.join()
         # TODO in case of errors we loose pending items!
@@ -268,7 +268,7 @@ class Pipeline:
                         (ConcurrentStageContainer, BatchConcurrentStageContainer),
                     ):
                         container.process()
-                    # but me must periodically check for errors
+                    # but we must periodically check them for errors
                     else:
                         container.check_errors()
                 except Exception as e:
@@ -337,10 +337,13 @@ class Pipeline:
             container.terminate()
             if isinstance(container, ConcurrentStageContainer):
                 if force:
-                    # empty the queues, losing pending items
+                    # empty the queues and make the container check that is terminated
                     container.empty_queues()
                 while not container.is_terminated():
                     time.sleep(wait_seconds)
+                if force:
+                    # empty the queues, losing all remaining pending items
+                    container.empty_queues()
                 container.queues_join()
                 while not container.queues_empty():
                     time.sleep(wait_seconds)

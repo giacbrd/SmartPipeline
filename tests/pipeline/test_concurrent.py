@@ -187,7 +187,7 @@ def test_concurrency_errors(caplog):
             get_pipeline()
             .set_source(RandomTextSource(10))
             .append("reverser", TextReverser(), concurrency=1)
-            .append("error", ExceptionStage(), concurrency=1)
+            .append("error", ExceptionStage(counter=3), concurrency=1)
             .build()
         )
         try:
