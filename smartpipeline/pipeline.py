@@ -241,7 +241,7 @@ class Pipeline:
         counter = 0
         last_stage_name = self._last_stage_name()
         terminator_thread = None
-        source_errors_queue = None
+        source_errors_queue: Optional[Queue[Exception]] = None
         source_thread = None
         # in case the first stage is concurrent
         if self._enqueue_source:
@@ -501,22 +501,18 @@ class Pipeline:
             backoff=backoff, max_retries=max_retries, retryable_errors=retryable_errors
         )
         if concurrency <= 0:
-            constructor = (
-                BatchStageContainer if isinstance(stage, BatchStage) else StageContainer
-            )
             # if not concurrent we must explicitly finalize initialization of this single stage object
             stage.on_start()
-            return constructor(name, stage, self._error_manager, retry_manager)
-        else:
-            constructor = (
-                BatchConcurrentStageContainer
-                if isinstance(stage, BatchStage)
-                else ConcurrentStageContainer
-            )
-            if parallel:
-                self._start_logs_receiver()
-                logs_queue = self._get_logs_receiver_queue()
-                return constructor(
+            if isinstance(stage, BatchStage):
+                return BatchStageContainer(
+                    name, stage, self._error_manager, retry_manager
+                )
+            return StageContainer(name, stage, self._error_manager, retry_manager)
+        if parallel:
+            self._start_logs_receiver()
+            logs_queue = self._get_logs_receiver_queue()
+            if isinstance(stage, BatchStage):
+                return BatchConcurrentStageContainer(
                     name,
                     stage,
                     self._error_manager,
@@ -528,21 +524,44 @@ class Pipeline:
                     parallel,
                     logs_queue,
                 )
-            else:
-                # if the stage is executed on multiple threads we must finalize initialization once,
-                # while on multiprocessing each process executor calls it for its own copy of the stage
-                stage.on_start()
-                return constructor(
-                    name,
-                    stage,
-                    self._error_manager,
-                    retry_manager,
-                    self._new_queue,
-                    self._new_counter,
-                    self._new_event,
-                    concurrency,
-                    parallel,
-                )
+            return ConcurrentStageContainer(
+                name,
+                stage,
+                self._error_manager,
+                retry_manager,
+                self._new_mp_queue,
+                self._new_mp_counter,
+                self._new_mp_event,
+                concurrency,
+                parallel,
+                logs_queue,
+            )
+        # if the stage is executed on multiple threads we must finalize initialization once,
+        # while on multiprocessing each process executor calls it for its own copy of the stage
+        stage.on_start()
+        if isinstance(stage, BatchStage):
+            return BatchConcurrentStageContainer(
+                name,
+                stage,
+                self._error_manager,
+                retry_manager,
+                self._new_queue,
+                self._new_counter,
+                self._new_event,
+                concurrency,
+                parallel,
+            )
+        return ConcurrentStageContainer(
+            name,
+            stage,
+            self._error_manager,
+            retry_manager,
+            self._new_queue,
+            self._new_counter,
+            self._new_event,
+            concurrency,
+            parallel,
+        )
 
     def get_stage(self, name: str) -> Optional[StageType]:
         """
