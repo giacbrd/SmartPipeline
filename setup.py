@@ -26,7 +26,10 @@ setup(
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
-        "Development Status :: 4 - Beta",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Development Status :: 5 - Production/Stable",
     ],
     url="https://github.com/giacbrd/SmartPipeline",
     project_urls={

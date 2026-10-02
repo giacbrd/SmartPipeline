@@ -28,7 +28,7 @@ def process(
     """
     if error_manager.check_critical_errors(item):
         return item
-    time1 = time.time()
+    time1 = time.perf_counter()
     # keeping track of caught exceptions
     caught_retryable_exceptions: List[Exception] = []
     while (
@@ -40,7 +40,7 @@ def process(
             processed_item = stage.process(item)
             stage.logger.debug("%s has finished processing %s", stage, processed_item)
             # this can't be in a finally, otherwise it would register the `error_manager.handle` time
-            processed_item.set_timing(stage.name, time.time() - time1)
+            processed_item.set_timing(stage.name, time.perf_counter() - time1)
             return processed_item
         except retry_manager.retryable_errors as retryable_exc:
             caught_retryable_exceptions.append(retryable_exc)
@@ -53,7 +53,7 @@ def process(
             )
         except Exception as e:
             stage.logger.debug("%s has failed processing %s", stage, item)
-            item.set_timing(stage.name, time.time() - time1)
+            item.set_timing(stage.name, time.perf_counter() - time1)
             error_manager.handle(e, stage, item)
             return item
     stage.logger.debug(
@@ -62,7 +62,7 @@ def process(
         item,
         len(caught_retryable_exceptions),
     )
-    item.set_timing(stage.name, time.time() - time1)
+    item.set_timing(stage.name, time.perf_counter() - time1)
     for rexc in caught_retryable_exceptions:
         error_manager.handle(RetryError().with_exception(rexc), stage, item)
     return item
@@ -85,7 +85,7 @@ def process_batch(
         else:
             stage.logger.debug("%s is going to process %s", stage, item)
             to_process[i] = item
-    time1 = time.time()
+    time1 = time.perf_counter()
     # keeping track of caught exceptions
     caught_retryable_exceptions: List[Exception] = []
     while (
@@ -98,7 +98,7 @@ def process_batch(
             stage.logger.debug(
                 "%s has finished processing %s items", stage, len(to_process)
             )
-            spent = (time.time() - time1) / (len(to_process) or 1.0)
+            spent = (time.perf_counter() - time1) / (len(to_process) or 1.0)
             for n, i in enumerate(to_process.keys()):
                 item = processed[n]
                 item.set_timing(stage.name, spent)
@@ -117,7 +117,7 @@ def process_batch(
             stage.logger.debug(
                 "%s had failures in processing %s items", stage, len(to_process)
             )
-            spent = (time.time() - time1) / (len(to_process) or 1.0)
+            spent = (time.perf_counter() - time1) / (len(to_process) or 1.0)
             for i, item in to_process.items():
                 item.set_timing(stage.name, spent)
                 error_manager.handle(e, stage, item)
@@ -129,7 +129,7 @@ def process_batch(
         len(to_process),
         len(caught_retryable_exceptions),
     )
-    spent = (time.time() - time1) / (len(to_process) or 1.0)
+    spent = (time.perf_counter() - time1) / (len(to_process) or 1.0)
     for i, item in to_process.items():
         item.set_timing(stage.name, spent)
         for rexc in caught_retryable_exceptions:

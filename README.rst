@@ -130,8 +130,3 @@ We define the source of the data and two stages, then we build and run the pipel
 `Read the documentation <https://smartpipeline.readthedocs.io>`_ for an exhaustive guide.
 
 The `examples` folder contains full working sample pipelines.
-
-Future improvements:
-
-- Stages can be memory profiled.
-- Processed items can be cached at stage level.
