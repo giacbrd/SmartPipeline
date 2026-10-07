@@ -130,3 +130,10 @@ We define the source of the data and two stages, then we build and run the pipel
 `Read the documentation <https://smartpipeline.readthedocs.io>`_ for an exhaustive guide.
 
 The `examples` folder contains full working sample pipelines.
+
+AI agents note
+~~~~~~~~~~~~~~
+
+Since October 2026 the codebase development is supported by LLM code agents,
+strictly using open-source tools and open-weight models,
+always human reviewed.

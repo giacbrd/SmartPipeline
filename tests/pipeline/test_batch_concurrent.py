@@ -5,6 +5,8 @@ import traceback
 
 import pytest
 
+from smartpipeline.containers import ConcurrentContainer
+from smartpipeline.error.handling import ErrorManager
 from tests.utils import (
     BatchErrorStage,
     BatchExceptionStage,
@@ -13,10 +15,12 @@ from tests.utils import (
     ErrorStage,
     ExceptionStage,
     RandomTextSource,
+    SerializableBatchStage,
     TextDuplicator,
     TextReverser,
     TimeWaster,
     get_pipeline,
+    run_with_timeout,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -310,6 +314,71 @@ def test_concurrency_errors():
         assert any(k.startswith("text_") for k in item.data.keys())
         assert item.get_timing("error")
     assert pipeline.count == 29
+    # a failing batch stage must not make the pipeline stuck, whatever the queues size is
+    for max_queues_size in (0, 1, 10):
+        with pytest.raises(Exception):
+            pipeline = (
+                get_pipeline(max_queues_size=max_queues_size)
+                .set_source(RandomTextSource(60))
+                .append("reverser", BatchTextReverser(size=3), concurrency=2)
+                .append("error", BatchExceptionStage(size=3), concurrency=2)
+                .append("duplicator", BatchTextDuplicator(size=5), concurrency=2)
+                .build()
+            )
+            run_with_timeout(pipeline)
+        with pytest.raises(Exception):
+            pipeline = (
+                get_pipeline(max_queues_size=max_queues_size)
+                .set_source(RandomTextSource(60))
+                .append("reverser", BatchTextReverser(size=3), concurrency=2)
+                .append("error", BatchExceptionStage(size=3), concurrency=2)
+                .build()
+            )
+            run_with_timeout(pipeline)
+
+
+def test_batch_stage_termination():
+    """a concurrent batch stage must be terminated and drained as any other concurrent stage"""
+    stage = SerializableBatchStage(size=3, timeout=0.1)
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(10))
+        .append("stage", stage, concurrency=2)
+        .build()
+    )
+    assert len(list(pipeline.run())) == 10
+    assert stage.is_closed()
+    # a forced termination must drain the queues of a failing concurrent batch stage too
+    pipeline = (
+        get_pipeline(max_queues_size=10)
+        .set_source(RandomTextSource(200))
+        .append("reverser", BatchTextReverser(size=2), concurrency=2)
+        .append("error", BatchExceptionStage(size=5), concurrency=2)
+        .build()
+    )
+    with pytest.raises(Exception):
+        run_with_timeout(pipeline)
+    for container in pipeline._containers.values():
+        if isinstance(container, ConcurrentContainer):
+            assert container.queues_empty()
+            assert container.is_terminated()
+
+
+def test_stop_is_the_last_item():
+    """the Stop item must never overtake the items of the batch which received it"""
+    for _ in range(5):
+        pipeline = (
+            get_pipeline()
+            .set_error_manager(ErrorManager())
+            .set_source(RandomTextSource(28))
+            .append("reverser", BatchTextReverser(size=8))
+            .append("error", ErrorStage())
+            .append("duplicator", BatchTextDuplicator(size=5))
+            .build()
+        )
+        items = run_with_timeout(pipeline)
+        assert len(items) == 28, "some items have been lost before the Stop item"
+        assert pipeline.count == 28
 
 
 def test_concurrent_initialization():
@@ -444,7 +513,9 @@ def test_timeouts():
     start_time = time.time()
     items = list(pipeline.run())
     elapsed = time.time() - start_time
-    assert 3 <= round(elapsed)
+    # the batch waits below only cover the gather timeouts: shutting down adds no wait,
+    # the Stop item is forwarded as soon as it is received
+    assert 2 <= round(elapsed)
     _check(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -458,7 +529,7 @@ def test_timeouts():
     start_time = time.time()
     items = list(pipeline.run())
     elapsed = time.time() - start_time
-    assert 4 <= round(elapsed)
+    assert 2 <= round(elapsed)
     _check(items, 100, pipeline)
     pipeline = (
         get_pipeline()

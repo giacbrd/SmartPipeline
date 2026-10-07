@@ -5,6 +5,7 @@ Containers encapsulate stages and manage their execution
 from __future__ import annotations
 
 import concurrent
+import inspect
 import logging
 import queue
 import time
@@ -14,7 +15,7 @@ from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from multiprocessing import get_context
 from threading import Event
-from typing import Callable, Generic, List, Optional, TypeVar, Union
+from typing import Any, Callable, Generic, List, Optional, TypeVar, Union
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.handling import ErrorManager, RetryManager
@@ -27,7 +28,7 @@ from smartpipeline.runners import (
     stage_runner,
 )
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage, StageType
-from smartpipeline.utils import ConcurrentCounter
+from smartpipeline.utils import ConcurrentCounter, put_or_abort
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -36,6 +37,30 @@ QueueInitializer = Callable[[], ItemsQueue]
 CounterInitializer = Callable[[], ConcurrentCounter]
 EventInitializer = Callable[[], Event]
 S = TypeVar("S", bound=StageType)
+
+
+def _runner_accepts_fatal_event(runner: Callable[..., Any]) -> bool:
+    """
+    Check if a stage runner accepts the optional `fatal_event` argument, so that runners
+    written before its introduction keep working without it
+    """
+    try:
+        parameters = inspect.signature(runner).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        parameter.kind == inspect.Parameter.VAR_POSITIONAL
+        or (
+            parameter.kind
+            in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+            and parameter.name == "fatal_event"
+        )
+        for parameter in parameters
+    )
 
 
 class InQueued(ABC):
@@ -59,7 +84,41 @@ class InQueued(ABC):
         pass
 
 
-class BaseContainer(InQueued):
+class FatalEventMixin:
+    """
+    A mixin for the containers which share the event that a stage runner sets when it exits
+    because of an error
+    """
+
+    _fatal_event: Optional[Event]
+    _aborted_put: bool = False
+
+    def set_fatal_event(self, fatal_event: Event):
+        """
+        Set the event which is set by a stage runner that exits because of an error, used to
+        interrupt any execution blocked on a queue which is not able to consume anymore
+
+        :param fatal_event: The event shared by all the containers of a pipeline
+        """
+        self._fatal_event = fatal_event
+        # a new execution starts with a clean state
+        self._aborted_put = False
+
+    @property
+    def fatal_event(self) -> Optional[Event]:
+        """
+        Get the event which is set when a stage runner exits because of an error
+        """
+        return self._fatal_event
+
+    def is_fatal(self) -> bool:
+        """
+        True when a stage runner exited because of an error
+        """
+        return self._fatal_event is not None and self._fatal_event.is_set()
+
+
+class BaseContainer(FatalEventMixin, InQueued):
     """
     Base interface for all containers
     """
@@ -69,6 +128,7 @@ class BaseContainer(InQueued):
         self._is_terminated = False
         self._out_queue = None
         self._counter = 0
+        self._fatal_event = None
 
     @abstractmethod
     def get_processed(
@@ -90,6 +150,26 @@ class BaseContainer(InQueued):
     @property
     def out_queue(self) -> ItemsQueue:
         return self._out_queue
+
+    def _put_or_abort(self, items_queue: ItemsQueue, item: Optional[Item]) -> bool:
+        """
+        Put an item in a queue without ever blocking indefinitely, the item is dropped when this
+        container has been terminated or when a stage runner exited because of an error
+
+        :return: True if the item has been put in the queue, False if the put has been aborted
+        """
+        put = put_or_abort(items_queue, item, self.is_terminated, self.is_fatal)
+        if not put:
+            self._aborted_put = True
+        return put
+
+    def has_aborted_put(self) -> bool:
+        """
+        True when this container has dropped an item because it was not able to put it in its
+        output queue, which happens when the pipeline is terminating or when a stage runner
+        exited because of an error
+        """
+        return self._aborted_put
 
     def is_stopped(self) -> bool:
         return self._is_stopped
@@ -279,7 +359,11 @@ class SourceContainer(BaseContainer):
                 time.sleep(pause_on_empty)
                 continue
             else:
-                self.out_queue.put(item, block=True)
+                if not put_or_abort(
+                    self.out_queue, item, lambda: self._stop_sent, self.is_fatal
+                ):
+                    self._stop_sent = True
+                    return
                 if not isinstance(item, Stop):
                     self.increase_count()
                 else:
@@ -399,7 +483,7 @@ class StageContainer(
             and self._last_processed is not None
             and not self.is_terminated()
         ):
-            self.out_queue.put(self._last_processed, block=True)
+            self._put_or_abort(self.out_queue, self._last_processed)
         if item is not None and not isinstance(item, Stop):
             self.increase_count()
 
@@ -495,7 +579,9 @@ class BatchStageContainer(
             and not self.is_terminated()
         ):
             for item in self._last_processed:
-                self.out_queue.put(item, block=True)
+                if not self._put_or_abort(self.out_queue, item):
+                    # the pipeline is going down, drop the remaining items
+                    break
         for item in self._last_processed:
             if item is not None and not isinstance(item, Stop):
                 self.increase_count()
@@ -505,7 +591,7 @@ class BatchStageContainer(
         return self.stage.size
 
 
-class ConcurrentContainer(InQueued, ConnectedStageMixin):
+class ConcurrentContainer(FatalEventMixin, InQueued, ConnectedStageMixin):
     """
     Base container for stages that must process concurrently and asynchronously
     """
@@ -666,6 +752,12 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
         self._counter = self._counter_initializer()
         self._has_started_counter = self._counter_initializer()
         self._terminate_event.clear()
+        # runners written before the `fatal_event` argument was introduced cannot
+        # receive it, they keep working without the fatal error signaling
+        if _runner_accepts_fatal_event(runner):
+            runner_kwargs = {"fatal_event": self._fatal_event}
+        else:
+            runner_kwargs = {}
         for _ in range(self._concurrency):
             self._futures.append(
                 executor.submit(
@@ -679,6 +771,7 @@ class ConcurrentContainer(InQueued, ConnectedStageMixin):
                     self._has_started_counter,
                     self._counter,
                     self._logs_queue,
+                    **runner_kwargs,
                 )
             )
         # wait every runner internal loops have started
