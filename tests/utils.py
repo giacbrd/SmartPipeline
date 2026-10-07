@@ -2,14 +2,18 @@ import logging
 import random
 import time
 from datetime import datetime
+from threading import Thread
 from time import sleep
 from typing import List, Type
+
+import pytest
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.helpers import FilePathItem
 from smartpipeline.item import Item
 from smartpipeline.pipeline import Pipeline
+from smartpipeline.runners import stage_runner
 from smartpipeline.stage import BatchStage, Source, Stage
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -306,7 +310,63 @@ def wait_service(timeout, predicate, args):
             raise TimeoutError()
 
 
+def run_with_timeout(pipeline: Pipeline, timeout: float = 30.0) -> List[Item]:
+    """
+    Consume a pipeline run in a separate thread, failing the test when the pipeline does not
+    terminate, so that a stuck pipeline can never hang the whole test suite
+
+    :param pipeline: A pipeline to run
+    :param timeout: Maximum time to wait for the pipeline termination
+    :return: The list of processed items, when the pipeline terminates without errors
+    :raises BaseException: Whatever exception the pipeline has raised
+    """
+    outcome = {}
+
+    def _runner():
+        try:
+            outcome["items"] = list(pipeline.run())
+        except BaseException as e:
+            outcome["error"] = e
+
+    thread = Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        # a stuck pipeline leaves its executions behind: at least tell the source to stop
+        pipeline.stop()
+        # `pytest.fail` is not an `Exception`, so it is never captured by `pytest.raises`
+        pytest.fail("The pipeline did not terminate in {} seconds".format(int(timeout)))
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("items", [])
+
+
 def get_pipeline(*args, **kwargs) -> Pipeline:
     return Pipeline(*args, **kwargs).set_error_manager(
         ErrorManager().raise_on_critical_error()
+    )
+
+
+def legacy_stage_runner(
+    stage,
+    in_queue,
+    out_queue,
+    error_manager,
+    retry_manager,
+    terminated,
+    has_started_counter,
+    counter,
+    logs_queue,
+):
+    """A stage runner written before the `fatal_event` argument was introduced"""
+    return stage_runner(
+        stage,
+        in_queue,
+        out_queue,
+        error_manager,
+        retry_manager,
+        terminated,
+        has_started_counter,
+        counter,
+        logs_queue,
     )

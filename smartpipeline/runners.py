@@ -5,16 +5,20 @@ import queue
 import time
 from logging.handlers import QueueHandler
 from threading import Event
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, List, Optional, Protocol, Sequence, TypeVar
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import Item, Stop
-from smartpipeline.stage import BatchStage, ItemsQueue, Stage, StageTypeVar
-from smartpipeline.utils import ConcurrentCounter, ProcessCounter
+from smartpipeline.stage import BatchStage, ItemsQueue, Stage, StageType
+from smartpipeline.utils import ConcurrentCounter, ProcessCounter, put_or_abort
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
+
+StageTypeContravariant = TypeVar(
+    "StageTypeContravariant", bound=StageType, contravariant=True
+)
 
 
 def process(
@@ -148,12 +152,22 @@ def stage_runner(
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
     logs_queue: Optional[queue.Queue[logging.LogRecord]],
+    fatal_event: Optional[Event] = None,
 ) -> None:
     """
     Consume items from an input queue, process and put them in an output queue, indefinitely,
     until a termination event is set
+
+    :param fatal_event: Optional event which is set by this runner when it exits because of an
+        error, so that any other execution blocked on a queue is able to give up immediately
     """
     on_multiprocess = isinstance(counter, ProcessCounter)
+    # a runner always delivers the items it has consumed, even when the termination has been
+    # alerted: it exits by itself when its input queue is empty (see the loop below), while a
+    # fatal error means that nobody is able to consume the items anymore
+    guards: List[Callable[[], bool]] = []
+    if fatal_event is not None:
+        guards.append(fatal_event.is_set)
     if on_multiprocess:
         if logs_queue is not None:
             root_logger = logging.getLogger()
@@ -181,21 +195,30 @@ def stage_runner(
         except queue.Empty:
             continue
         if isinstance(item, Stop):
-            out_queue.put(item, block=True)
+            stopped = put_or_abort(out_queue, item, *guards)
             in_queue.task_done()
+            if not stopped:
+                return
         elif item is not None:
             try:
                 item = process(stage, item, error_manager, retry_manager)
             except Exception as e:
+                # alert any other execution blocked on a queue that this runner is not
+                # able to consume items anymore
+                if fatal_event is not None:
+                    fatal_event.set()
                 if on_multiprocess:
                     error_manager.on_end()
                     stage.on_end()
                 raise e
             else:
+                aborted = False
                 if item is not None:
-                    out_queue.put(item, block=True)
-                    if not isinstance(item, Stop):
+                    aborted = not put_or_abort(out_queue, item, *guards)
+                    if not aborted and not isinstance(item, Stop):
                         counter += 1
+                if aborted:
+                    return
             finally:
                 in_queue.task_done()
 
@@ -210,12 +233,22 @@ def batch_stage_runner(
     has_started_counter: ConcurrentCounter,
     counter: ConcurrentCounter,
     logs_queue: Optional[queue.Queue[logging.LogRecord]],
+    fatal_event: Optional[Event] = None,
 ) -> None:
     """
     Consume items in batches from an input queue, process and put them in an output queue, indefinitely,
     until a termination event is set
+
+    :param fatal_event: Optional event which is set by this runner when it exits because of an
+        error, so that any other execution blocked on a queue is able to give up immediately
     """
     on_multiprocess = isinstance(counter, ProcessCounter)
+    # a runner always delivers the items it has consumed, even when the termination has been
+    # alerted: it exits by itself when its input queue is empty (see the loop below), while a
+    # fatal error means that nobody is able to consume the items anymore
+    guards: List[Callable[[], bool]] = []
+    if fatal_event is not None:
+        guards.append(fatal_event.is_set)
     if on_multiprocess:
         if logs_queue is not None:
             root_logger = logging.getLogger()
@@ -239,17 +272,22 @@ def batch_stage_runner(
                 stage.on_end()
             return
         items: List[Item] = []
+        got_stop = False
         try:
             for _ in range(stage.size):
                 item = in_queue.get(block=True, timeout=stage.timeout)
-                # give priority to the Stop event item
+                # the Stop item is always the last one put in the output queue, so it is
+                # forwarded only after the items of this batch have been put: nothing else
+                # will arrive after it, so there is no need to wait for a full batch
                 if isinstance(item, Stop):
-                    out_queue.put(item, block=True)
+                    got_stop = True
                 elif item is not None:
                     items.append(item)
                 in_queue.task_done()
+                if got_stop:
+                    break
         except queue.Empty:
-            if not any(items):
+            if not any(items) and not got_stop:
                 continue
         if any(items):
             try:
@@ -257,6 +295,10 @@ def batch_stage_runner(
                     stage, items, error_manager, retry_manager
                 )
             except Exception as e:
+                # alert any other execution blocked on a queue that this runner is not
+                # able to consume items anymore
+                if fatal_event is not None:
+                    fatal_event.set()
                 if on_multiprocess:
                     error_manager.on_end()
                     stage.on_end()
@@ -264,22 +306,32 @@ def batch_stage_runner(
             else:
                 for final_item in processed_items:
                     if final_item is not None:
-                        out_queue.put(final_item, block=True)
+                        if not put_or_abort(out_queue, final_item, *guards):
+                            return
                         if not isinstance(final_item, Stop):
                             counter += 1
+        if got_stop:
+            if not put_or_abort(out_queue, Stop(), *guards):
+                return
 
 
-StageRunner = Callable[
-    [
-        StageTypeVar,
-        ItemsQueue,
-        ItemsQueue,
-        ErrorManager,
-        RetryManager,
-        Event,
-        ConcurrentCounter,
-        ConcurrentCounter,
-        Optional[queue.Queue[logging.LogRecord]],
-    ],
-    None,
-]
+class StageRunner(Protocol[StageTypeContravariant]):
+    """
+    Type of the functions which run a stage concurrently, consuming and producing items
+    from/to queues, until the `terminated` event is set
+    """
+
+    def __call__(
+        self,
+        stage: StageTypeContravariant,
+        in_queue: ItemsQueue,
+        out_queue: ItemsQueue,
+        error_manager: ErrorManager,
+        retry_manager: RetryManager,
+        terminated: Event,
+        has_started_counter: ConcurrentCounter,
+        counter: ConcurrentCounter,
+        logs_queue: Optional[queue.Queue[logging.LogRecord]],
+        fatal_event: Optional[Event] = None,
+    ) -> None:
+        ...

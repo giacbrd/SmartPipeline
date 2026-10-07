@@ -4,12 +4,15 @@ import queue
 import time
 import traceback
 from logging.handlers import QueueHandler
+from threading import Thread
 
 import pytest
 
+from smartpipeline.defaults import LOGS_STOP_TIMEOUT
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.pipeline import Pipeline, _stage_initialization_with_logger
+from smartpipeline.utils import LogsReceiver
 from tests.utils import (
     CriticalIOErrorStage,
     CustomizableBrokenStage,
@@ -25,6 +28,8 @@ from tests.utils import (
     TextReverser,
     TimeWaster,
     get_pipeline,
+    legacy_stage_runner,
+    run_with_timeout,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -211,7 +216,7 @@ def test_concurrency_errors(caplog):
         )
         assert pipeline.count == 1
     caplog.clear()
-    # next two: test pipeline don't get stuck on many item that fill the queues
+    # next: test pipeline don't get stuck on many items that fill the queues
     with pytest.raises(Exception):
         pipeline = (
             get_pipeline(max_queues_size=10)
@@ -220,18 +225,66 @@ def test_concurrency_errors(caplog):
             .append("error", ExceptionStage(counter=100), concurrency=6)
             .build()
         )
-        for _ in pipeline.run():
-            pass
+        run_with_timeout(pipeline)
+    # the stage before the failing concurrent one runs on the main thread, which is the
+    # producer of the queue that the dead runners are not able to consume anymore
+    try:
+        with pytest.raises(Exception):
+            pipeline = (
+                get_pipeline(max_queues_size=10)
+                .set_source(RandomTextSource(1000))
+                .append("reverser", TextReverser())
+                .append("error", ExceptionStage(counter=100), concurrency=6)
+                .build()
+            )
+            run_with_timeout(pipeline)
+    except Exception:
+        tb = traceback.format_exc()
+        assert 'Exception("test exception")' in tb
+        raise
+    # any queue size must not make the pipeline stuck, as well as any position of the failing stage
+    for max_queues_size in (0, 1, 10):
+        with pytest.raises(Exception):
+            pipeline = (
+                get_pipeline(max_queues_size=max_queues_size)
+                .set_source(RandomTextSource(200))
+                .append("reverser", TextReverser(), concurrency=2)
+                .append("error", ExceptionStage(counter=10), concurrency=6)
+                .append("duplicator", TextDuplicator())
+                .build()
+            )
+            run_with_timeout(pipeline)
+        with pytest.raises(Exception):
+            pipeline = (
+                get_pipeline(max_queues_size=max_queues_size)
+                .set_source(RandomTextSource(200))
+                .append("reverser", TextReverser())
+                .append("error", ExceptionStage(counter=10), concurrency=6)
+                .build()
+            )
+            run_with_timeout(pipeline)
+    # with processes a blocking put on a manager queue would hang its server thread forever
     with pytest.raises(Exception):
         pipeline = (
             get_pipeline(max_queues_size=10)
-            .set_source(RandomTextSource(1000))
-            .append("reverser", TextReverser())
-            .append("error", ExceptionStage(counter=100), concurrency=6)
+            .set_source(RandomTextSource(200))
+            .append("reverser", TextReverser(), concurrency=2, parallel=True)
+            .append("error", ExceptionStage(counter=10), concurrency=2, parallel=True)
+            .append("duplicator", TextDuplicator(), concurrency=2)
             .build()
         )
-        for _ in pipeline.run():
-            pass
+        run_with_timeout(pipeline)
+    # the failing concurrent stage is the first one, so it is the source thread
+    # which is blocked putting items in a queue with no consumer anymore
+    with pytest.raises(Exception):
+        pipeline = (
+            get_pipeline(max_queues_size=1)
+            .set_source(RandomTextSource(100))
+            .append("error", ExceptionStage(counter=1), concurrency=1)
+            .append("reverser", TextReverser())
+            .build()
+        )
+        run_with_timeout(pipeline)
     with pytest.raises(Exception):
         pipeline = (
             get_pipeline()
@@ -888,3 +941,78 @@ def test_logging(caplog):
             get_pipeline().append(
                 "reverser", TextReverser()
             ).build()._get_logs_receiver_queue()
+
+
+def test_logs_receiver_stop(caplog):
+    """stopping the logs receiver must not wait for records received after the sentinel"""
+    with caplog.at_level(logging.INFO):
+        logs_queue = queue.Queue()
+        receiver = LogsReceiver(logs_queue)
+        receiver.start()
+        assert receiver.queue is logs_queue
+        logs_queue.put(_log_record("first record"))
+        # a stage which is dying can log after the sentinel: that record is received by nobody
+        # and its task is never done, so the queue cannot be joined
+        logs_queue.put(None)
+        logs_queue.put(_log_record("lost record"))
+        stopper = Thread(target=receiver.stop, daemon=True)
+        stopper.start()
+        stopper.join(LOGS_STOP_TIMEOUT * 2)
+        assert not stopper.is_alive(), "the logs receiver has not been stopped"
+        assert len([r for r in caplog.records if r.levelno == logging.INFO]) == 1
+    # stopping a receiver which is not running must not raise
+    receiver.stop()
+    LogsReceiver(queue.Queue()).stop()
+
+
+def _log_record(message):
+    return logging.LogRecord(
+        "smartpipeline-test", logging.INFO, __file__, 1, message, None, None
+    )
+
+
+def test_legacy_runner_signature():
+    """Only runners declaring the `fatal_event` argument receive it"""
+    from smartpipeline.containers import _runner_accepts_fatal_event
+    from smartpipeline.runners import batch_stage_runner, stage_runner
+
+    assert _runner_accepts_fatal_event(stage_runner)
+    assert _runner_accepts_fatal_event(batch_stage_runner)
+    assert not _runner_accepts_fatal_event(legacy_stage_runner)
+    assert not _runner_accepts_fatal_event(object())
+    assert _runner_accepts_fatal_event(lambda *args, **kwargs: None)
+
+
+def test_legacy_runner_run(items_generator_fx):
+    """A runner written before the `fatal_event` argument must keep working"""
+    from threading import Event
+
+    from smartpipeline.containers import ConcurrentStageContainer, StageContainer
+    from smartpipeline.error.handling import RetryManager
+    from smartpipeline.utils import ThreadCounter
+
+    error_manager = ErrorManager()
+    retry_manager = RetryManager()
+    previous = StageContainer("previous", TextReverser(), error_manager, retry_manager)
+    container = ConcurrentStageContainer(
+        "stage",
+        TextReverser(),
+        error_manager,
+        retry_manager,
+        queue.Queue,
+        ThreadCounter,
+        Event,
+        concurrency=1,
+    )
+    container.set_previous(previous)
+    container.set_fatal_event(Event())
+    container.run(runner=legacy_stage_runner)
+    item = next(items_generator_fx)
+    text = item.data["text"]
+    previous.out_queue.put(item)
+    result = container.out_queue.get(timeout=10)
+    container.out_queue.task_done()
+    container.terminate()
+    container.shutdown()
+    assert container.is_terminated()
+    assert result.data["text"] == text[::-1]
