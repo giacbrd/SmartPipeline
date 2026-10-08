@@ -7,8 +7,7 @@ everything else is docs/tests/examples.
 ## Commands
 
 No `pyproject.toml`, no Makefile, no tox — everything is setup.py + pre-commit + raw pytest.
-The repo venv (`.venv`, Python 3.14) has **only pytest** installed; `flake8`/`mypy`/`black`/`isort`
-are not there, so install them (`pip install flake8 mypy black isort`) or run `pre-commit run --all-files`.
+Use the repo venv binaries (`.venv`, Python 3.14; has pytest, flake8, mypy, black, isort).
 
 ```bash
 # tests (always run from repo root: tests/ is a package and imports use `from tests.utils import ...`)
@@ -17,13 +16,13 @@ are not there, so install them (`pip install flake8 mypy black isort`) or run `p
 .venv/bin/python -m pytest -q --durations=10 tests/          # find slow tests
 
 # CI order is: flake8 -> mypy -> pytest
-flake8 .                    # .flake8 ignores E501 and W503
-mypy smartpipeline          # same target as pre-commit (pass_filenames: false)
-black . && isort --profile black .
-coverage run -m pytest -v   # CI entrypoint; .coveragerc excludes pragma: no cover/@abstractmethod
+.venv/bin/flake8 .             # .flake8 ignores E501 and W503, excludes docs/*
+.venv/bin/mypy smartpipeline  # same target as pre-commit (pass_filenames: false)
+.venv/bin/black . && .venv/bin/isort --profile black .
+.venv/bin/coverage run -m pytest -v   # CI entrypoint
 ```
 
-CI (`.github/workflows/tests.yml`) runs **flake8 → mypy → coverage/pytest** on Python 3.9/3.10/3.11
+CI (`.github/workflows/tests.yml`) runs **flake8 → mypy → coverage/pytest** on Python 3.9–3.14
 after `ulimit -n 8192`. Keep code 3.9-compatible even though `setup.py` advertises up to 3.14:
 no `match`, no PEP 604 unions except under `from __future__ import annotations`.
 
@@ -40,8 +39,9 @@ pipeline behaviour.
   `append_concurrently()` (stage **class** + `args`/`kwargs`, rejects instances), `set_source()`,
   `set_error_manager()`, `build()`, `run()`, `process()`/`process_async()`/`get_item()`/`stop()`.
 - `smartpipeline/containers.py` — per-stage wiring objects: `SourceContainer`, `StageContainer`,
-  `BatchStageContainer`, `ConcurrentStageContainer`, `BatchConcurrentStageContainer`. Containers are
-  truthy when ready; `_wait_executors` polls `all(self._containers.values())`.
+  `BatchStageContainer`, `ConcurrentStageContainer`, `BatchConcurrentStageContainer`. `build()` blocks
+  in `_wait_executors` until stage construction and container linking finish, then sets the shared
+  fatal event and starts concurrent runners.
 - `smartpipeline/runners.py` — the actual worker loops (`process`, `process_batch`, `stage_runner`,
   `batch_stage_runner`).
 - `smartpipeline/stage.py` — `Source` (`pop()` + `self.stop()`), `Stage` (`process`), `BatchStage`
@@ -62,15 +62,17 @@ pipeline behaviour.
 
 ## Non-obvious invariants
 
-- **`build()` must close the chain**; it also blocks until all stages finish initializing and raises
-  `ValueError` if no stage was appended. Stage names must be unique.
+- **`build()` must be called after appending and before `run()`/`process()`**; it blocks until all
+  stages finish initializing and raises `ValueError` if no stage was appended. `run()` raises
+  `ValueError` if no source was set. Stage names must be unique.
 - **`concurrency=0` means inline execution** (no thread/process). A `BatchStage` with `concurrency < 1`
-  is silently forced to `concurrency=1, parallel=False` (`FIXME` in `pipeline.py:576`).
+  is silently forced to `concurrency=1, parallel=False` (two `FIXME`s in `pipeline.py`: `append` and
+  `append_concurrently`).
 - **`parallel=True` uses the `spawn` start method and stage instances are copied into workers.** Anything
   non-picklable (files, sockets, models) must be created in `on_start()`, not `__init__` — see
   `SerializableStage`/`SerializableErrorManager` in `tests/utils.py` for the pattern.
 - **All cross-process state goes through one `multiprocessing.Manager()`** (`SyncManager`): queues,
-  events, counters. This is deliberate (see the comment at `pipeline.py:122` explaining why not
+  events, counters. This is deliberate (see the comment in `pipeline._new_mp_queue` explaining why not
   `multiprocessing.Queue`). Don't swap in raw mp primitives.
 - **Cross-process logging** needs the `LogsReceiver`/`QueueHandler` wiring
   (`pipeline._start_logs_receiver` + `_stage_initialization_with_logger`); stage loggers are named after
@@ -99,4 +101,6 @@ and a `CHANGELOG.md` entry. Deprecated aliases still exist and must be kept work
 - Tests never define ad-hoc stages/sources: reuse the shared ones in `tests/utils.py` and the fixtures in
   `tests/conftest.py` (`text_samples_fx`, `items_generator_fx`, `file_directory_source_fx`).
   `tests/utils.py:get_pipeline()` builds a pipeline with `raise_on_critical_error()` already set.
+- Never consume `pipeline.run()` directly in a test: a stuck pipeline hangs the suite. Use
+  `tests/utils.py:run_with_timeout(pipeline)`, which fails the test instead of hanging.
 - Annotate new public functions — the package ships `py.typed` and CI runs `mypy`.
