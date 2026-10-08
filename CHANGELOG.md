@@ -12,8 +12,8 @@
   a stage runner that exits because of an error
 - Errors while retrieving the finally processed items now terminate the pipeline as any
   other error, and problems in the termination never mask the original exception
-- `stage_runner` and `batch_stage_runner` accept a new optional `fatal_event` argument,
-  custom stage runners keep working without it
+- `stage_runner` and `batch_stage_runner` accept a new `fatal_event` argument,
+  custom stage runners must accept it
 - Fixed a deadlock on termination of concurrent batch stages: they were excluded from the
   termination of the other concurrent stages, so a failing one could leave the pipeline stuck
   with items in its queues

@@ -28,7 +28,6 @@ from tests.utils import (
     TextReverser,
     TimeWaster,
     get_pipeline,
-    legacy_stage_runner,
     run_with_timeout,
 )
 
@@ -969,50 +968,3 @@ def _log_record(message):
     return logging.LogRecord(
         "smartpipeline-test", logging.INFO, __file__, 1, message, None, None
     )
-
-
-def test_legacy_runner_signature():
-    """Only runners declaring the `fatal_event` argument receive it"""
-    from smartpipeline.containers import _runner_accepts_fatal_event
-    from smartpipeline.runners import batch_stage_runner, stage_runner
-
-    assert _runner_accepts_fatal_event(stage_runner)
-    assert _runner_accepts_fatal_event(batch_stage_runner)
-    assert not _runner_accepts_fatal_event(legacy_stage_runner)
-    assert not _runner_accepts_fatal_event(object())
-    assert _runner_accepts_fatal_event(lambda *args, **kwargs: None)
-
-
-def test_legacy_runner_run(items_generator_fx):
-    """A runner written before the `fatal_event` argument must keep working"""
-    from threading import Event
-
-    from smartpipeline.containers import ConcurrentStageContainer, StageContainer
-    from smartpipeline.error.handling import RetryManager
-    from smartpipeline.utils import ThreadCounter
-
-    error_manager = ErrorManager()
-    retry_manager = RetryManager()
-    previous = StageContainer("previous", TextReverser(), error_manager, retry_manager)
-    container = ConcurrentStageContainer(
-        "stage",
-        TextReverser(),
-        error_manager,
-        retry_manager,
-        queue.Queue,
-        ThreadCounter,
-        Event,
-        concurrency=1,
-    )
-    container.set_previous(previous)
-    container.set_fatal_event(Event())
-    container.run(runner=legacy_stage_runner)
-    item = next(items_generator_fx)
-    text = item.data["text"]
-    previous.out_queue.put(item)
-    result = container.out_queue.get(timeout=10)
-    container.out_queue.task_done()
-    container.terminate()
-    container.shutdown()
-    assert container.is_terminated()
-    assert result.data["text"] == text[::-1]

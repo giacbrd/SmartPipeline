@@ -5,7 +5,6 @@ Containers encapsulate stages and manage their execution
 from __future__ import annotations
 
 import concurrent
-import inspect
 import logging
 import queue
 import time
@@ -15,7 +14,7 @@ from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from multiprocessing import get_context
 from threading import Event
-from typing import Any, Callable, Generic, List, Optional, TypeVar, Union
+from typing import Callable, Generic, List, Optional, TypeVar, Union
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.handling import ErrorManager, RetryManager
@@ -37,30 +36,6 @@ QueueInitializer = Callable[[], ItemsQueue]
 CounterInitializer = Callable[[], ConcurrentCounter]
 EventInitializer = Callable[[], Event]
 S = TypeVar("S", bound=StageType)
-
-
-def _runner_accepts_fatal_event(runner: Callable[..., Any]) -> bool:
-    """
-    Check if a stage runner accepts the optional `fatal_event` argument, so that runners
-    written before its introduction keep working without it
-    """
-    try:
-        parameters = inspect.signature(runner).parameters.values()
-    except (TypeError, ValueError):
-        return False
-    return any(
-        parameter.kind == inspect.Parameter.VAR_POSITIONAL
-        or (
-            parameter.kind
-            in (
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                inspect.Parameter.KEYWORD_ONLY,
-            )
-            and parameter.name == "fatal_event"
-        )
-        for parameter in parameters
-    )
 
 
 class InQueued(ABC):
@@ -752,12 +727,6 @@ class ConcurrentContainer(FatalEventMixin, InQueued, ConnectedStageMixin):
         self._counter = self._counter_initializer()
         self._has_started_counter = self._counter_initializer()
         self._terminate_event.clear()
-        # runners written before the `fatal_event` argument was introduced cannot
-        # receive it, they keep working without the fatal error signaling
-        if _runner_accepts_fatal_event(runner):
-            runner_kwargs = {"fatal_event": self._fatal_event}
-        else:
-            runner_kwargs = {}
         for _ in range(self._concurrency):
             self._futures.append(
                 executor.submit(
@@ -771,7 +740,7 @@ class ConcurrentContainer(FatalEventMixin, InQueued, ConnectedStageMixin):
                     self._has_started_counter,
                     self._counter,
                     self._logs_queue,
-                    **runner_kwargs,
+                    fatal_event=self._fatal_event,
                 )
             )
         # wait every runner internal loops have started
