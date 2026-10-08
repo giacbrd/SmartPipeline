@@ -13,7 +13,6 @@ from smartpipeline.error.handling import ErrorManager
 from smartpipeline.helpers import FilePathItem
 from smartpipeline.item import Item
 from smartpipeline.pipeline import Pipeline
-from smartpipeline.runners import stage_runner
 from smartpipeline.stage import BatchStage, Source, Stage
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -344,29 +343,4 @@ def run_with_timeout(pipeline: Pipeline, timeout: float = 30.0) -> List[Item]:
 def get_pipeline(*args, **kwargs) -> Pipeline:
     return Pipeline(*args, **kwargs).set_error_manager(
         ErrorManager().raise_on_critical_error()
-    )
-
-
-def legacy_stage_runner(
-    stage,
-    in_queue,
-    out_queue,
-    error_manager,
-    retry_manager,
-    terminated,
-    has_started_counter,
-    counter,
-    logs_queue,
-):
-    """A stage runner written before the `fatal_event` argument was introduced"""
-    return stage_runner(
-        stage,
-        in_queue,
-        out_queue,
-        error_manager,
-        retry_manager,
-        terminated,
-        has_started_counter,
-        counter,
-        logs_queue,
     )
