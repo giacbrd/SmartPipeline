@@ -189,6 +189,7 @@ class Pipeline:
             time.sleep(wait_seconds)
         if self._wait_previous_executor is not None:
             self._wait_previous_executor.shutdown(wait=True)
+            self._wait_previous_executor = None
         # all the containers are now ready, we can share the event which alerts a stage runner error
         self._fatal_event = self._new_shared_event()
         self._source_container.set_fatal_event(self._fatal_event)
@@ -280,6 +281,8 @@ class Pipeline:
         :return: Iterator over processed items
         :raises ValueError: When a source has not been set for the pipeline
         """
+        if not self._executors_ready:
+            self.build()
         if not self._source_container.is_set():
             raise ValueError("Set the data source for this pipeline")
         self._logger.debug("Running the pipeline on stages: %s", self._log_stages())
@@ -477,6 +480,8 @@ class Pipeline:
         """
         Process a single item synchronously (no concurrency) through the pipeline
         """
+        if not self._executors_ready:
+            self.build()
         self._logger.debug("Processing %s on stages: %s", item, self._log_stages())
         last_stage_name = last_key(self._containers)
         self._source_container.prepend_item(item)
@@ -498,6 +503,8 @@ class Pipeline:
 
         :param callback: A function to call after a successful process of the item
         """
+        if not self._executors_ready:
+            self.build()
         self._logger.debug(
             "Processing asynchronously %s on stages: %s", item, self._log_stages()
         )
@@ -565,6 +572,19 @@ class Pipeline:
         :param last_stage_name: Name of the last stage currently in the pipeline
         :param wait_seconds: Time to recurrently wait the construction of the container relative to the last stage in the pipeline
         """
+        # Fast path: when the previous container is already constructed we can link
+        # synchronously, without delegating to a background thread. The async waiter
+        # below is only needed when the previous stage is still under concurrent
+        # construction (i.e. a placeholder fake container). Linking synchronously
+        # avoids a race where `process()`/`run()` is called before the linker runs,
+        # which surfaced as `AttributeError: ... has no attribute '_previous'`.
+        if last_stage_name is None:
+            container.set_previous(self._source_container)
+            return
+        previous = self._containers.get(last_stage_name)
+        if previous is not None and previous is not self._fake_container:
+            container.set_previous(previous)
+            return
 
         def _waiter():
             if last_stage_name is not None:
