@@ -547,17 +547,18 @@ class BatchStageContainer(
         If we are processing asynchronously (e.g. concurrent stage) they are put in the output queue,
         otherwise a list of last processed items is extended
         """
+        # Always keep the sync copy: `get_processed` falls back to `_last_processed`
+        # when the output queue is empty (e.g. a concurrent runner stole its items
+        # while `Pipeline.process` consumes synchronously). Only the new batch is
+        # queued and counted, otherwise repeated `process` calls would re-queue and
+        # re-count the whole history.
         self._last_processed.extend(items)
-        if (
-            self.out_queue is not None
-            and self._last_processed is not None
-            and not self.is_terminated()
-        ):
-            for item in self._last_processed:
+        if self.out_queue is not None and not self.is_terminated():
+            for item in items:
                 if not self._put_or_abort(self.out_queue, item):
                     # the pipeline is going down, drop the remaining items
                     break
-        for item in self._last_processed:
+        for item in items:
             if item is not None and not isinstance(item, Stop):
                 self.increase_count()
 
