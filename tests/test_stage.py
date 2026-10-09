@@ -351,6 +351,23 @@ def _get_items(container):
         yield item
 
 
+def _wait_for_count(container, expected, timeout=30.0):
+    """Wait until a concurrent container has seen the expected number of items.
+
+    A concurrent runner puts each item in the output queue before increasing
+    its counter, and it produces asynchronously, so draining the output right
+    after feeding the input can stop at the first empty queue while items are
+    still in flight (and observe a counter lagging one put behind).
+    Poll the counter up to `timeout` seconds so the test observes quiescence.
+    """
+    start = time.time()
+    while container.count() < expected:
+        if time.time() - start > timeout:
+            break
+        time.sleep(0.05)
+    return container.count()
+
+
 def test_batch_stage_container1():
     manager = Manager()
     simple_item = Item()
@@ -433,12 +450,14 @@ def test_batch_concurrent_stage_container1():
     container.run()
     for _ in range(10):
         previous.process()
+    assert _wait_for_count(container, 100) == 100
     items5 = list(_get_items(container))
     assert items5 and all(items5)
     assert all(list(item.timed_stages) for item in items5)
-    assert container.count() == len(items5)
+    assert container.count() == len(items5) == 100
     for _ in range(11):
         previous.process()
+    assert _wait_for_count(container, 200) == 200
     items6 = list(_get_items(container))
     assert items6 and all(items6)
     assert all(item.data.get("text") for item in items5)
