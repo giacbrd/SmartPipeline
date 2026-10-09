@@ -159,11 +159,19 @@ class Item:
         """
         if type(exception) is not CriticalError:
             if isinstance(exception, SoftError):
+                # preserve explicit chaining (`raise SoftError(...) from e`)
+                # across pickling, where __cause__ is lost but _exception_cause survives
+                cause = getattr(exception, "__cause__", None)
+                if (
+                    cause is not None
+                    and getattr(exception, "_exception_cause", None) is None
+                ):
+                    exception.with_exception(cause)
                 exception.set_stage(stage)
                 self._soft_errors.append(exception)
                 return exception
             elif isinstance(exception, Exception):
-                error = SoftError(str(exception))
+                error = SoftError(f"{type(exception).__name__}: {exception}")
                 error.with_exception(exception)
                 error.set_stage(stage)
                 self._soft_errors.append(error)
@@ -181,11 +189,19 @@ class Item:
         """
         if type(exception) is not SoftError:
             if isinstance(exception, CriticalError):
+                # preserve explicit chaining (`raise CriticalError(...) from e`)
+                # across pickling, where __cause__ is lost but _exception_cause survives
+                cause = getattr(exception, "__cause__", None)
+                if (
+                    cause is not None
+                    and getattr(exception, "_exception_cause", None) is None
+                ):
+                    exception.with_exception(cause)
                 exception.set_stage(stage)
                 self._critical_errors.append(exception)
                 return exception
             elif isinstance(exception, Exception):
-                error = CriticalError(str(exception))
+                error = CriticalError(f"{type(exception).__name__}: {exception}")
                 error.with_exception(exception)
                 error.set_stage(stage)
                 self._critical_errors.append(error)

@@ -68,7 +68,11 @@ def process(
     )
     item.set_timing(stage.name, time.perf_counter() - time1)
     for rexc in caught_retryable_exceptions:
-        error_manager.handle(RetryError().with_exception(rexc), stage, item)
+        error_manager.handle(
+            RetryError(f"{type(rexc).__name__}: {rexc}").with_exception(rexc),
+            stage,
+            item,
+        )
     return item
 
 
@@ -137,7 +141,11 @@ def process_batch(
     for i, item in to_process.items():
         item.set_timing(stage.name, spent)
         for rexc in caught_retryable_exceptions:
-            error_manager.handle(RetryError().with_exception(rexc), stage, item)
+            error_manager.handle(
+                RetryError(f"{type(rexc).__name__}: {rexc}").with_exception(rexc),
+                stage,
+                item,
+            )
         ret[i] = item
     return ret
 

@@ -130,7 +130,8 @@ def test_errors(caplog):
         for error in item.critical_errors():
             assert isinstance(error.get_exception(), Exception)
             assert (
-                str(error) == "test exception"
+                str(error) == "Exception: test exception"
+                and "Exception" in str(error)
                 and str(error.get_exception()) == "test exception"
                 and str(error) != "test pipeline error"
             )
