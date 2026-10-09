@@ -4,30 +4,32 @@ Guide
 Data items
 ----------
 
-The unit of data of a pipeline is the item,
-which is represented by :class:`.Item` class or a subclass of it.
-Data is kept in the :attr:`.Item.data`, a read-only dictionary.
-:attr:`.Item.metadata` is for extra stuff as temporary data or descriptors of the item.
-If the pipeline is going to work on more processes (see later the ``parallel`` parameter)
-an item must me serializable with `pickle <https://docs.python.org/3/library/pickle.html>`_ module,
-both its data and metadata.
+The unit of data in a pipeline is the *item*,
+represented by the :class:`.Item` class or a subclass of it.
+The actual payload lives in :attr:`.Item.data`, a read-only dictionary,
+while :attr:`.Item.metadata` holds auxiliary information such as
+temporary values or descriptors of the item.
+
+If a stage runs on multiple processes (see the ``parallel`` parameter in
+:ref:`concurrency-section`), items are sent between processes through queues,
+so both ``data`` and ``metadata`` must be serializable with the
+`pickle <https://docs.python.org/3/library/pickle.html>`_ module.
 
 Defining the source
 -------------------
 
-For defining your own processing pipeline you need to define the source and the stages.
-The :class:`.Source` should be extended and the :meth:`.Source.pop` method overridden.
-This method returns a single new item every time it is called,
-it can also return ``None`` if it cannot provide a new item when called.
-When the source has no more items to generate,
-the method :meth:`.Source.stop` must be called.
-A stop can happen when the resources from which we retrieve data items are exhausted,
-e.g.: all the documents in a index have been retrieved or
-all the lines on CSV file have been read.
-A source can also generate items indefinitely, then the pipeline will never end.
+To build your own pipeline you define a source and a sequence of stages.
+Extend :class:`.Source` and override :meth:`.Source.pop`.
+This method is called repeatedly and must return one new item per call.
+It may return ``None`` when no item is currently available,
+without ending the stream.
+When the source is exhausted, it must call :meth:`.Source.stop`.
+Typical cases are: all documents in an index have been read,
+or all lines of a CSV file have been consumed.
+A source may also produce items indefinitely, in which case the pipeline never ends.
 
-In this example we define a source that generates 1000 items with a random variable string in
-the data of each one.
+The following example defines a source that generates 1000 items,
+each carrying a random string in its data.
 
 .. code-block:: python
 
@@ -38,8 +40,8 @@ the data of each one.
 
         def pop(self):
             self._counter += 1
-            # when 1000 items are reached we declare a stop,
-            # the stop will be still valid for all the next calls of pop()
+            # once 1000 items have been generated we signal the end;
+            # the stop condition stays valid for all subsequent pop() calls
             if self._counter > self._total:
                 self.stop()
                 return
@@ -63,34 +65,36 @@ Defining your stages
 
 A stage is a subclass of :class:`.Stage` or :class:`.BatchStage`.
 
-The actual item data processing happens in the stage method :meth:`.Stage.process`,
-or :meth:`.BatchStage.process_batch` for lists of items.
+The actual processing happens in :meth:`.Stage.process` for single items,
+or in :meth:`.BatchStage.process_batch` for lists of items.
 
-A stage receives a single item and returns it, enriched with stage computations.
-A batch stage, instead, processes multiple items at once.
-This is useful when the computation can exploit handling more data together,
-e.g.: on a HTTP API that accepts lists of values, one would benefit by making less calls;
-on a machine learning model that is optimized for predicting on multiple samples.
+A stage receives one item and returns the same item, enriched by its computation.
+A batch stage processes several items at once.
+Batching pays off when the underlying operation is cheaper in bulk,
+for example an HTTP API that accepts lists of values (fewer calls),
+or a machine learning model optimized for predicting on multiple samples.
 
-When using concurrency, each concurrent stage will call the process method
-on different subsets of the data flow, concurrently.
+When a stage is concurrent, its ``process`` method is invoked
+on different subsets of the data flow at the same time
+(see :ref:`concurrency-section`).
 
-Each stage provides its own logger in :attr:`.Stage.logger`.
+Each stage exposes its own logger through :attr:`.Stage.logger`.
 
-A simple example of a stage that takes the items generated in the previous example and substitutes specific
-patterns in the string with a fixed string.
+The following stage takes the items produced by the previous example
+and replaces every occurrence of a pattern with a fixed string.
 
 .. code-block:: python
 
     class TextReplacer(Stage):
         def __init__(self, substitution):
-            self._pattern = re.compile("\d\d\D\D")
+            self._pattern = re.compile(r"\d\d\D\D")
             self._sub = substitution
 
         def process(self, item):
-            new_text = re.sub(self._sub, item.data["text"])
+            new_text = self._pattern.sub(self._sub, item.data["text"])
             if item.data["text"] == new_text:
-                # even if we raise SoftError the item will continue its path through the pipeline
+                # a SoftError skips this stage for the item,
+                # but the item still continues through the pipeline
                 raise SoftError("Text has not been modified")
             item.data["text"] = new_text
             return item
@@ -98,54 +102,59 @@ patterns in the string with a fixed string.
 Error handling
 --------------
 
-In the previous code snippet we raise a :class:`.SoftError` in case no modifications are made to the content of the item.
-The :class:`.ErrorManager` will take care of this but the item will still be processed by the next stages in the pipeline.
-By extending :class:`.ErrorManager` you can define custom handling for these kind of "soft" errors,
-but also for all other exceptions.
+The snippet above raises a :class:`.SoftError` when the text is unchanged.
+The :class:`.ErrorManager` handles the error,
+but the item is still passed to the following stages.
+By subclassing :class:`.ErrorManager` you can customize how these "soft" errors,
+and any other exception, are handled.
 
-:class:`.SoftError` exceptions have to be explicitly raised.
-A soft error does not interrupt an item processing through the pipeline,
-the item processing is skipped just for the stage.
-Be careful on batch stages: raising a soft error, while iterating on batch items, will make skip
-also all the items of the batch following the item that has produced the error.
+:class:`.SoftError` must be raised explicitly.
+It skips processing only for the stage that raised it, not for the whole pipeline.
+Note the batch-stage caveat: if you raise while iterating over a batch,
+the remaining items of that batch are skipped as well.
 
-A :class:`.CriticalError` is raised for any non-captured exception, or it may be raised explicitly:
-it stops the processing of an item so that the pipeline goes ahead with the next one.
+A :class:`.CriticalError` is raised for any uncaught exception,
+or explicitly by the stage code.
+It stops the processing of the current item,
+and the pipeline moves on to the next one.
 
-It is recommended to use the
-`explicit exception chaining <https://www.python.org/dev/peps/pep-3134/#explicit-exception-chaining>`_
-when explicitly raising a :class:`.SoftError` or a :class:`.CriticalError` exception.
+When raising :class:`.SoftError` or :class:`.CriticalError` explicitly,
+use `explicit exception chaining <https://www.python.org/dev/peps/pep-3134/#explicit-exception-chaining>`_
+(``raise ... from ...``) so the original cause is preserved.
 
 Setting and running the pipeline
 --------------------------------
 
-Once you have your set of stages you can add them in sequence to a Pipeline instance, following a "builder" pattern.
-:meth:`.Pipeline.append` is the main method for adding stages to a pipeline.
-One must define stages unique names and eventually their concurrency.
-The ``concurrency`` parameter is default to 0, a stage is concurrent when the value is 1 or greater.
-In case of values equal or greater than 1, and by setting ``parallel`` to ``True``,
-Python multiprocessing is used: stage concurrent executions will run in parallel,
-stage instances will be copied in each process.
+Stages are added to a :class:`.Pipeline` instance in sequence, with a builder pattern.
+:meth:`.Pipeline.append` is the main method for adding stages.
+Each stage needs a unique name, plus an optional concurrency setting.
+``concurrency`` defaults to 0, which means inline execution.
+A value of 1 or greater makes the stage concurrent.
+Combined with ``parallel=True``, concurrent executions run in separate processes;
+otherwise they run in separate threads.
+With concurrency, items travel through queues and may be serialized.
 
-Consider using threads when I/O blocking operations are prevalent,
-while using multiprocessing when stages execute long computations on data.
-In case of no concurrency the pipeline simply runs a "chain" of :meth:`.Stage.process` on each item,
-while with concurrency Python queues are involved and items may be serialized.
+As a rule of thumb, use threads when stages are mostly waiting on I/O,
+and processes when stages perform heavy computation.
+Without concurrency the pipeline is a simple chain of :meth:`.Stage.process` calls,
+one item after the other.
 
-If you intend to define stages that can run on multiple processes,
-please read :ref:`concurrency-section` about further, important details.
+If you plan to run stages on multiple processes,
+read :ref:`concurrency-section` first: there are important constraints on what
+a stage may hold and how it must be initialized.
 
-Through :meth:`.Pipeline.append` one can also define a retry policy on some specific errors
-(see method documentation for further details).
+:meth:`.Pipeline.append` also accepts a retry policy for selected errors
+(see the method documentation for details).
 
-Another method is :meth:`.Pipeline.append_concurrently`,
-which allows to execute stages creation concurrently with other stages appending calls.
-Useful when long tasks must be executed at creation,
-e.g., the stage carries the construction of big data structures.
+:meth:`.Pipeline.append_concurrently` accepts a stage *class* (plus ``args``/``kwargs``)
+instead of an instance, so stage construction runs in the background
+while you keep appending other stages.
+This is useful when construction itself is slow,
+for example when it builds large in-memory data structures.
 
-Remember to call :meth:`.Pipeline.build` at the end of stages "concatenation".
+Always finish the concatenation with :meth:`.Pipeline.build`.
 
-Finally, from the previous example, we define another stage that reduces text size and we run the pipeline
+The example below adds a second stage that truncates the text, then runs the pipeline.
 
 .. code-block:: python
 
@@ -165,10 +174,9 @@ Finally, from the previous example, we define another stage that reduces text si
     for item in pipeline.run():
         print(item.data["text"])
 
-A different example in which we process 100 items concurrently with :meth:`.Pipeline.process_async`
-(here "async" is not related to Python asyncio),
-without running the pipeline but explicitly executing a pipeline processing on each one.
-Note that no source is defined here.
+The next example processes 100 items concurrently with
+:meth:`.Pipeline.process_async` (here "async" has nothing to do with ``asyncio``).
+No source is set: items are submitted explicitly, one by one.
 
 .. code-block:: python
 
@@ -178,7 +186,7 @@ Note that no source is defined here.
         .append("text_reducer", TextReducer(), concurrency=1)
         .build()
     )
-    # "manually" send 100 items to the pipeline
+    # "manually" send 100 items into the pipeline
     for _ in range(100):
         item = Item()
         text = ''.join(
@@ -195,24 +203,24 @@ Note that no source is defined here.
     # retrieve the processed items
     for _ in range(100):
         print(pipeline.get_item().data["text"])
-    # explicitly stop the pipeline when there are no more items
+    # explicitly stop the pipeline once no more items will arrive
     pipeline.stop()
 
-It is possible to use :meth:`.Pipeline.process` when no stage is concurrent,
-each item will be processed and returned directly by this method.
+Use :meth:`.Pipeline.process` only when no stage is concurrent:
+the item is processed synchronously and returned directly by the call.
 
 A further example
 -----------------
 
-Example of a pipeline that processes local files contained in ``./document_files`` directory,
-extracts texts and finds VAT codes occurrences.
-Finally it indexes the result in an Elasticsearch cluster.
-Errors are eventually logged in the Elasticsearch cluster.
-Here the developer has defined his own custom error manager and, obviously, the stages.
-The source must be usually defined, here a trivial one (from the codebase) has been used,
-together with a custom data item type that provides a file reference.
+This pipeline processes the local files in the ``./document_files`` directory,
+extracts their text, finds VAT code occurrences,
+and indexes the result in an Elasticsearch cluster.
+Errors are logged to a separate Elasticsearch index
+through a custom error manager.
+The source used here is a helper shipped with the library,
+combined with a custom item type that carries a file reference.
 
-More, executables examples can be found in the root sub-directory ``examples``.
+Further runnable examples live in the ``examples`` directory at the repository root.
 
 .. code-block:: python
 
@@ -260,8 +268,8 @@ More, executables examples can be found in the root sub-directory ``examples``.
                 with open(item.path) as f:
                     item.data["text"] = f.read()
             except IOError as e:
-                # even if we are unable to read the file content the item will processed by next stages
-                # we encapsulate the exception in a "soft error"
+                # the item still reaches the next stages;
+                # we wrap the failure in a "soft error"
                 raise SoftError(f"Problems in reading file {item.path}") from e
             return item
 
@@ -271,7 +279,7 @@ More, executables examples can be found in the root sub-directory ``examples``.
 
         def __init__(self):
             self.regex = re.compile(
-                "^[A-Za-z]{2,4}(?=.{2,12}$)[-_\s0-9]*(?:[a-zA-Z][-_\s0-9]*){0,2}$"
+                r"^[A-Za-z]{2,4}(?=.{2,12}$)[-_\s0-9]*(?:[a-zA-Z][-_\s0-9]*){0,2}$"
             )
 
         def process(self, item: Item) -> Item:
@@ -314,43 +322,80 @@ More, executables examples can be found in the root sub-directory ``examples``.
 
 .. _concurrency-section:
 
-Parallel stages and ``on_start`` method
----------------------------------------
+Concurrency and parallelism
+---------------------------
 
-The only way Python allows to run code in parallel is through multiple OS processes, with the package
-`multiprocessing <https://docs.python.org/3/library/multiprocessing.html>`_ (threads cannot run in parallel
-because the `GIL <https://en.wikipedia.org/wiki/Global_interpreter_lock>`_).
+This section explains how ``concurrency`` and ``parallel`` work,
+and what a stage must do to run correctly on threads and on processes.
 
-When we submit a Python function to a spawned/forked process we are actually copying memory from the current process
-to the new one, because OS processes cannot share memory, differently from multi-threading.
-In order to do this (at least for spawned processes) the data we want to pass to a new process must be serialized.
-Even communication between processes involves copying data from one to another (e.g. through queues).
-Moreover, for child processes that are not created with "fork" method,
-the memory of the parent won't be copied completely.
+Concurrency vs. parallelism
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Therefore, if we decide to run a pipeline stage concurrently and in parallel,
-the stage is going to be copied to each process.
-This means that the stage must be "pickleable":
-serializable with the `pickle <https://docs.python.org/3/library/pickle.html>`_ module.
-If we want to define non-serializable attributes in our stage object and run it on more processes,
-we must find a way generate these attributes for each object copy in each process.
+There are three ways to run a stage, selected per stage
+with the ``concurrency`` and ``parallel`` arguments of :meth:`.Pipeline.append`:
 
-This is what :meth:`.Stage.on_start` method solves. It is simply used to initialize attributes "a posteriori".
-It is normally called after ``__init__``, but in case of execution on multiple processes,
-it is called once, on the stage copy, at process start.
-This allows stateful stages, locally to each process;
-it is also useful for safety and for avoiding copying large data.
+* ``concurrency=0`` (default): *inline* execution.
+  No threads or processes are involved.
+  Each item flows through a simple chain of :meth:`.Stage.process` calls.
+* ``concurrency>=1, parallel=False``: the stage runs on ``concurrency`` threads.
+  Good for I/O-bound work (HTTP calls, file reads, database queries),
+  where threads spend most of their time waiting.
+* ``concurrency>=1, parallel=True``: the stage runs on ``concurrency`` processes.
+  Good for CPU-bound work (text processing, model inference),
+  because threads cannot run Python code in parallel
+  due to the `GIL <https://en.wikipedia.org/wiki/Global_interpreter_lock>`_.
 
-Also for :class:`.ErrorManager` it is necessary to define :meth:`.ErrorManager.on_start`,
-because the manager must be coupled with a stage when it is copied.
+With any concurrent stage, items travel through queues between stages
+and may be pickled.
+A ``BatchStage`` with ``concurrency<1`` is automatically promoted
+to ``concurrency=1`` on threads.
 
-Let's take back the previous examples, the error manger and a stage need to be modified if we want to run the stage in
-parallel. The inconvenience here is the Elasticsearch client,
-which is not serializable (try it by yourself, e.g., :code:`pickle.dumps(Elasticsearch('localhost'))`).
-Moreover, an Elasticsearch client opens a connection, consequently we desire an independent connection for
-each process, sharing one is unpractical.
+How parallel stages work
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-This is how we refactor the original ``__init__`` methods
+OS processes do not share memory, unlike threads.
+SmartPipeline starts its worker processes with the ``spawn`` method
+and copies each parallel stage into every worker process with
+`pickle <https://docs.python.org/3/library/pickle.html>`_.
+Communication between processes also goes through queues,
+which means items are serialized on every hand-off.
+
+Consequences:
+
+* A parallel stage, and everything stored on it, must be picklable.
+* Each worker process owns an independent *copy* of the stage.
+  Mutating an attribute in one worker is invisible to the others.
+* Objects that cannot be pickled (open files, sockets, most clients)
+  or should not be shared (one connection per process)
+  cannot be created in ``__init__``; they must be created per process
+  (see below).
+
+By contrast, a threaded stage exists only once:
+all of its worker threads share the same object,
+so shared attributes need thread-safe access.
+
+Making stages parallel-safe with ``on_start`` and ``on_end``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+:meth:`.Stage.on_start` initializes a stage *after* it has been copied
+into its worker process.
+It is called once per process, on that process's copy,
+before the copy processes its first item.
+Without multiprocessing it is simply called once after ``__init__``.
+:meth:`.Stage.on_end` is the mirror hook: it runs when the worker terminates,
+even on pipeline failure, and is the right place to close
+files or connections opened in ``on_start``.
+The same pair of hooks exists on :class:`.ErrorManager`
+as :meth:`.ErrorManager.on_start` and :meth:`.ErrorManager.on_end`,
+because the error manager is copied into worker processes together with the stage.
+
+Take the Elasticsearch example from the previous section.
+``Elasticsearch(...)`` clients are not picklable
+(try ``pickle.dumps(Elasticsearch('localhost'))`` yourself),
+and even if they were, sharing one connection object across processes
+would be unreliable.
+The fix is small: keep only plain configuration in ``__init__``
+and create the client in ``on_start``.
 
 .. code-block:: python
 
@@ -375,26 +420,120 @@ This is how we refactor the original ``__init__`` methods
         def on_start(self):
             self.es_client = Elasticsearch(self.es_host)
 
-The effort for the developer is minimal, but the advantage big.
-We can now execute these pipeline abstractions in parallel,
-not limited to stateless methods as we would normally do with multiprocessing.
-In general, it is convenient to always override ``on_start`` if the attributes we are going to construct require
-this special treatment, so that the stage will be always compatible with both the three ways of running it:
-sequentially, concurrently on threads and on processes.
+This pattern also avoids copying large data into every process:
+load models, open files, or connect clients lazily in ``on_start``.
+As a rule, whenever an attribute needs special per-process construction,
+create it in ``on_start`` (leaving a ``None`` placeholder in ``__init__``)
+so the stage works in all three modes: inline, threaded, and parallel.
 
-A complementary method is ``on_end``, both for stages and error manager,
-which allows to call operations at pipeline exit, even when this is caused by an error.
-Useful, for example, for closing files or connections we have opened in ``on_start``.
+Per-worker local state
+~~~~~~~~~~~~~~~~~~~~~~
 
+Because each parallel worker owns a copy of the stage,
+plain instance attributes are a natural *per-worker* state:
+each process accumulates its own values without interfering with the others.
 
-Parallel stages and logging
-```````````````````````````
+.. code-block:: python
 
-The ``on_start`` method is especially useful for configuring stage loggers.
+    class CountingStage(Stage):
+        def __init__(self):
+            self._count = 0
 
-Unfortunately a stage logger configuration, like the log level, and even
-the global logging configuration, won't be inherited by stages running on sub-processes
-(this actually happens when the fork method is not used for creating child processes).
+        def process(self, item):
+            # each worker counts only the items it has seen itself
+            self._count += 1
+            item.metadata["seen_by_this_worker"] = self._count
+            return item
 
-By defining the logging configuration of :attr:`.Stage.logger` inside the ``on_start`` overriding,
-one can solve this issue.
+This is ideal for caches, buffers, per-process connections, or loaded models:
+initialize the attribute in ``__init__`` (picklable value)
+or in ``on_start`` (non-picklable resource),
+mutate it freely in ``process``, and optionally flush or close it in ``on_end``.
+Keep in mind that no worker sees the full stream,
+so per-worker counters never add up to a global total by themselves.
+
+Sharing state between workers
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Sometimes workers genuinely need shared state, e.g. a global counter
+or a dictionary visible to every process.
+Since processes do not share memory, the standard tool is a
+`multiprocessing manager <https://docs.python.org/3/library/multiprocessing.html#managers>`_,
+which exposes proxy objects (``dict``, ``list``, ``Value``, ``Lock``, ...)
+whose operations are forwarded to a server process.
+
+Create the manager and its proxies in the main process and pass the proxies
+into the stage constructor: proxies are picklable, so the stage stays picklable.
+Do not create the manager inside ``on_start``: that would give each worker
+its own independent manager instead of one shared object.
+
+.. code-block:: python
+
+    from multiprocessing import Manager
+
+    manager = Manager()
+    shared_stats = manager.dict({"processed": 0})
+    shared_lock = manager.Lock()
+
+    class SharedCountingStage(Stage):
+        def __init__(self, stats, lock):
+            self._stats = stats
+            self._lock = lock
+
+        def process(self, item):
+            # proxy access is a remote call: correct, but much slower than local memory
+            with self._lock:
+                self._stats["processed"] += 1
+            return item
+
+    pipeline = (
+        Pipeline()
+        .append("counter", SharedCountingStage(shared_stats, shared_lock),
+                concurrency=4, parallel=True)
+        .build()
+    )
+
+Shared proxies come with real costs: every read or write is inter-process
+communication, all mutations need explicit locking to avoid races,
+failures of the manager process break every worker,
+and the code becomes harder to test.
+For these reasons, prefer one of the alternatives below whenever possible.
+
+Prefer shared-nothing designs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In most pipelines shared mutable state is a sign that the work can be reorganized:
+
+* *Aggregate downstream.* Keep per-worker partial results as local state
+  and combine them in a later, non-concurrent stage
+  (``concurrency=0`` sees every item in order).
+* *Carry state in the items.* Put counters, accumulations, or flags
+  in ``item.data`` or ``item.metadata`` instead of on the stage.
+* *Use an external store.* For state that must survive or be visible outside
+  the pipeline (progress, deduplication sets, caches), write to a database,
+  a file, or a service such as Redis, rather than to process memory.
+
+Reach for a ``Manager`` only for small, low-frequency coordination
+(e.g. a global progress counter), not for per-item hot paths.
+
+Logging in parallel stages
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Worker processes do not inherit the parent logging configuration
+(when ``spawn`` is used, there is no inherited memory at all).
+SmartPipeline forwards log records emitted through :attr:`.Stage.logger`
+back to the main process, but logger *configuration*
+(levels, handlers, formatters) must be applied per process.
+
+Configure :attr:`.Stage.logger` inside ``on_start`` so every worker copy
+sets up its own logging consistently:
+
+.. code-block:: python
+
+    class LoggingStage(Stage):
+        def on_start(self):
+            self.logger.setLevel(logging.INFO)
+
+        def process(self, item):
+            self.logger.info("processing %s", item)
+            return item
