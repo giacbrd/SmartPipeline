@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- BREAKING CHANGE: the `parallel: bool` parameter of `Pipeline.append`,
+  `Pipeline.append_concurrently` (and of the stage containers) has been replaced by
+  `executor: Literal["threads", "processes"]` (`"threads"` by default, `"processes"`
+  for multiprocessing). Update `parallel=True` to `executor="processes"` and
+  `parallel=False` to `executor="threads"`. The `ConcurrentContainer.parallel`
+  property is now `ConcurrentContainer.executor`
+
 - Fixed a deadlock on errors in concurrent stages: with `raise_on_critical_error` a failing
   concurrent stage kills its runners, and any execution blocked putting an item in a full
   queue (the main thread when a stage without concurrency produces items for it, a stage

@@ -28,7 +28,7 @@ after `ulimit -n 8192`. `setup.py` requires `python_requires=">=3.12"`, so moder
 
 **The suite is slow (minutes), not because of heavy setup but because concurrency tests spawn real
 processes and sleep.** `tests/pipeline/test_concurrent.py` and `test_batch_concurrent.py` use
-`parallel=True` everywhere. Iterate on focused files/tests, run the whole suite before finishing.
+`executor="processes"` everywhere. Iterate on focused files/tests, run the whole suite before finishing.
 
 ## Architecture: where things live
 
@@ -72,9 +72,9 @@ pipeline behaviour.
   (single error as-is, several as `ExceptionGroup`), never silently replaced by the fake container.
   `run()` raises `ValueError` if no source was set. Stage names must be unique.
 - **`concurrency=0` means inline execution** (no thread/process). A `BatchStage` with `concurrency < 1`
-  is silently forced to `concurrency=1, parallel=False` (two `FIXME`s in `pipeline.py`: `append` and
+  is silently forced to `concurrency=1, executor="threads"` (two `FIXME`s in `pipeline.py`: `append` and
   `append_concurrently`).
-- **`parallel=True` uses the `spawn` start method and stage instances are copied into workers.** Anything
+- **`executor="processes"` uses the `spawn` start method and stage instances are copied into workers.** Anything
   non-picklable (files, sockets, models) must be created in `on_start()`, not `__init__` — see
   `SerializableStage`/`SerializableErrorManager` in `tests/utils.py` for the pattern.
 - **`on_start`/`on_end` failures are fatal and bypass `ErrorManager`.** There is no `Item` to

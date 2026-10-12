@@ -97,7 +97,7 @@ def get_pipeline(input_file, output_file, es_hosts, es_indices):
             "es_retrieve",
             ESRetrieve(es_hosts=es_hosts, es_indices=es_indices),
             concurrency=4,
-            parallel=True,
+            executor="processes",
         )
         .append("jsonl_dump", JsonlDump(file_obj=output_file))
         .build()

@@ -46,7 +46,7 @@ def test_on_start_error_manager_raises_on_build():
         with pytest.raises(RuntimeError, match="on_start"):
             (
                 pipeline.set_source(RandomTextSource(3))
-                .append("stage", TextReverser(), concurrency=1, parallel=True)
+                .append("stage", TextReverser(), concurrency=1, executor="processes")
                 .build()
             )
     finally:
@@ -83,11 +83,11 @@ def test_on_end_thread_raises_on_run():
         run_with_timeout(pipeline)
 
 
-def test_on_end_parallel_raises_on_run():
+def test_on_end_processes_raises_on_run():
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(3))
-        .append("boom", BrokenOnEndStage(), concurrency=1, parallel=True)
+        .append("boom", BrokenOnEndStage(), concurrency=1, executor="processes")
         .build()
     )
     try:
@@ -100,11 +100,11 @@ def test_on_end_parallel_raises_on_run():
             pass
 
 
-def test_on_end_batch_parallel_raises_on_run():
+def test_on_end_batch_processes_raises_on_run():
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(3))
-        .append("boom", BrokenOnEndBatchStage(), concurrency=1, parallel=True)
+        .append("boom", BrokenOnEndBatchStage(), concurrency=1, executor="processes")
         .build()
     )
     try:
@@ -143,16 +143,16 @@ def test_on_end_both_hooks_fail_groups_errors():
     assert all(isinstance(e, RuntimeError) for e in exc_info.value.exceptions)
 
 
-@pytest.mark.parametrize("parallel", [False, True])
-def test_process_error_preserved_when_on_end_fails(parallel):
+@pytest.mark.parametrize("concurrency", [0, 1])
+def test_process_error_preserved_when_on_end_fails(concurrency):
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
         .append(
             "bad",
             BrokenProcessAndEndStage(),
-            concurrency=1 if parallel else 0,
-            parallel=parallel,
+            concurrency=concurrency,
+            executor="processes",
         )
         .build()
     )

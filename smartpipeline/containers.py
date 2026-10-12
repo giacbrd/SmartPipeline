@@ -14,7 +14,7 @@ from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from multiprocessing import get_context
 from threading import Event
-from typing import Callable, Generic, List, Optional, TypeVar, Union
+from typing import Callable, Generic, List, Literal, Optional, TypeVar, Union
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.handling import ErrorManager, RetryManager
@@ -30,6 +30,9 @@ from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage, StageType
 from smartpipeline.utils import ConcurrentCounter, put_or_abort
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
+
+
+ExecutorType = Literal["threads", "processes"]
 
 
 QueueInitializer = Callable[[], ItemsQueue]
@@ -578,7 +581,7 @@ class ConcurrentContainer(FatalEventMixin, InQueued, ConnectedStageMixin):
         counter_initializer: CounterInitializer,
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
-        parallel: bool = False,
+        executor: ExecutorType = "threads",
         logs_queue: Optional[queue.Queue[logging.LogRecord]] = None,
     ):
         """
@@ -588,11 +591,11 @@ class ConcurrentContainer(FatalEventMixin, InQueued, ConnectedStageMixin):
         :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage runners that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
-        :param parallel: True for using multiprocessing for concurrency, otherwise use threads
+        :param executor: "threads" for using threads, "processes" for using multiprocessing
         :param logs_queue: The queue in which all stages in processes will send their logs records through a `QueueHandler`
         """
         self._concurrency = concurrency
-        self._parallel = parallel
+        self._executor = executor
         self._stage_executor: Optional[Executor] = None
         self._previous_queue: ItemsQueue = queue.Queue()
         self._futures: List[Future] = []
@@ -630,7 +633,7 @@ class ConcurrentContainer(FatalEventMixin, InQueued, ConnectedStageMixin):
         self._previous = container
         if (
             isinstance(self._previous, ConcurrentContainerTypes)
-            and self._previous.parallel
+            and self._previous.executor == "processes"
         ):
             # give priority to the previous queue initializer
             self._previous_queue = self._previous.out_queue
@@ -642,7 +645,7 @@ class ConcurrentContainer(FatalEventMixin, InQueued, ConnectedStageMixin):
         Get and eventually generate a pool executor where concurrent stage executions run
         """
         if self._stage_executor is None:
-            if not self._parallel:
+            if self._executor == "threads":
                 self._stage_executor = ThreadPoolExecutor(max_workers=self._concurrency)
             else:
                 self._stage_executor = ProcessPoolExecutor(
@@ -651,11 +654,11 @@ class ConcurrentContainer(FatalEventMixin, InQueued, ConnectedStageMixin):
         return self._stage_executor
 
     @property
-    def parallel(self) -> bool:
+    def executor(self) -> ExecutorType:
         """
-        True if we are using multiprocessing, False if we are using threads
+        "processes" if we are using multiprocessing, "threads" if we are using threads
         """
-        return self._parallel
+        return self._executor
 
     def shutdown(self):
         """
@@ -768,7 +771,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         counter_initializer: CounterInitializer,
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
-        parallel: bool = False,
+        executor: ExecutorType = "threads",
         logs_queue: Optional[queue.Queue[logging.LogRecord]] = None,
     ):
         """
@@ -780,7 +783,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage runners that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
-        :param parallel: True for using multiprocessing for concurrency, otherwise use threads
+        :param executor: "threads" for using threads, "processes" for using multiprocessing
         :param logs_queue: The queue in which all stages in processes will send their logs records through a `QueueHandler`
         """
         super().__init__(name, stage, error_manager, retry_manager)
@@ -789,7 +792,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
             counter_initializer,
             terminate_event_initializer,
             concurrency,
-            parallel,
+            executor,
             logs_queue,
         )
 
@@ -825,7 +828,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         counter_initializer: CounterInitializer,
         terminate_event_initializer: EventInitializer,
         concurrency: int = 1,
-        parallel: bool = False,
+        executor: ExecutorType = "threads",
         logs_queue: Optional[queue.Queue[logging.LogRecord]] = None,
     ):
         """
@@ -837,7 +840,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage runners that have successfully started their internal loop
         :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
         :param concurrency: Number of maximum concurrent stage executions
-        :param parallel: True for using multiprocessing for concurrency, otherwise use threads
+        :param executor: "threads" for using threads, "processes" for using multiprocessing
         :param logs_queue: The queue in which all stages in processes will send their logs records through a `QueueHandler`
         """
         super().__init__(name, stage, error_manager, retry_manager)
@@ -846,7 +849,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
             counter_initializer,
             terminate_event_initializer,
             concurrency,
-            parallel,
+            executor,
             logs_queue,
         )
 

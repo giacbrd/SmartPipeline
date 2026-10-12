@@ -24,6 +24,7 @@ from smartpipeline.containers import (
     ConcurrentStageContainer,
     ConnectedStageMixin,
     ContainerType,
+    ExecutorType,
     SourceContainer,
     StageContainer,
 )
@@ -460,7 +461,7 @@ class Pipeline:
                         errors.append(e)
                 if (
                     not isinstance(container, ConcurrentContainerTypes)
-                    or not container.parallel
+                    or container.executor == "threads"
                 ):
                     try:
                         container.stage.on_end()
@@ -678,7 +679,7 @@ class Pipeline:
         name: str,
         stage: StageType,
         concurrency: int,
-        parallel: bool,
+        executor: ExecutorType,
         retryable_errors: Tuple[Type[Exception], ...],
         max_retries: int,
         backoff: Union[float, int],
@@ -689,7 +690,7 @@ class Pipeline:
         :param name: Stage name
         :param stage: A stage instance
         :param concurrency: Number of concurrent stage executions, if 0 then just create the non-concurrent containers
-        :param parallel: If True use multiprocessing, otherwise threads
+        :param executor: "threads" for using threads, "processes" for using multiprocessing
         :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. When the maximum number of retries is hit, a :class:`.error.exceptions.RetryError` is raised
         :param max_retries: maximum number of retries for the stage before raising a RetryError(SoftError) (default 0)
         :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
@@ -705,7 +706,7 @@ class Pipeline:
                     name, stage, self._error_manager, retry_manager
                 )
             return StageContainer(name, stage, self._error_manager, retry_manager)
-        if parallel:
+        if executor == "processes":
             self._start_logs_receiver()
             logs_queue = self._get_logs_receiver_queue()
             if isinstance(stage, BatchStage):
@@ -718,7 +719,7 @@ class Pipeline:
                     self._new_mp_counter,
                     self._new_mp_event,
                     concurrency,
-                    parallel,
+                    executor,
                     logs_queue,
                 )
             return ConcurrentStageContainer(
@@ -730,7 +731,7 @@ class Pipeline:
                 self._new_mp_counter,
                 self._new_mp_event,
                 concurrency,
-                parallel,
+                executor,
                 logs_queue,
             )
         # if the stage is executed on multiple threads we must finalize initialization once,
@@ -746,7 +747,7 @@ class Pipeline:
                 self._new_counter,
                 self._new_event,
                 concurrency,
-                parallel,
+                executor,
             )
         return ConcurrentStageContainer(
             name,
@@ -757,7 +758,7 @@ class Pipeline:
             self._new_counter,
             self._new_event,
             concurrency,
-            parallel,
+            executor,
         )
 
     def get_stage(self, name: str) -> Optional[StageType]:
@@ -772,7 +773,7 @@ class Pipeline:
         name: str,
         stage: StageType,
         concurrency: int = 0,
-        parallel: bool = False,
+        executor: ExecutorType = "threads",
         retryable_errors: Tuple[Type[Exception], ...] = tuple(),
         max_retries: int = 0,
         backoff: Union[float, int] = 0.0,
@@ -783,7 +784,7 @@ class Pipeline:
         :param name: Name for identify the stage in the pipeline, it is also set in the stage and it must be unique in the pipeline
         :param stage: Instance of a stage
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
-        :param parallel: If True use multiprocessing, otherwise threads
+        :param executor: "threads" for using threads, "processes" for using multiprocessing
         :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. When the maximum number of retries is hit, a :class:`.error.exceptions.RetryError` is raised
         :param max_retries: maximum number of retries for the stage before raising a RetryError(SoftError) (default 0)
         :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
@@ -791,12 +792,12 @@ class Pipeline:
         self._executors_ready = False
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and isinstance(stage, BatchStage):
-            parallel = False
+            executor = "threads"
             concurrency = 1
         self._check_stage_name(name)
         self._check_retries_params(retryable_errors, max_retries, backoff)
         container = self._build_container(
-            name, stage, concurrency, parallel, retryable_errors, max_retries, backoff
+            name, stage, concurrency, executor, retryable_errors, max_retries, backoff
         )
         if concurrency > 0:
             # if it is concurrent and it is the first stage, make the source work on a output queue
@@ -818,7 +819,7 @@ class Pipeline:
         args: Optional[Sequence] = None,
         kwargs: Optional[Mapping] = None,
         concurrency: int = 0,
-        parallel: bool = False,
+        executor: ExecutorType = "threads",
         retryable_errors: Tuple[Type[Exception], ...] = tuple(),
         max_retries: int = 0,
         backoff: Union[float, int] = 0.0,
@@ -832,7 +833,7 @@ class Pipeline:
         :param args: List of arguments for the stage constructor
         :param kwargs: Dictionary of keyed arguments for the stage constructor
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
-        :param parallel: If True use multiprocessing, otherwise threads (also for concurrent construction)
+        :param executor: "threads" for using threads, "processes" for using multiprocessing (also for concurrent construction)
         :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. When the maximum number of retries is hit, a :class:`.error.exceptions.RetryError` is raised
         :param max_retries: maximum number of retries for the stage before raising a RetryError(SoftError) (default 0)
         :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
@@ -842,10 +843,10 @@ class Pipeline:
                 "Must pass stage classes, and not stage instances, as argument"
             )
         self._executors_ready = False
-        parallel_construction = parallel
+        executor_construction = executor
         # FIXME here we force a BatchStage to run on a thread, but we would like to leave it on the main thread
         if concurrency < 1 and issubclass(stage_class, BatchStage):
-            parallel = False
+            executor = "threads"
             concurrency = 1
         if kwargs is None:
             kwargs = {}
@@ -861,13 +862,13 @@ class Pipeline:
         self._containers[name] = self._fake_container
         self._start_logs_receiver()
         logs_queue = self._get_logs_receiver_queue()
-        executor = self._get_init_executor(parallel_construction)
-        if parallel_construction:
-            future = executor.submit(
+        init_executor = self._get_init_executor(executor_construction)
+        if executor_construction == "processes":
+            future = init_executor.submit(
                 _stage_initialization_with_logger, logs_queue, stage_class, args, kwargs
             )
         else:
-            future = executor.submit(stage_class, *args, **kwargs)
+            future = init_executor.submit(stage_class, *args, **kwargs)
 
         def append_stage(stage_future: Future):
             try:
@@ -876,7 +877,7 @@ class Pipeline:
                     name,
                     stage,
                     concurrency,
-                    parallel,
+                    executor,
                     retryable_errors,
                     max_retries,
                     backoff,
@@ -894,14 +895,14 @@ class Pipeline:
     # deprecated
     append_stage_concurrently = append_concurrently
 
-    def _get_init_executor(self, parallel: bool = False) -> Executor:
+    def _get_init_executor(self, executor: ExecutorType = "threads") -> Executor:
         """
         Get a pool executor for concurrent stage initialization
 
-        :param parallel: True if the executor uses multiprocessing, otherwise treads
+        :param executor: "processes" if the executor uses multiprocessing, "threads" otherwise
         """
         if self._init_executor is None:
-            if not parallel:
+            if executor == "threads":
                 self._init_executor = ThreadPoolExecutor(
                     max_workers=self._max_init_workers
                 )

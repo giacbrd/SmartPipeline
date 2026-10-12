@@ -10,7 +10,7 @@ The actual payload lives in :attr:`.Item.data`, a read-only dictionary,
 while :attr:`.Item.metadata` holds auxiliary information such as
 temporary values or descriptors of the item.
 
-If a stage runs on multiple processes (see the ``parallel`` parameter in
+If a stage runs on multiple processes (see the ``executor`` parameter in
 :doc:`concurrency`), items are sent between processes through queues,
 so both ``data`` and ``metadata`` must be serializable with the
 `pickle <https://docs.python.org/3/library/pickle.html>`_ module.
@@ -130,7 +130,7 @@ Stages are added to a :class:`.Pipeline` instance in sequence, with a builder pa
 Each stage needs a unique name, plus an optional concurrency setting.
 ``concurrency`` defaults to 0, which means inline execution.
 A value of 1 or greater makes the stage concurrent.
-Combined with ``parallel=True``, concurrent executions run in separate processes;
+Combined with ``executor="processes"``, concurrent executions run in separate processes;
 otherwise they run in separate threads.
 With concurrency, items travel through queues and may be serialized.
 

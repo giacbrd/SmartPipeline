@@ -5,7 +5,7 @@
 Concurrency and parallelism
 ===========================
 
-This page explains how ``concurrency`` and ``parallel`` work,
+This page explains how ``concurrency`` and ``executor`` work,
 and what a stage must do to run correctly on threads and on processes.
 
 .. figure:: _static/concurrency.png
@@ -19,22 +19,22 @@ and what a stage must do to run correctly on threads and on processes.
    flow diagonally, so the vertical ``now`` slice cuts one item per stage.
 
 ``×N`` is the ``concurrency`` argument of :meth:`.Pipeline.append`
-(threads by default, processes with ``parallel=True``).
+(threads by default, processes with ``executor="processes"``).
 ``concurrency=0`` means inline execution: no workers, no queues, no overlap.
 
 Concurrency vs. parallelism
 ---------------------------
 
 There are three ways to run a stage, selected per stage
-with the ``concurrency`` and ``parallel`` arguments of :meth:`.Pipeline.append`:
+with the ``concurrency`` and ``executor`` arguments of :meth:`.Pipeline.append`:
 
 * ``concurrency=0`` (default): *inline* execution.
   No threads or processes are involved.
   Each item flows through a simple chain of :meth:`.Stage.process` calls.
-* ``concurrency>=1, parallel=False``: the stage runs on ``concurrency`` threads.
+* ``concurrency>=1, executor="threads"`` (default): the stage runs on ``concurrency`` threads.
   Good for I/O-bound work (HTTP calls, file reads, database queries),
   where threads spend most of their time waiting.
-* ``concurrency>=1, parallel=True``: the stage runs on ``concurrency`` processes.
+* ``concurrency>=1, executor="processes"``: the stage runs on ``concurrency`` processes.
   Good for CPU-bound work (text processing, model inference),
   because threads cannot run Python code in parallel
   due to the `GIL <https://en.wikipedia.org/wiki/Global_interpreter_lock>`_.
@@ -44,19 +44,19 @@ and may be pickled.
 A ``BatchStage`` with ``concurrency<1`` is automatically promoted
 to ``concurrency=1`` on threads.
 
-How parallel stages work
+How stages on processes work
 ------------------------
 
 OS processes do not share memory, unlike threads.
 SmartPipeline starts its worker processes with the ``spawn`` method
-and copies each parallel stage into every worker process with
+and copies each process-based stage into every worker process with
 `pickle <https://docs.python.org/3/library/pickle.html>`_.
 Communication between processes also goes through queues,
 which means items are serialized on every hand-off.
 
 Consequences:
 
-* A parallel stage, and everything stored on it, must be picklable.
+* A stage on processes, and everything stored on it, must be picklable.
 * Each worker process owns an independent *copy* of the stage.
   Mutating an attribute in one worker is invisible to the others.
 * Objects that cannot be pickled (open files, sockets, most clients)
@@ -68,7 +68,7 @@ By contrast, a threaded stage exists only once:
 all of its worker threads share the same object,
 so shared attributes need thread-safe access.
 
-Making stages parallel-safe with ``on_start`` and ``on_end``
+Making stages process-safe with ``on_start`` and ``on_end``
 ------------------------------------------------------------
 
 :meth:`.Stage.on_start` initializes a stage *after* it has been copied
@@ -118,12 +118,12 @@ This pattern also avoids copying large data into every process:
 load models, open files, or connect clients lazily in ``on_start``.
 As a rule, whenever an attribute needs special per-process construction,
 create it in ``on_start`` (leaving a ``None`` placeholder in ``__init__``)
-so the stage works in all three modes: inline, threaded, and parallel.
+so the stage works in all three modes: inline, threaded, and on processes.
 
 Per-worker local state
 ----------------------
 
-Because each parallel worker owns a copy of the stage,
+Because each process worker owns a copy of the stage,
 plain instance attributes are a natural *per-worker* state:
 each process accumulates its own values without interfering with the others.
 
@@ -183,7 +183,7 @@ its own independent manager instead of one shared object.
     pipeline = (
         Pipeline()
         .append("counter", SharedCountingStage(shared_stats, shared_lock),
-                concurrency=4, parallel=True)
+                concurrency=4, executor="processes")
         .build()
     )
 
@@ -210,7 +210,7 @@ In most pipelines shared mutable state is a sign that the work can be reorganize
 Reach for a ``Manager`` only for small, low-frequency coordination
 (e.g. a global progress counter), not for per-item hot paths.
 
-Logging in parallel stages
+Logging in stages on processes
 --------------------------
 
 Worker processes do not inherit the parent logging configuration

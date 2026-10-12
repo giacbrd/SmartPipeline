@@ -75,7 +75,7 @@ def test_critical_errors(caplog):
 
 
 def test_source_errors():
-    for concurrency, parallel in ((0, False), (2, False), (2, True)):
+    for concurrency, executor in ((0, "threads"), (2, "threads"), (2, "processes")):
         source = ErrorSource()
         pipeline = (
             Pipeline()
@@ -84,7 +84,7 @@ def test_source_errors():
                 "text_generator",
                 TextGenerator(),
                 concurrency=concurrency,
-                parallel=parallel,
+                executor=executor,
             )
             .build()
         )
