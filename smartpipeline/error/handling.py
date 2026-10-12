@@ -43,12 +43,20 @@ class ErrorManager:
         The error manager in the executor is a copy of the original,
         by overriding this method one can initialize variables specifically for the copies, that is mandatory
         when they are not serializable.
+
+        Any exception raised here is fatal for the whole pipeline and is
+        reported to the pipeline caller (on `build()`/`run()`) instead of
+        hanging the execution without feedback.
         """
         pass
 
     def on_end(self) -> Any:
         """
         Called when the pipeline terminates, useful for executing closing operations (e.g. on files)
+
+        Any exception raised here is fatal for the whole pipeline and is
+        reported to the pipeline caller on termination instead of hanging
+        the execution without feedback.
         """
         pass
 

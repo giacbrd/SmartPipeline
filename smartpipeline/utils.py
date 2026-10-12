@@ -9,7 +9,7 @@ from queue import Queue
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
-from typing import Any, Callable, Optional, OrderedDict
+from typing import Any, Callable, Optional, OrderedDict, Sequence
 
 from smartpipeline.defaults import CONCURRENCY_WAIT, LOGS_STOP_TIMEOUT
 from smartpipeline.item import Item
@@ -18,6 +18,21 @@ from smartpipeline.stage import ItemsQueue
 
 def last_key(ordered_dict: OrderedDict[str, Any]) -> str:
     return next(reversed(ordered_dict.keys()))
+
+
+def raise_collected_errors(errors: Sequence[Exception], message: str) -> None:
+    """
+    Report collected fatal errors without ever hanging silently.
+
+    A single error is re-raised unchanged, so callers keep seeing the original
+    exception type; several errors are grouped into one `ExceptionGroup` so none
+    is lost. Does nothing when there are no errors.
+    """
+    if not errors:
+        return
+    if len(errors) == 1:
+        raise errors[0]
+    raise ExceptionGroup(message, errors)
 
 
 def put_or_abort(

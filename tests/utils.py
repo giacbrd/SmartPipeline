@@ -287,6 +287,51 @@ class ErrorSerializableStage(Stage):
         return item
 
 
+class BrokenOnEndStage(Stage):
+    def process(self, item: Item):
+        return item
+
+    def on_end(self):
+        raise RuntimeError("test on_end failure")
+
+
+class BrokenOnEndBatchStage(BatchStage):
+    def __init__(self, size: int = 10, timeout: float = 0.1):
+        super().__init__(size, timeout)
+
+    def process_batch(self, items):
+        return items
+
+    def on_end(self):
+        raise RuntimeError("test batch on_end failure")
+
+
+class BrokenProcessAndEndStage(Stage):
+    def process(self, item: Item):
+        raise ValueError("test process failure")
+
+    def on_end(self):
+        raise RuntimeError("test on_end failure")
+
+
+class BrokenInitStage(Stage):
+    def __init__(self):
+        raise RuntimeError("test init failure")
+
+    def process(self, item: Item):
+        return item
+
+
+class BrokenOnStartErrorManager(ErrorManager):
+    def on_start(self):
+        raise RuntimeError("test error manager on_start failure")
+
+
+class BrokenOnEndErrorManager(ErrorManager):
+    def on_end(self):
+        raise RuntimeError("test error manager on_end failure")
+
+
 class SerializableErrorManager(ErrorManager):
     def __init__(self):
         self._file = None
