@@ -12,7 +12,7 @@ Use the repo venv binaries (`.venv`, Python 3.14; has pytest, flake8, mypy, blac
 ```bash
 # tests (always run from repo root: tests/ is a package and imports use `from tests.utils import ...`)
 .venv/bin/python -m pytest -q
-.venv/bin/python -m pytest -q tests/pipeline/test_concurrent.py::test_errors   # single test
+.venv/bin/python -m pytest -q tests/pipeline/test_concurrent.py::test_concurrency_errors   # single test
 .venv/bin/python -m pytest -q --durations=10 tests/          # find slow tests
 
 # CI order is: flake8 -> mypy -> pytest
@@ -22,9 +22,9 @@ Use the repo venv binaries (`.venv`, Python 3.14; has pytest, flake8, mypy, blac
 .venv/bin/coverage run -m pytest -v   # CI entrypoint
 ```
 
-CI (`.github/workflows/tests.yml`) runs **flake8 → mypy → coverage/pytest** on Python 3.9–3.14
-after `ulimit -n 8192`. Keep code 3.9-compatible even though `setup.py` advertises up to 3.14:
-no `match`, no PEP 604 unions except under `from __future__ import annotations`.
+CI (`.github/workflows/tests.yml`) runs **flake8 → mypy → coverage/pytest** on Python 3.12–3.14
+after `ulimit -n 8192`. `setup.py` requires `python_requires=">=3.12"`, so modern syntax
+(`ExceptionGroup`, builtin generics like `list[...]`) is fine.
 
 **The suite is slow (minutes), not because of heavy setup but because concurrency tests spawn real
 processes and sleep.** `tests/pipeline/test_concurrent.py` and `test_batch_concurrent.py` use
@@ -39,11 +39,15 @@ pipeline behaviour.
   `append_concurrently()` (stage **class** + `args`/`kwargs`, rejects instances), `set_source()`,
   `set_error_manager()`, `build()`, `run()`, `process()`/`process_async()`/`get_item()`/`stop()`.
 - `smartpipeline/containers.py` — per-stage wiring objects: `SourceContainer`, `StageContainer`,
-  `BatchStageContainer`, `ConcurrentStageContainer`, `BatchConcurrentStageContainer`. `build()` blocks
+  `BatchStageContainer`, `ConcurrentStageContainer`, `BatchConcurrentStageContainer`
+  (grouped as `ConcurrentContainerTypes` for `isinstance` checks). `build()` blocks
   in `_wait_executors` until stage construction and container linking finish, then sets the shared
   fatal event and starts concurrent runners.
 - `smartpipeline/runners.py` — the actual worker loops (`process`, `process_batch`, `stage_runner`,
-  `batch_stage_runner`).
+  `batch_stage_runner`) plus lifecycle helpers (`OnEndErrors`, `_call_on_start`,
+  `_call_on_end_best_effort`, `_raise_on_end_errors`). Collected fatal errors are reported via
+  `raise_collected_errors` (`smartpipeline/utils.py`): a single error is re-raised unchanged,
+  several become an `ExceptionGroup`.
 - `smartpipeline/stage.py` — `Source` (`pop()` + `self.stop()`), `Stage` (`process`), `BatchStage`
   (`process_batch`, `__init__(size, timeout)`), plus `AliveMixin` (name/logger) and `ConstructorMixin`
   (`on_start`/`on_end`).
@@ -63,14 +67,25 @@ pipeline behaviour.
 ## Non-obvious invariants
 
 - **`build()` must be called after appending and before `run()`/`process()`**; it blocks until all
-  stages finish initializing and raises `ValueError` if no stage was appended. `run()` raises
-  `ValueError` if no source was set. Stage names must be unique.
+  stages finish initializing and raises `ValueError` if no stage was appended. `append_concurrently()`
+  construction/`on_start` failures are stored from their done-callbacks and raised from `build()`
+  (single error as-is, several as `ExceptionGroup`), never silently replaced by the fake container.
+  `run()` raises `ValueError` if no source was set. Stage names must be unique.
 - **`concurrency=0` means inline execution** (no thread/process). A `BatchStage` with `concurrency < 1`
   is silently forced to `concurrency=1, parallel=False` (two `FIXME`s in `pipeline.py`: `append` and
   `append_concurrently`).
 - **`parallel=True` uses the `spawn` start method and stage instances are copied into workers.** Anything
   non-picklable (files, sockets, models) must be created in `on_start()`, not `__init__` — see
   `SerializableStage`/`SerializableErrorManager` in `tests/utils.py` for the pattern.
+- **`on_start`/`on_end` failures are fatal and bypass `ErrorManager`.** There is no `Item` to
+  attach them to, so they are never soft/critical-filtered or retried: workers set the shared
+  fatal event and the original exception reaches the caller — `on_start` via `build()`
+  (inline/threaded `on_start` can also raise from `append()`), `on_end` via `run()` termination.
+  A single failure is re-raised as-is, several become an `ExceptionGroup`. `_terminate_all` is
+  best-effort (every stage's `on_end` is attempted, worker errors collected via `check_errors()`)
+  and the background terminator thread's error is re-raised in the main `run()` loop — never let
+  termination die silently or the pipeline hangs with no feedback. On the `process()` error path,
+  `on_end` failures are logged and the original processing error is kept, not masked.
 - **All cross-process state goes through one `multiprocessing.Manager()`** (`SyncManager`): queues,
   events, counters. This is deliberate (see the comment in `pipeline._new_mp_queue` explaining why not
   `multiprocessing.Queue`). Don't swap in raw mp primitives.
@@ -104,3 +119,6 @@ and a `CHANGELOG.md` entry. Deprecated aliases still exist and must be kept work
 - Never consume `pipeline.run()` directly in a test: a stuck pipeline hangs the suite. Use
   `tests/utils.py:run_with_timeout(pipeline)`, which fails the test instead of hanging.
 - Annotate new public functions — the package ships `py.typed` and CI runs `mypy`.
+- The venv's `black` (26.x) is newer than the pre-commit pin (23.7.0): running `black .` can
+  reformat unrelated files and collapse stub `...` bodies in ways flake8 (E704) rejects. Check
+  `git status` after formatting and revert unrelated hunks.

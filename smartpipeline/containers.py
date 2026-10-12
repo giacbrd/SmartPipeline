@@ -629,10 +629,7 @@ class ConcurrentContainer(FatalEventMixin, InQueued, ConnectedStageMixin):
     def set_previous(self, container: BaseContainer):
         self._previous = container
         if (
-            isinstance(
-                self._previous,
-                (ConcurrentStageContainer, BatchConcurrentStageContainer),
-            )
+            isinstance(self._previous, ConcurrentContainerTypes)
             and self._previous.parallel
         ):
             # give priority to the previous queue initializer
@@ -744,10 +741,16 @@ class ConcurrentContainer(FatalEventMixin, InQueued, ConnectedStageMixin):
                     fatal_event=self._fatal_event,
                 )
             )
-        # wait every runner internal loops have started
-        while self._has_started_counter.value < self._concurrency:
-            self.check_errors()
-            time.sleep(loop_wait)
+        # wait every runner internal loops have started, surfacing runner
+        # failures (e.g. `on_start`) instead of hanging without feedback
+        try:
+            while self._has_started_counter.value < self._concurrency:
+                self.check_errors()
+                time.sleep(loop_wait)
+        except BaseException:
+            self._terminate_event.set()
+            self.shutdown()
+            raise
 
 
 class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
@@ -865,3 +868,8 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
 
 
 ContainerType = Union[StageContainer, BatchStageContainer]
+# The concrete concurrent stage containers, for `isinstance` checks and annotations
+ConcurrentContainerTypes = (
+    ConcurrentStageContainer,
+    BatchConcurrentStageContainer,
+)

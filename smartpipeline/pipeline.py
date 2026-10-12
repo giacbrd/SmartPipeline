@@ -20,7 +20,7 @@ from typing import Sequence, Tuple, Type, Union
 from smartpipeline.containers import (
     BatchConcurrentStageContainer,
     BatchStageContainer,
-    ConcurrentContainer,
+    ConcurrentContainerTypes,
     ConcurrentStageContainer,
     ConnectedStageMixin,
     ContainerType,
@@ -31,7 +31,13 @@ from smartpipeline.defaults import CONCURRENCY_WAIT, MAX_QUEUES_SIZE
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import Item, Stop
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage, StageType
-from smartpipeline.utils import LogsReceiver, ProcessCounter, ThreadCounter, last_key
+from smartpipeline.utils import (
+    LogsReceiver,
+    ProcessCounter,
+    ThreadCounter,
+    last_key,
+    raise_collected_errors,
+)
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -89,6 +95,9 @@ class Pipeline:
         self._fake_container = StageContainer(
             f"FakeContainerOf{self._name}", EmptyStage(), ErrorManager(), RetryManager()
         )
+        # failures of concurrent stage constructions (`append_concurrently`),
+        # callbacks run in other threads so errors are stored and raised on `build()`
+        self._init_errors: list[Exception] = []
 
     def _start_logs_receiver(self) -> LogsReceiver:
         if self._logs_receiver is None:
@@ -179,29 +188,52 @@ class Pipeline:
         Wait for all containers to start
 
         :param wait_seconds: Recurrently wait these seconds for all stage initializers to finish
+        :raises Exception: Whatever exception has been raised by a stage construction
+            or by an `on_start` lifecycle hook, instead of hanging without feedback
         """
         if self._executors_ready:
             return
         if self._init_executor is not None:
             self._init_executor.shutdown(wait=True)
             self._init_executor = None
-        while not all(self._containers.values()):
+        while any(
+            container is self._fake_container for container in self._containers.values()
+        ):
+            if self._init_errors:
+                break
             time.sleep(wait_seconds)
         if self._wait_previous_executor is not None:
             self._wait_previous_executor.shutdown(wait=True)
             self._wait_previous_executor = None
+        if self._init_errors:
+            errors = list(self._init_errors)
+            self._init_errors.clear()
+            raise_collected_errors(errors, "pipeline stage initialization failed")
         # all the containers are now ready, we can share the event which alerts a stage runner error
         self._fatal_event = self._new_shared_event()
         self._source_container.set_fatal_event(self._fatal_event)
         for name, container in self._containers.items():
             container.set_fatal_event(self._fatal_event)
-        for name, container in self._containers.items():
-            if isinstance(
-                container, (ConcurrentStageContainer, BatchConcurrentStageContainer)
-            ):
-                container.run()
-        # finalize initialization of the error manager shared by this and other stage threads
-        self._error_manager.on_start()
+        try:
+            for name, container in self._containers.items():
+                if isinstance(container, ConcurrentContainerTypes):
+                    container.run()
+            # finalize initialization of the error manager shared by this and other stage threads
+            self._error_manager.on_start()
+        except BaseException:
+            # runners are already started, stop them instead of leaking executions
+            # which would hang any later wait on queues or termination
+            for container in self._containers.values():
+                if isinstance(container, ConcurrentContainerTypes):
+                    try:
+                        container.terminate()
+                    except BaseException:
+                        pass
+            try:
+                self.shutdown()
+            except BaseException:
+                pass
+            raise
         self._executors_ready = True
         self._logger.debug("Pipeline ready to run")
 
@@ -215,9 +247,7 @@ class Pipeline:
         if self._init_executor is not None:
             self._init_executor.shutdown()
         for name, container in self._containers.items():
-            if isinstance(
-                container, (ConcurrentStageContainer, BatchConcurrentStageContainer)
-            ):
+            if isinstance(container, ConcurrentContainerTypes):
                 container.shutdown()
         if self._sync_manager is not None:
             self._sync_manager.shutdown()
@@ -246,9 +276,7 @@ class Pipeline:
         :raises Exception: Whatever exception has been raised by a stage runner
         """
         for container in self._containers.values():
-            if isinstance(
-                container, (ConcurrentStageContainer, BatchConcurrentStageContainer)
-            ):
+            if isinstance(container, ConcurrentContainerTypes):
                 container.check_errors()
 
     def _exit_run(
@@ -289,6 +317,11 @@ class Pipeline:
         counter = 0
         last_stage_name = self._last_stage_name()
         terminator_thread = None
+        terminator_errors: list[Exception] = []
+
+        def _raise_terminator_error() -> None:
+            raise_collected_errors(terminator_errors, "pipeline termination failed")
+
         source_errors_queue: Optional[Queue[Exception]] = None
         source_thread = None
         # in case the first stage is concurrent
@@ -311,10 +344,7 @@ class Pipeline:
                         if source_error is not None:
                             raise source_error
                     # concurrent stages run by themselves in threads/processes
-                    if not isinstance(
-                        container,
-                        (ConcurrentStageContainer, BatchConcurrentStageContainer),
-                    ):
+                    if not isinstance(container, ConcurrentContainerTypes):
                         container.process()
                         # a put is aborted only when terminated or when a stage runner
                         # failed, in the latter case we raise its exception
@@ -348,11 +378,24 @@ class Pipeline:
                             elif (
                                 not self._all_terminated() and terminator_thread is None
                             ):
-                                terminator_thread = Thread(target=self._terminate_all)
+
+                                def _terminator():
+                                    try:
+                                        self._terminate_all()
+                                    except Exception as e:
+                                        # the thread would die silently, store the error
+                                        # so the main loop raises it instead of hanging
+                                        terminator_errors.append(e)
+
+                                terminator_thread = Thread(target=_terminator)
                                 terminator_thread.start()
                 except Exception as e:
                     self._exit_run(source_thread, terminator_thread)
                     raise e
+            # a failed termination must surface instead of hanging the run loop
+            if terminator_errors:
+                self._exit_run(source_thread, terminator_thread)
+                _raise_terminator_error()
             # exit the loop only when all items have been returned
             if self._all_empty() and counter >= self._source_container.count():
                 if source_thread is not None:
@@ -360,6 +403,8 @@ class Pipeline:
                 if terminator_thread is not None:
                     terminator_thread.join()
                     self.shutdown()
+                    if terminator_errors:
+                        _raise_terminator_error()
                 return
 
     @property
@@ -377,32 +422,60 @@ class Pipeline:
         """
         Terminate all running containers
 
+        `on_end` lifecycle hooks are always attempted on every stage, errors are
+        collected and raised at the end (as an `ExceptionGroup` when more than
+        one) instead of aborting termination midway and hanging the pipeline
+        without feedback.
+
         :param force: If True do not wait for a container to process all items produced by the source
         :param wait_seconds: Time to wait before pinging again a container for its termination
         """
         self._logger.debug("Terminating the pipeline")
+        errors: list[Exception] = []
         # scroll the pipeline by its order (this is critical for correctness)
         # and terminate stages after the relative queues are empty
-        for container in self._containers.values():
-            if not force:
-                self._wait_for_stopped(container, wait_seconds)
-            container.terminate()
-            if isinstance(container, ConcurrentContainer):
-                if force:
-                    # empty the queues and make the container check that is terminated
-                    container.empty_queues()
-                while not container.is_terminated():
-                    time.sleep(wait_seconds)
-                if force:
-                    # empty the queues, losing all remaining pending items
-                    container.empty_queues()
-                container.queues_join()
-                while not container.queues_empty():
-                    time.sleep(wait_seconds)
-            if not isinstance(container, ConcurrentContainer) or not container.parallel:
-                container.stage.on_end()
-        self._error_manager.on_end()
+        for name, container in self._containers.items():
+            try:
+                if not force:
+                    self._wait_for_stopped(container, wait_seconds)
+                container.terminate()
+                if isinstance(container, ConcurrentContainerTypes):
+                    if force:
+                        # empty the queues and make the container check that is terminated
+                        container.empty_queues()
+                    while not container.is_terminated():
+                        time.sleep(wait_seconds)
+                    if force:
+                        # empty the queues, losing all remaining pending items
+                        container.empty_queues()
+                    container.queues_join()
+                    while not container.queues_empty():
+                        time.sleep(wait_seconds)
+                    try:
+                        container.check_errors()
+                    except Exception as e:
+                        self._logger.exception(
+                            "Concurrent stage %s failed on termination", name
+                        )
+                        errors.append(e)
+                if (
+                    not isinstance(container, ConcurrentContainerTypes)
+                    or not container.parallel
+                ):
+                    try:
+                        container.stage.on_end()
+                    except Exception as e:
+                        self._logger.exception("Stage %s failed on_end", name)
+                        errors.append(e)
+            except Exception as e:
+                errors.append(e)
+        try:
+            self._error_manager.on_end()
+        except Exception as e:
+            self._logger.exception("Error manager failed on_end")
+            errors.append(e)
         self._stop_logs_receiver()
+        raise_collected_errors(errors, "pipeline termination failed")
         self._logger.debug("Termination done")
 
     def _wait_for_stopped(
@@ -418,7 +491,7 @@ class Pipeline:
         :param container: The container to wait for
         :param wait_seconds: Time to wait before pinging again the container
         """
-        if isinstance(container, ConcurrentContainer):
+        if isinstance(container, ConcurrentContainerTypes):
             # concurrent containers don't get the `Stop` item, their runners end by themselves
             # as soon as the termination is set and their input queue is empty
             return
@@ -438,9 +511,7 @@ class Pipeline:
         return self._all_terminated() and all(
             container.queues_empty()
             for container in self._containers.values()
-            if isinstance(
-                container, (ConcurrentStageContainer, BatchConcurrentStageContainer)
-            )
+            if isinstance(container, ConcurrentContainerTypes)
         )
 
     def _get_processed_or_abort(self, container: ContainerType) -> Optional[Item]:
@@ -588,8 +659,13 @@ class Pipeline:
 
         def _waiter():
             if last_stage_name is not None:
-                while self._containers[last_stage_name] is self._fake_container:
+                while (
+                    self._containers[last_stage_name] is self._fake_container
+                    and not self._init_errors
+                ):
                     time.sleep(wait_seconds)
+                if self._init_errors:
+                    return
                 container.set_previous(self._containers[last_stage_name])
             else:
                 container.set_previous(self._source_container)
@@ -794,18 +870,23 @@ class Pipeline:
             future = executor.submit(stage_class, *args, **kwargs)
 
         def append_stage(stage_future: Future):
-            stage = stage_future.result()
-            container = self._build_container(
-                name,
-                stage,
-                concurrency,
-                parallel,
-                retryable_errors,
-                max_retries,
-                backoff,
-            )
-            self._wait_for_previous(container, last_stage_name)
-            self._containers[name] = container
+            try:
+                stage = stage_future.result()
+                container = self._build_container(
+                    name,
+                    stage,
+                    concurrency,
+                    parallel,
+                    retryable_errors,
+                    max_retries,
+                    backoff,
+                )
+                self._wait_for_previous(container, last_stage_name)
+                self._containers[name] = container
+            except Exception as e:
+                # done callbacks swallow exceptions, store it so `build()`
+                # raises it instead of running a fake stage without feedback
+                self._init_errors.append(e)
 
         future.add_done_callback(append_stage)
         return self

@@ -5,20 +5,127 @@ import queue
 import time
 from logging.handlers import QueueHandler
 from threading import Event
-from typing import Callable, List, Optional, Protocol, Sequence, TypeVar
+from typing import Callable, List, NamedTuple, Optional, Protocol, Sequence, TypeVar
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import Item, Stop
 from smartpipeline.stage import BatchStage, ItemsQueue, Stage, StageType
-from smartpipeline.utils import ConcurrentCounter, ProcessCounter, put_or_abort
+from smartpipeline.utils import (
+    ConcurrentCounter,
+    ProcessCounter,
+    put_or_abort,
+    raise_collected_errors,
+)
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 StageTypeContravariant = TypeVar(
     "StageTypeContravariant", bound=StageType, contravariant=True
 )
+
+
+def _setup_process_logging(
+    logs_queue: Optional[queue.Queue[logging.LogRecord]],
+) -> None:
+    """Forward worker process logs to the main process through `logs_queue`."""
+    if logs_queue is None:
+        return
+    root_logger = logging.getLogger()
+    # only by comparing string of queues we obtain their "original" address
+    if not any(
+        isinstance(handler, QueueHandler) and str(handler.queue) == str(logs_queue)
+        for handler in root_logger.handlers
+    ):
+        root_logger.addHandler(QueueHandler(logs_queue))
+
+
+def _call_on_start(
+    error_manager: ErrorManager,
+    stage: StageType,
+    fatal_event: Optional[Event] = None,
+) -> None:
+    """
+    Run `on_start` lifecycle hooks of a worker copy.
+
+    Any failure is fatal for the whole pipeline: waiting executions must be
+    unblocked through `fatal_event` and the caller must see the exception
+    instead of hanging without feedback.
+    """
+    try:
+        # call these only if the stage and the error manager are copies of the original,
+        # ergo this executor is running in a child process
+        error_manager.on_start()
+        stage.on_start()
+    except Exception:
+        stage.logger.exception("%s failed on_start", stage)
+        if fatal_event is not None:
+            fatal_event.set()
+        raise
+
+
+class OnEndErrors(NamedTuple):
+    """
+    Best-effort outcome of the two `on_end` lifecycle hooks of a worker copy.
+
+    Each field holds the exception raised by that hook, or None when it succeeded.
+    There are exactly two slots — one per hook — so use `exceptions` to get the
+    raised errors instead of treating this as an arbitrary list.
+    """
+
+    error_manager_error: Optional[Exception]
+    stage_error: Optional[Exception]
+
+    @property
+    def exceptions(self) -> list[Exception]:
+        """The raised errors, error-manager first, skipping hooks that succeeded."""
+        return [
+            error
+            for error in (self.error_manager_error, self.stage_error)
+            if error is not None
+        ]
+
+    def __bool__(self) -> bool:
+        return self.error_manager_error is not None or self.stage_error is not None
+
+
+def _call_on_end_best_effort(
+    error_manager: ErrorManager,
+    stage: StageType,
+) -> OnEndErrors:
+    """
+    Run `on_end` lifecycle hooks attempting both, never raising.
+
+    :return: The per-hook outcome, with an error in a slot when that hook failed
+    """
+    try:
+        error_manager.on_end()
+    except Exception as e:
+        error_manager_error: Optional[Exception] = e
+    else:
+        error_manager_error = None
+    try:
+        stage.on_end()
+    except Exception as e:
+        stage_error: Optional[Exception] = e
+    else:
+        stage_error = None
+    return OnEndErrors(error_manager_error, stage_error)
+
+
+def _raise_on_end_errors(
+    result: OnEndErrors,
+    stage: StageType,
+    fatal_event: Optional[Event] = None,
+) -> None:
+    """Report `on_end` failures as fatal pipeline errors."""
+    if not result:
+        return
+    stage.logger.exception("%s failed on_end", stage)
+    if fatal_event is not None:
+        fatal_event.set()
+    raise_collected_errors(result.exceptions, f"{stage} failed on_end")
 
 
 def process(
@@ -177,26 +284,17 @@ def stage_runner(
     if fatal_event is not None:
         guards.append(fatal_event.is_set)
     if on_multiprocess:
-        if logs_queue is not None:
-            root_logger = logging.getLogger()
-            # only by comparing string of queues we obtain their "original" address
-            if not any(
-                isinstance(handler, QueueHandler)
-                and str(handler.queue) == str(logs_queue)
-                for handler in root_logger.handlers
-            ):
-                handler = QueueHandler(logs_queue)
-                root_logger.addHandler(handler)
-        # call these only if the stage and the error manager are copies of the original,
-        # ergo this executor is running in a child process
-        error_manager.on_start()
-        stage.on_start()
+        _setup_process_logging(logs_queue)
+        _call_on_start(error_manager, stage, fatal_event)
     has_started_counter += 1
     while True:
         if terminated.is_set() and in_queue.empty():
             if on_multiprocess:
-                error_manager.on_end()
-                stage.on_end()
+                _raise_on_end_errors(
+                    _call_on_end_best_effort(error_manager, stage),
+                    stage,
+                    fatal_event,
+                )
             return
         try:
             item = in_queue.get(block=True, timeout=CONCURRENCY_WAIT)
@@ -210,15 +308,22 @@ def stage_runner(
         elif item is not None:
             try:
                 item = process(stage, item, error_manager, retry_manager)
-            except Exception as e:
+            except Exception:
                 # alert any other execution blocked on a queue that this runner is not
                 # able to consume items anymore
                 if fatal_event is not None:
                     fatal_event.set()
                 if on_multiprocess:
-                    error_manager.on_end()
-                    stage.on_end()
-                raise e
+                    # best effort closing, the original processing error is kept
+                    for end_error in _call_on_end_best_effort(
+                        error_manager, stage
+                    ).exceptions:
+                        stage.logger.exception(
+                            "%s failed on_end after a processing error",
+                            stage,
+                            exc_info=end_error,
+                        )
+                raise
             else:
                 aborted = False
                 if item is not None:
@@ -258,26 +363,17 @@ def batch_stage_runner(
     if fatal_event is not None:
         guards.append(fatal_event.is_set)
     if on_multiprocess:
-        if logs_queue is not None:
-            root_logger = logging.getLogger()
-            # only by comparing string of queues we obtain their "original" address
-            if not any(
-                isinstance(handler, QueueHandler)
-                and str(handler.queue) == str(logs_queue)
-                for handler in root_logger.handlers
-            ):
-                handler = QueueHandler(logs_queue)
-                root_logger.addHandler(handler)
-        # call these only if the stage and the error manager are copies of the original,
-        # ergo this executor is running in a child process
-        error_manager.on_start()
-        stage.on_start()
+        _setup_process_logging(logs_queue)
+        _call_on_start(error_manager, stage, fatal_event)
     has_started_counter += 1
     while True:
         if terminated.is_set() and in_queue.empty():
             if on_multiprocess:
-                error_manager.on_end()
-                stage.on_end()
+                _raise_on_end_errors(
+                    _call_on_end_best_effort(error_manager, stage),
+                    stage,
+                    fatal_event,
+                )
             return
         items: List[Item] = []
         got_stop = False
@@ -302,15 +398,22 @@ def batch_stage_runner(
                 processed_items = process_batch(
                     stage, items, error_manager, retry_manager
                 )
-            except Exception as e:
+            except Exception:
                 # alert any other execution blocked on a queue that this runner is not
                 # able to consume items anymore
                 if fatal_event is not None:
                     fatal_event.set()
                 if on_multiprocess:
-                    error_manager.on_end()
-                    stage.on_end()
-                raise e
+                    # best effort closing, the original processing error is kept
+                    for end_error in _call_on_end_best_effort(
+                        error_manager, stage
+                    ).exceptions:
+                        stage.logger.exception(
+                            "%s failed on_end after a processing error",
+                            stage,
+                            exc_info=end_error,
+                        )
+                raise
             else:
                 for final_item in processed_items:
                     if final_item is not None:

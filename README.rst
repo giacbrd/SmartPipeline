@@ -135,5 +135,5 @@ AI agents note
 ~~~~~~~~~~~~~~
 
 Since October 2026 the codebase development is supported by LLM code agents,
-strictly using open-source tools and open-weight models,
+strictly using open-source tools and open-weight or free models,
 always human reviewed.
