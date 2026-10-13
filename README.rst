@@ -23,20 +23,18 @@ A framework for rapid development of robust data pipelines following a simple de
 
 .. documentation-marker
 
-SmartPipeline gives you the tools to design and formalize simple data pipelines,
-in which tasks are sequentially encapsulated in pipeline stages.
+SmartPipeline gives you the tools to design simple data pipelines,
+in which each task is encapsulated in a pipeline stage.
 
-It is straightforward to implement pipelines,
-but they are deeply customizable:
-stages can run concurrently and scale on heavy tasks,
-they can process batch of items at once,
-moreover executions and errors can be monitored easily.
+It is straightforward to implement a pipeline,
+but stages are deeply customizable:
+they follow a producer-consumer pattern and can run concurrently to scale heavy tasks,
+they can process batches of items at once,
+and executions and errors can be monitored easily.
 
-It is a framework for engineering sequences of data operations
-and making them concurrent, following an optimized but transparent producer-consumer pattern.
-An excellent solution for fast and clean data analysis prototypes (small/medium projects and POC)
-but also for production code, as an alternative to plain scripts.
-Consider it as a solution for problems where big task queues and workflow frameworks are overkill.
+It is a good fit for fast and clean data analysis prototypes (small/medium projects and POCs),
+as well as production code, as an alternative to plain scripts.
+Use it when big task queues and workflow frameworks are overkill.
 No dependencies are required.
 
 Install
@@ -51,26 +49,39 @@ Install from PyPI, no dependencies will be installed:
 Writing your pipeline
 ~~~~~~~~~~~~~~~~~~~~~
 
-SmartPipeline is designed to help the developer following best practices,
-the design is based on industrial experience on data products.
+SmartPipeline is designed to help the developer follow best practices,
+the design is based on industrial experience with data products.
 
 SmartPipeline focuses on simplicity and efficiency in handling data locally,
 i.e. serialization and copies of the data are minimized.
 
 Main features:
 
-- Define a pipeline object as a sequence of stateful stage objects,
-  optionally set a source on which the pipeline iterates.
-- A pipeline can run indefinitely on the source or it can be used to process single items.
-- Concurrency can be set independently for each stage and single items can be processed asynchronously.
-- A stage can be designed for processing batches, i.e. sequences of consecutive items, at once.
-- Custom error handling can be set for logging and monitoring at stage level.
+- Define a pipeline as a sequence of stateful stages,
+  optionally with a source the pipeline iterates over.
+- Run the pipeline over the source, indefinitely if needed,
+  or use it to process single items.
+- Set concurrency independently for each stage,
+  and process single items asynchronously.
+- Design stages that process batches, i.e. groups of consecutive items, at once.
+- Customize error handling for logging and monitoring at stage level.
 
-An example of a trivial pipeline for retrieving news from a feed
-and generating text embeddings of the raw pages content.
+For example, this pipeline retrieves news from a feed
+and generates text embeddings of the page contents.
 We define the source of the data and two stages, then we build and run the pipeline.
 
 .. code-block:: python
+
+    import re
+
+    import feedparser
+    import requests
+    from sentence_transformers import SentenceTransformer
+
+    from smartpipeline.item import Item
+    from smartpipeline.pipeline import Pipeline
+    from smartpipeline.stage import BatchStage, Source, Stage
+
 
     class FeedReader(Source):
         def __init__(self):
@@ -79,13 +90,13 @@ We define the source of the data and two stages, then we build and run the pipel
 
         # pop method generates a new data item when called
         def pop(self):
-            # each call of pop consumes an url to send to the pipeline
+            # each call of pop consumes a URL to send to the pipeline
             url = next(self.urls, None)
             if url is not None:
                 item = Item()
                 item.data["url"] = url
                 return item
-            # when all urls are consumed we stop the pipeline
+            # when all URLs are consumed we stop the pipeline
             else:
                 self.stop()
 
@@ -93,7 +104,7 @@ We define the source of the data and two stages, then we build and run the pipel
     class NewsRetrieve(Stage):
         def process(self, item):
             # add the page content to each item,
-            # http errors will be implicitly handled by the pipeline error manager
+            # HTTP errors are handled by the pipeline error manager
             html = requests.get(item.data["url"]).text
             item.data["content"] = re.sub('<.*?>', '', html).strip()
             return item
@@ -105,7 +116,7 @@ We define the source of the data and two stages, then we build and run the pipel
             self.model = SentenceTransformer("all-MiniLM-L6-v2")
 
         def process_batch(self, items):
-            # efficiently compute embeddings by batching pages texts,
+            # efficiently compute embeddings by batching page texts,
             # instead of processing one page at a time
             vectors = self.model.encode([item.data["content"] for item in items])
             for vector, item in zip(vectors, items):
@@ -116,7 +127,7 @@ We define the source of the data and two stages, then we build and run the pipel
     pipeline = (
         Pipeline()
         .set_source(FeedReader())
-        # by using multi-thread (default) concurrency we speed up multiple http calls
+        # with threads (the default) we speed up the multiple HTTP calls
         .append("retriever", NewsRetrieve(), concurrency=4)
         # each batch of items to vectorize will be of size 10
         .append("vectorizer", NewsEmbedding(size=10))
@@ -127,7 +138,7 @@ We define the source of the data and two stages, then we build and run the pipel
     for item in pipeline.run():
         print(item)
 
-`Read the documentation <https://smartpipeline.readthedocs.io>`_ for an exhaustive guide.
+`Read the documentation <https://smartpipeline.readthedocs.io>`_ for the full guide.
 
 The `examples` folder contains full working sample pipelines.
 
