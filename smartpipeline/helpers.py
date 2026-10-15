@@ -1,5 +1,5 @@
 import os
-from typing import Any, Generator, Optional
+from typing import Any, Dict, Generator, Optional
 
 from smartpipeline.item import Item
 from smartpipeline.stage import Source
@@ -7,7 +7,7 @@ from smartpipeline.stage import Source
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
-class LocalFilesSource(Source):
+class LocalFilesSource(Source[Dict[str, Any]]):
     """
     Generate a special file item for any file found in a directory
     """
@@ -22,7 +22,7 @@ class LocalFilesSource(Source):
             if fname.endswith(self.postfix) and not fname.startswith("."):
                 yield os.path.join(self.dir_path, fname)
 
-    def pop(self) -> Optional[Item]:
+    def pop(self) -> Optional[Item[Dict[str, Any]]]:
         file_path = next(self._iterator, None)
         if file_path:
             item = FilePathItem(file_path)
@@ -32,13 +32,13 @@ class LocalFilesSource(Source):
             return None
 
 
-class FilePathItem(Item):
+class FilePathItem(Item[Dict[str, Any]]):
     """
     An item with a pointer to a file path
     """
 
-    def __init__(self, path: str):
-        super().__init__()
+    def __init__(self, path: str, data: Dict[str, Any] | None = None):
+        super().__init__(data if data is not None else {})
         self.path = path
 
     def __str__(self) -> str:

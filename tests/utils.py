@@ -1,17 +1,18 @@
 import logging
 import random
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from threading import Thread
 from time import sleep
-from typing import List, Type
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Type, TypedDict
 
 import pytest
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.helpers import FilePathItem
-from smartpipeline.item import Item
+from smartpipeline.item import DataT, Item
 from smartpipeline.pipeline import Pipeline
 from smartpipeline.stage import BatchStage, Source, Stage
 
@@ -35,30 +36,30 @@ class CustomException(Exception):
     pass
 
 
-class RandomTextSource(Source):
+class RandomTextSource(Source[Dict[str, Any]]):
     def __init__(self, count):
         self.total = count
         self.counter = 0
 
-    def pop(self):
+    def pop(self) -> Optional[Item[Dict[str, Any]]]:
         self.counter += 1
         if self.counter > self.total:
             self.stop()
-            return
-        item = Item()
-        item.data.update({"text": random_text(), "count": self.counter})
+            return None
+        item = Item[Dict[str, Any]]({"text": random_text(), "count": self.counter})
         return item
 
 
-class ListSource(Source):
-    def __init__(self, items):
+class ListSource(Source[Dict[str, Any]]):
+    def __init__(self, items: Iterable[Item[Dict[str, Any]]]):
         self.items = iter(items)
 
-    def pop(self):
+    def pop(self) -> Optional[Item[Dict[str, Any]]]:
         try:
             return next(self.items)
         except StopIteration:
             self.stop()
+            return None
 
 
 class ErrorSource(Source):
@@ -72,27 +73,27 @@ class ErrorSource(Source):
             raise ValueError()
 
 
-class TextGenerator(Stage):
-    def process(self, item: Item):
+class TextGenerator(Stage[Dict[str, Any]]):
+    def process(self, item: Item[Dict[str, Any]]) -> Item[Dict[str, Any]]:
         item.data["text"] = random_text()
         return item
 
 
-class TextReverser(Stage):
+class TextReverser(Stage[Dict[str, Any]]):
     def __init__(self, cycles=1):
         self._cycles = cycles
 
-    def process(self, item: Item):
+    def process(self, item: Item[Dict[str, Any]]) -> Item[Dict[str, Any]]:
         for _ in range(self._cycles):
             item.data["text"] = item.data["text"][::-1]
         return item
 
 
-class TextDuplicator(Stage):
+class TextDuplicator(Stage[Dict[str, Any]]):
     def __init__(self, cycles=1):
         self._cycles = cycles
 
-    def process(self, item: Item):
+    def process(self, item: Item[Dict[str, Any]]) -> Item[Dict[str, Any]]:
         for _ in range(self._cycles):
             item.data["text_" + str(random.randint(1, 1000))] = item.data["text"]
         return item
@@ -119,8 +120,9 @@ class CustomizableBrokenStage(Stage):
         raise to_raise("exception")
 
 
-class TextExtractor(Stage):
-    def process(self, item: FilePathItem):
+class TextExtractor(Stage[Dict[str, Any]]):
+    def process(self, item: Item[Dict[str, Any]]) -> Item[Dict[str, Any]]:
+        assert isinstance(item, FilePathItem)
         with open(item.path) as f:
             item.data["text"] = f.read()
         return item
@@ -138,22 +140,26 @@ class Logger(Stage):
         return item
 
 
-class BatchTextGenerator(BatchStage):
+class BatchTextGenerator(BatchStage[Dict[str, Any]]):
     def __init__(self, size=10, timeout=0.1):
         super().__init__(size, timeout)
 
-    def process_batch(self, items):
+    def process_batch(
+        self, items: Sequence[Item[Dict[str, Any]]]
+    ) -> Sequence[Item[Dict[str, Any]]]:
         for item in items:
             item.data["text"] = random_text()
         return items
 
 
-class BatchTextReverser(BatchStage):
+class BatchTextReverser(BatchStage[Dict[str, Any]]):
     def __init__(self, cycles=1, size=10, timeout=0.1):
         super().__init__(size, timeout)
         self._cycles = cycles
 
-    def process_batch(self, items):
+    def process_batch(
+        self, items: Sequence[Item[Dict[str, Any]]]
+    ) -> Sequence[Item[Dict[str, Any]]]:
         for item in items:
             for _ in range(self._cycles):
                 item.data["text"] = item.data["text"][::-1]
@@ -354,7 +360,9 @@ def wait_service(timeout, predicate, args):
             raise TimeoutError()
 
 
-def run_with_timeout(pipeline: Pipeline, timeout: float = 30.0) -> List[Item]:
+def run_with_timeout(
+    pipeline: Pipeline[DataT], timeout: float = 30.0
+) -> List[Item[DataT]]:
     """
     Consume a pipeline run in a separate thread, failing the test when the pipeline does not
     terminate, so that a stuck pipeline can never hang the whole test suite
@@ -385,7 +393,49 @@ def run_with_timeout(pipeline: Pipeline, timeout: float = 30.0) -> List[Item]:
     return outcome.get("items", [])
 
 
-def get_pipeline(*args, **kwargs) -> Pipeline:
-    return Pipeline(*args, **kwargs).set_error_manager(
+def get_pipeline(*args, **kwargs) -> Pipeline[Dict[str, Any]]:
+    return Pipeline[Dict[str, Any]](*args, **kwargs).set_error_manager(
         ErrorManager().raise_on_critical_error()
     )
+
+
+class TypedRow(TypedDict):
+    id: str
+    text: str
+
+
+class TypedRowSource(Source[TypedRow]):
+    def __init__(self, count: int = 3):
+        self.total = count
+        self.counter = 0
+
+    def pop(self) -> Optional[Item[TypedRow]]:
+        self.counter += 1
+        if self.counter > self.total:
+            self.stop()
+            return None
+        return Item[TypedRow]({"id": str(self.counter), "text": random_text()})
+
+
+class TypedRowUpper(Stage[TypedRow]):
+    def process(self, item: Item[TypedRow]) -> Item[TypedRow]:
+        item.data["text"] = item.data["text"].upper()
+        return item
+
+
+@dataclass
+class TypedDoc:
+    id: str
+    text: str
+
+
+class TypedDocUpper(Stage[TypedDoc]):
+    def process(self, item: Item[TypedDoc]) -> Item[TypedDoc]:
+        item.data = TypedDoc(id=item.data.id, text=item.data.text.upper())
+        return item
+
+
+class StrUpper(Stage[str]):
+    def process(self, item: Item[str]) -> Item[str]:
+        item.data = item.data.upper()
+        return item

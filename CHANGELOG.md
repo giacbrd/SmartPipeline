@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- BREAKING CHANGE: the item payload is now generic. Use `Item[MyData]`,
+  `Stage[MyData]` / `BatchStage[MyData]`, `Source[MyData]` and `Pipeline[MyData]`
+  to type the payload (`TypedDict`, dataclass, primitive, ...) so static checkers
+  like `mypy` verify the code. `Item()` infers `Item[Dict[str, Any]]`;
+  a custom payload always requires explicit data (`Item[MyData](...)`),
+  and heterogeneous dict literals need an explicit `Item[Dict[str, Any]]({...})`.
+  `Item.data` is now writable (`item.data = new_value`, required for immutable
+  payloads). `Item.id` falls back to an `id` attribute for non-dict payloads.
+  `FilePathItem` / `LocalFilesSource` are `Item[Dict[str, Any]]` based.
+  Removed deprecated aliases: `Item.payload`, `Item.set_metadata`/`get_metadata`,
+  `DataItem`, `Pipeline.append_stage`/`append_stage_concurrently`
+
 - BREAKING CHANGE: the `parallel: bool` parameter of `Pipeline.append`,
   `Pipeline.append_concurrently` (and of the stage containers) has been replaced by
   `executor: Literal["threads", "processes"]` (`"threads"` by default, `"processes"`

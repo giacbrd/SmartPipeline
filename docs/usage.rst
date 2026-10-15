@@ -6,7 +6,8 @@ Data items
 
 The unit of data in a pipeline is the *item*,
 represented by the :class:`.Item` class or a subclass of it.
-The actual payload lives in :attr:`.Item.data`, a read-only dictionary,
+The actual payload lives in :attr:`.Item.data`,
+which by default is a dictionary,
 while :attr:`.Item.metadata` holds auxiliary information such as
 temporary values or descriptors of the item.
 
@@ -14,6 +15,57 @@ If a stage runs on multiple processes (see the ``executor`` parameter in
 :doc:`concurrency`), items are sent between processes through queues,
 so both ``data`` and ``metadata`` must be serializable with the
 `pickle <https://docs.python.org/3/library/pickle.html>`_ module.
+
+Typing the payload
+------------------
+
+The payload type is generic and checked statically, e.g. by ``mypy``.
+``Item[MyData]`` carries ``MyData`` in :attr:`.Item.data`,
+which can be a ``TypedDict``, a dataclass, or even a primitive.
+Stages, sources, and the pipeline itself take the same parameter,
+so ``Stage[MyData]`` processes ``Item[MyData]`` items
+in a ``Pipeline[MyData]`` pipeline.
+Without parameters the payload defaults to ``Dict[str, Any]``.
+
+.. code-block:: python
+
+    from dataclasses import dataclass
+    from typing import TypedDict
+
+    from smartpipeline.item import Item
+    from smartpipeline.pipeline import Pipeline
+    from smartpipeline.stage import Source, Stage
+
+
+    class Row(TypedDict):
+        id: str
+        text: str
+
+
+    @dataclass
+    class Doc:
+        id: str
+        text: str
+
+
+    class UpperRow(Stage[Row]):
+        def process(self, item: Item[Row]) -> Item[Row]:
+            item.data["text"] = item.data["text"].upper()
+            return item
+
+
+    class UpperDoc(Stage[Doc]):
+        def process(self, item: Item[Doc]) -> Item[Doc]:
+            item.data = Doc(id=item.data.id, text=item.data.text.upper())
+            return item
+
+
+    row_pipeline: Pipeline[Row] = (
+        Pipeline[Row]().append("upper", UpperRow()).build()
+    )
+    doc_pipeline: Pipeline[Doc] = (
+        Pipeline[Doc]().append("upper", UpperDoc()).build()
+    )
 
 Defining the source
 -------------------

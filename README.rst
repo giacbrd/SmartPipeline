@@ -73,6 +73,7 @@ We define the source of the data and two stages, then we build and run the pipel
 .. code-block:: python
 
     import re
+    from typing import Optional, Sequence, TypedDict
 
     import feedparser
     import requests
@@ -83,26 +84,31 @@ We define the source of the data and two stages, then we build and run the pipel
     from smartpipeline.stage import BatchStage, Source, Stage
 
 
-    class FeedReader(Source):
+    class NewsData(TypedDict):
+        url: str
+        content: str
+        vector: list[float]
+
+
+    class FeedReader(Source[NewsData]):
         def __init__(self):
             feed = feedparser.parse("https://hnrss.org/newest")
             self.urls = (entry.link for entry in feed.entries)
 
         # pop method generates a new data item when called
-        def pop(self):
+        def pop(self) -> Optional[Item[NewsData]]:
             # each call of pop consumes a URL to send to the pipeline
             url = next(self.urls, None)
             if url is not None:
-                item = Item()
-                item.data["url"] = url
-                return item
+                return Item[NewsData]({"url": url, "content": "", "vector": []})
             # when all URLs are consumed we stop the pipeline
             else:
                 self.stop()
+                return None
 
 
-    class NewsRetrieve(Stage):
-        def process(self, item):
+    class NewsRetrieve(Stage[NewsData]):
+        def process(self, item: Item[NewsData]) -> Item[NewsData]:
             # add the page content to each item,
             # HTTP errors are handled by the pipeline error manager
             html = requests.get(item.data["url"]).text
@@ -110,12 +116,14 @@ We define the source of the data and two stages, then we build and run the pipel
             return item
 
 
-    class NewsEmbedding(BatchStage):
+    class NewsEmbedding(BatchStage[NewsData]):
         def __init__(self, size: int):
             super().__init__(size)
             self.model = SentenceTransformer("all-MiniLM-L6-v2")
 
-        def process_batch(self, items):
+        def process_batch(
+            self, items: Sequence[Item[NewsData]]
+        ) -> Sequence[Item[NewsData]]:
             # efficiently compute embeddings by batching page texts,
             # instead of processing one page at a time
             vectors = self.model.encode([item.data["content"] for item in items])
@@ -124,8 +132,8 @@ We define the source of the data and two stages, then we build and run the pipel
             return items
 
 
-    pipeline = (
-        Pipeline()
+    pipeline: Pipeline[NewsData] = (
+        Pipeline[NewsData]()
         .set_source(FeedReader())
         # with threads (the default) we speed up the multiple HTTP calls
         .append("retriever", NewsRetrieve(), concurrency=4)
@@ -146,5 +154,5 @@ AI agents note
 ~~~~~~~~~~~~~~
 
 Since October 2026 the codebase development is supported by LLM code agents,
-strictly using open-source tools and open-weight or free models,
+strictly using open-source tools and open-weight models,
 always human reviewed.

@@ -1,5 +1,6 @@
 import logging
 import traceback
+from typing import Any, Dict
 
 import pytest
 
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def test_run():
-    pipeline = (
+    pipeline: Pipeline[Dict[str, Any]] = (
         get_pipeline()
         .set_source(RandomTextSource(10))
         .append("reverser", TextReverser())
@@ -175,15 +176,15 @@ def test_errors(caplog):
 
 def test_build():
     """Test the build pattern with non-conventional order of the method calls"""
-    pipeline1 = (
-        Pipeline()
+    pipeline1: Pipeline[Dict[str, Any]] = (
+        Pipeline[Dict[str, Any]]()
         .append("reverser", TextReverser())
         .append("duplicator", TextDuplicator())
         .set_source(RandomTextSource(10))
         .build()
     )
-    pipeline2 = (
-        Pipeline()
+    pipeline2: Pipeline[Dict[str, Any]] = (
+        Pipeline[Dict[str, Any]]()
         .append("reverser", TextReverser())
         .set_source(RandomTextSource(10))
         .append("duplicator", TextDuplicator())

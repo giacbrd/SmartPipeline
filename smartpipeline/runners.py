@@ -10,7 +10,7 @@ from typing import Callable, List, NamedTuple, Optional, Protocol, Sequence, Typ
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager, RetryManager
-from smartpipeline.item import Item, Stop
+from smartpipeline.item import DataT, Item, Stop
 from smartpipeline.stage import BatchStage, ItemsQueue, Stage, StageType
 from smartpipeline.utils import (
     ConcurrentCounter,
@@ -129,11 +129,11 @@ def _raise_on_end_errors(
 
 
 def process(
-    stage: Stage,
-    item: Item,
+    stage: Stage[DataT],
+    item: Item[DataT],
     error_manager: ErrorManager,
     retry_manager: RetryManager,
-) -> Item:
+) -> Item[DataT]:
     """
     Execute the :meth:`.stage.Stage.process` method of a stage for an item
     """
@@ -184,11 +184,11 @@ def process(
 
 
 def process_batch(
-    stage: BatchStage,
-    items: Sequence[Item],
+    stage: BatchStage[DataT],
+    items: Sequence[Item[DataT]],
     error_manager: ErrorManager,
     retry_manager: RetryManager,
-) -> List[Optional[Item]]:
+) -> List[Optional[Item[DataT]]]:
     """
     Execute the :meth:`.stage.BatchStage.process_batch` method of a batch stage for a batch of items
     """
@@ -258,7 +258,7 @@ def process_batch(
 
 
 def stage_runner(
-    stage: Stage,
+    stage: Stage[DataT],
     in_queue: ItemsQueue,
     out_queue: ItemsQueue,
     error_manager: ErrorManager,
@@ -337,7 +337,7 @@ def stage_runner(
 
 
 def batch_stage_runner(
-    stage: BatchStage,
+    stage: BatchStage[DataT],
     in_queue: ItemsQueue,
     out_queue: ItemsQueue,
     error_manager: ErrorManager,
@@ -375,7 +375,7 @@ def batch_stage_runner(
                     fatal_event,
                 )
             return
-        items: List[Item] = []
+        items: List[Item[DataT]] = []
         got_stop = False
         try:
             for _ in range(stage.size):
