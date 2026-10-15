@@ -7,3 +7,5 @@ exclude_lines =
     pragma: no cover
     pass
     @abstractmethod
+    @overload
+    ^\s*\.\.\.\s*$
