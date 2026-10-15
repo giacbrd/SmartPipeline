@@ -61,7 +61,7 @@ class ErrorManager:
         pass
 
     def handle(
-        self, error: Exception, stage: AliveMixin, item: Item
+        self, error: Exception, stage: AliveMixin, item: Item[Any]
     ) -> Optional[CriticalError]:
         """
         Manage an error produced by a stage
@@ -112,7 +112,7 @@ class ErrorManager:
             return ex or error
         return None
 
-    def check_critical_errors(self, item: Item) -> Optional[BaseException]:
+    def check_critical_errors(self, item: Item[Any]) -> Optional[BaseException]:
         """
         Check the critical errors registered for an item
         """

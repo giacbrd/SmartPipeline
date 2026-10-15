@@ -14,11 +14,11 @@ from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from multiprocessing import get_context
 from threading import Event
-from typing import Callable, Generic, List, Literal, Optional, TypeVar, Union
+from typing import Any, Callable, Generic, List, Literal, Optional, TypeVar, Union
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.handling import ErrorManager, RetryManager
-from smartpipeline.item import Item, Stop
+from smartpipeline.item import DataT, Item, Stop
 from smartpipeline.runners import (
     StageRunner,
     batch_stage_runner,
@@ -111,7 +111,7 @@ class BaseContainer(FatalEventMixin, InQueued):
     @abstractmethod
     def get_processed(
         self, block: bool = False, timeout: Optional[float] = None
-    ) -> Optional[Item]:
+    ) -> Optional[Item[Any]]:
         """
         Get the oldest processed item waiting to be retrieved
 
@@ -129,7 +129,7 @@ class BaseContainer(FatalEventMixin, InQueued):
     def out_queue(self) -> ItemsQueue:
         return self._out_queue
 
-    def _put_or_abort(self, items_queue: ItemsQueue, item: Optional[Item]) -> bool:
+    def _put_or_abort(self, items_queue: ItemsQueue, item: Optional[Item[Any]]) -> bool:
         """
         Put an item in a queue without ever blocking indefinitely, the item is dropped when this
         container has been terminated or when a stage runner exited because of an error
@@ -251,16 +251,16 @@ class AliveStageMixin(Generic[S]):
         return self._stage
 
 
-class SourceContainer(BaseContainer):
+class SourceContainer(BaseContainer, Generic[DataT]):
     """
     A container specific for sources
     """
 
     def __init__(self, name=None):
         super().__init__()
-        self._source = None
+        self._source: Optional[Source[DataT]] = None
         # the next two attributes are used jointly for "manually" prepending items
-        self._next_item = None
+        self._next_item: Optional[Item[DataT]] = None
         self._internal_queue_obj = None
         self._stop_sent = False
         self._queue_initializer = queue.Queue
@@ -278,7 +278,7 @@ class SourceContainer(BaseContainer):
     def __str__(self) -> str:
         return f"Base container for source {self._source}"
 
-    def set(self, source: Source):
+    def set(self, source: Source[DataT]):
         """
         Set the actual source for this container
         """
@@ -348,7 +348,7 @@ class SourceContainer(BaseContainer):
                     self._stop_sent = True
                     return
 
-    def prepend_item(self, item: Item):
+    def prepend_item(self, item: Item[DataT]):
         """
         Enrich the source with items "manually".
         Only used for processing single items
@@ -360,7 +360,7 @@ class SourceContainer(BaseContainer):
 
     def get_processed(
         self, block: bool = True, timeout: Optional[float] = None
-    ) -> Optional[Item]:
+    ) -> Optional[Item[DataT]]:
         if self.out_queue is not None:
             item = self.out_queue.get(block=block, timeout=timeout)
         else:
@@ -369,7 +369,7 @@ class SourceContainer(BaseContainer):
                 self.increase_count()
         return item
 
-    def _get_next_item(self) -> Optional[Item]:
+    def _get_next_item(self) -> Optional[Item[DataT]]:
         """
         Obtain the next item to send to output according to the source status and "manually" added items
         """
@@ -398,9 +398,10 @@ class SourceContainer(BaseContainer):
 
 class StageContainer(
     BaseContainer,
-    AliveStageMixin[Stage],
+    AliveStageMixin[Stage[DataT]],
     FallibleMixin,
     ConnectedStageMixin,
+    Generic[DataT],
 ):
     """
     The standard container for basic stages
@@ -409,7 +410,7 @@ class StageContainer(
     def __init__(
         self,
         name: str,
-        stage: Stage,
+        stage: Stage[DataT],
         error_manager: ErrorManager,
         retry_manager: RetryManager,
     ):
@@ -417,12 +418,12 @@ class StageContainer(
         self.set_error_manager(error_manager)
         self.set_retry_manager(retry_manager)
         self.set_stage(name, stage)
-        self._last_processed: Optional[Item] = None
+        self._last_processed: Optional[Item[DataT]] = None
 
     def __str__(self) -> str:
         return f"Container for {self._stage}"
 
-    def process(self) -> Optional[Item]:
+    def process(self) -> Optional[Item[DataT]]:
         """
         Get item from the previous container, process it with stage, put it in the output queue
         :return: The same processed item put in the output queue
@@ -437,7 +438,7 @@ class StageContainer(
 
     def get_processed(
         self, block: bool = False, timeout: Optional[float] = None
-    ) -> Optional[Item]:
+    ) -> Optional[Item[DataT]]:
         ret = self._last_processed
         self._last_processed = None
         # if we are in a concurrent stage the items are obtained exclusively from the output queue
@@ -449,7 +450,7 @@ class StageContainer(
                 return None
         return ret
 
-    def _put_item(self, item: Optional[Item]):
+    def _put_item(self, item: Optional[Item[DataT]]):
         """
         A processed item is set as next output.
         If we are processing asynchronously (e.g. concurrent stage) it is put in the output queue,
@@ -468,9 +469,10 @@ class StageContainer(
 
 class BatchStageContainer(
     BaseContainer,
-    AliveStageMixin[BatchStage],
+    AliveStageMixin[BatchStage[DataT]],
     FallibleMixin,
     ConnectedStageMixin,
+    Generic[DataT],
 ):
     """
     Container for batch stages
@@ -479,7 +481,7 @@ class BatchStageContainer(
     def __init__(
         self,
         name: str,
-        stage: BatchStage,
+        stage: BatchStage[DataT],
         error_manager: ErrorManager,
         retry_manager: RetryManager,
     ):
@@ -488,17 +490,19 @@ class BatchStageContainer(
         self.set_retry_manager(retry_manager)
         self.set_stage(name, stage)
         # TODO next two variables should help when container is not concurrent, that is currently never the case
-        self.__result_queue: queue.SimpleQueue[Optional[Item]] = queue.SimpleQueue()
-        self._last_processed: List[Optional[Item]] = []
+        self.__result_queue: queue.SimpleQueue[
+            Optional[Item[DataT]]
+        ] = queue.SimpleQueue()
+        self._last_processed: List[Optional[Item[DataT]]] = []
 
-    def process(self) -> List[Optional[Item]]:
+    def process(self) -> List[Optional[Item[DataT]]]:
         """
         Get items from the previous container, process them with stage, put them in the output queue
         :return: The same processed items put in the output queue
         """
         items = []
         # items that we want to put as last in a batch, ergo in output
-        extra_items: List[Optional[Item]] = []
+        extra_items: List[Optional[Item[DataT]]] = []
         for _ in range(self.stage.size):
             item = self.previous.get_processed(timeout=self.stage.timeout)
             if isinstance(item, Stop):
@@ -517,8 +521,8 @@ class BatchStageContainer(
 
     def get_processed(
         self, block: bool = False, timeout: Optional[float] = None
-    ) -> Optional[Item]:
-        item: Optional[Item]
+    ) -> Optional[Item[DataT]]:
+        item: Optional[Item[DataT]]
         if (
             self.out_queue is not None
             and self.__result_queue.qsize() < self.out_queue.qsize()
@@ -544,7 +548,7 @@ class BatchStageContainer(
         except queue.Empty:
             return None
 
-    def _put_item(self, items: List[Optional[Item]]):
+    def _put_item(self, items: List[Optional[Item[DataT]]]):
         """
         A batch of processed items is set as next output.
         If we are processing asynchronously (e.g. concurrent stage) they are put in the output queue,
@@ -570,7 +574,9 @@ class BatchStageContainer(
         return self.stage.size
 
 
-class ConcurrentContainer(FatalEventMixin, InQueued, ConnectedStageMixin):
+class ConcurrentContainer(
+    FatalEventMixin, InQueued, ConnectedStageMixin, Generic[DataT]
+):
     """
     Base container for stages that must process concurrently and asynchronously
     """
@@ -705,7 +711,7 @@ class ConcurrentContainer(FatalEventMixin, InQueued, ConnectedStageMixin):
 
     def _run(
         self,
-        stage: StageType,
+        stage: Stage[DataT] | BatchStage[DataT],
         runner: StageRunner,
         in_queue: ItemsQueue,
         out_queue: ItemsQueue,
@@ -756,7 +762,7 @@ class ConcurrentContainer(FatalEventMixin, InQueued, ConnectedStageMixin):
             raise
 
 
-class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
+class ConcurrentStageContainer(ConcurrentContainer[DataT], StageContainer[DataT]):
     """
     Standard stage container with concurrency
     """
@@ -764,7 +770,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
     def __init__(
         self,
         name: str,
-        stage: Stage,
+        stage: Stage[DataT],
         error_manager: ErrorManager,
         retry_manager: RetryManager,
         queue_initializer: QueueInitializer,
@@ -796,7 +802,7 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
             logs_queue,
         )
 
-    def run(self, runner: StageRunner[Stage] = stage_runner):
+    def run(self, runner: StageRunner[Stage[DataT]] = stage_runner):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
@@ -813,7 +819,9 @@ class ConcurrentStageContainer(ConcurrentContainer, StageContainer):
         )
 
 
-class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
+class BatchConcurrentStageContainer(
+    ConcurrentContainer[DataT], BatchStageContainer[DataT]
+):
     """
     Batch stage container with concurrency
     """
@@ -821,7 +829,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
     def __init__(
         self,
         name: str,
-        stage: BatchStage,
+        stage: BatchStage[DataT],
         error_manager: ErrorManager,
         retry_manager: RetryManager,
         queue_initializer: QueueInitializer,
@@ -853,7 +861,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
             logs_queue,
         )
 
-    def run(self, runner: StageRunner[BatchStage] = batch_stage_runner):
+    def run(self, runner: StageRunner[BatchStage[DataT]] = batch_stage_runner):
         """
         Start the concurrent execution of stage processing.
         The stage will consume and produce from input/output queues concurrently
@@ -870,7 +878,7 @@ class BatchConcurrentStageContainer(ConcurrentContainer, BatchStageContainer):
         )
 
 
-ContainerType = Union[StageContainer, BatchStageContainer]
+ContainerType = Union[StageContainer[Any], BatchStageContainer[Any]]
 # The concrete concurrent stage containers, for `isinstance` checks and annotations
 ConcurrentContainerTypes = (
     ConcurrentStageContainer,

@@ -13,9 +13,9 @@ from multiprocessing import Manager, get_context
 from multiprocessing.managers import SyncManager
 from queue import Queue
 from threading import Event, Thread
-from typing import Any, Callable, Generator, Mapping, Optional
+from typing import Any, Callable, Generator, Generic, Mapping, Optional
 from typing import OrderedDict as OrderedDictType
-from typing import Sequence, Tuple, Type, Union
+from typing import Self, Sequence, Tuple, Type, Union
 
 from smartpipeline.containers import (
     BatchConcurrentStageContainer,
@@ -30,8 +30,8 @@ from smartpipeline.containers import (
 )
 from smartpipeline.defaults import CONCURRENCY_WAIT, MAX_QUEUES_SIZE
 from smartpipeline.error.handling import ErrorManager, RetryManager
-from smartpipeline.item import Item, Stop
-from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage, StageType
+from smartpipeline.item import DataT, Item, Stop
+from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage
 from smartpipeline.utils import (
     LogsReceiver,
     ProcessCounter,
@@ -44,8 +44,11 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
 def _stage_initialization_with_logger(
-    logs_queue: Queue, stage_class: Type[StageType], args: Sequence, kwargs: Mapping
-) -> StageType:
+    logs_queue: Queue,
+    stage_class: Type[Stage[DataT]] | Type[BatchStage[DataT]],
+    args: Sequence,
+    kwargs: Mapping,
+) -> Stage[DataT] | BatchStage[DataT]:
     root_logger = logging.getLogger()
     # only by comparing string of queues we obtain their "original" address
     if not any(
@@ -57,12 +60,18 @@ def _stage_initialization_with_logger(
     return stage_class(*args, **kwargs)
 
 
-class EmptyStage(Stage):
-    def process(self, item: Item) -> Item:
+class EmptyStage(Stage[Any]):
+    def process(self, item: Item[Any]) -> Item[Any]:
         return item
 
 
-class Pipeline:
+class Pipeline(Generic[DataT]):
+    """
+    Main class for designing the sequence of stages and execute them,
+    e.g. `Pipeline[MyData]` runs `Item[MyData]` items through `Stage[MyData]` stages.
+    `Pipeline` without parameters defaults to `Dict[str, Any]` payloads.
+    """
+
     def __init__(
         self,
         max_init_workers: Optional[int] = None,
@@ -72,14 +81,16 @@ class Pipeline:
         :param max_init_workers: Number of workers to use for concurrent initialization of stages, default the number of CPUs
         :param max_queues_size: Maximum size of any queue instanced for the pipeline (stage input and output queues)
         """
-        self._containers: OrderedDictType[str, ContainerType] = OrderedDict()
+        self._containers: OrderedDictType[
+            str, StageContainer[DataT] | BatchStageContainer[DataT]
+        ] = OrderedDict()
         self._error_manager = ErrorManager()
         self._max_init_workers = max_init_workers
         self._init_executor: Optional[Executor] = None
         self._wait_previous_executor: Optional[Executor] = None
         self._pipeline_executor: Optional[Thread] = None
         self._max_queues_size = max_queues_size
-        self._out_queue = None
+        self._out_queue: Optional[Queue[Item[DataT]]] = None
         self._enqueue_source = False
         # we approach sharing memory between processes exclusively through a `multiprocessing.Manager`
         self._sync_manager: Optional[SyncManager] = None
@@ -91,9 +102,11 @@ class Pipeline:
         self._logger = logging.getLogger(self._name)
         self._source_name = f"SourceOf{self._name}"
         # Initialize with a trivial "support" source, on which we can eventually send items when using `process` methods
-        self._source_container = SourceContainer(self._source_name)
+        self._source_container: SourceContainer[DataT] = SourceContainer(
+            self._source_name
+        )
         # A fake container for the pipeline to support data structures initialization
-        self._fake_container = StageContainer(
+        self._fake_container: StageContainer[DataT] = StageContainer(
             f"FakeContainerOf{self._name}", EmptyStage(), ErrorManager(), RetryManager()
         )
         # failures of concurrent stage constructions (`append_concurrently`),
@@ -253,7 +266,7 @@ class Pipeline:
         if self._sync_manager is not None:
             self._sync_manager.shutdown()
 
-    def build(self) -> Pipeline:
+    def build(self) -> Self:
         """
         Pipeline builder method
         """
@@ -302,7 +315,7 @@ class Pipeline:
         finally:
             self._count += 1
 
-    def run(self) -> Generator[Item, None, None]:
+    def run(self) -> Generator[Item[DataT], None, None]:
         """
         Run the pipeline given a source and a concatenation of stages.
         Get the sequence of items through iteration
@@ -515,7 +528,9 @@ class Pipeline:
             if isinstance(container, ConcurrentContainerTypes)
         )
 
-    def _get_processed_or_abort(self, container: ContainerType) -> Optional[Item]:
+    def _get_processed_or_abort(
+        self, container: StageContainer[DataT] | BatchStageContainer[DataT]
+    ) -> Optional[Item[DataT]]:
         """
         Wait for the item processed by the last container without ever blocking indefinitely:
         when a stage runner fails we give up and raise its exception
@@ -548,7 +563,7 @@ class Pipeline:
             self._check_errors()
             time.sleep(wait_seconds)
 
-    def process(self, item: Item) -> Item:
+    def process(self, item: Item[DataT]) -> Item[DataT]:
         """
         Process a single item synchronously (no concurrency) through the pipeline
         """
@@ -567,7 +582,7 @@ class Pipeline:
         return ret or item
 
     def process_async(
-        self, item: Item, callback: Optional[Callable[[Item], Any]] = None
+        self, item: Item[DataT], callback: Optional[Callable[[Item[DataT]], Any]] = None
     ):
         """
         Process a single item asynchronously through the pipeline, stages may run concurrently.
@@ -592,7 +607,7 @@ class Pipeline:
         """
         self._source_container.stop()
 
-    def get_item(self, block: bool = True) -> Item:
+    def get_item(self, block: bool = True) -> Item[DataT]:
         """
         Get a single item from the asynchronous execution of the pipeline on single items from :meth:`.Pipeline.process_async`
 
@@ -609,7 +624,7 @@ class Pipeline:
                 "No pipeline is running asynchronously, not item can be retrieved from the output queue"
             )
 
-    def set_source(self, source: Source) -> Pipeline:
+    def set_source(self, source: Source[DataT]) -> Self:
         """
         Set the source of the pipeline: a subclass of :class:`.stage.Source`
         """
@@ -617,7 +632,7 @@ class Pipeline:
         self._source_container.set(source)
         return self
 
-    def set_error_manager(self, error_manager: ErrorManager) -> Pipeline:
+    def set_error_manager(self, error_manager: ErrorManager) -> Self:
         """
         Set the error manager for handling errors from each stage item processing
         """
@@ -677,13 +692,13 @@ class Pipeline:
     def _build_container(
         self,
         name: str,
-        stage: StageType,
+        stage: Stage[DataT] | BatchStage[DataT],
         concurrency: int,
         executor: ExecutorType,
         retryable_errors: Tuple[Type[Exception], ...],
         max_retries: int,
         backoff: Union[float, int],
-    ) -> ContainerType:
+    ) -> StageContainer[DataT] | BatchStageContainer[DataT]:
         """
         Get a new container instance according to the pipeline configuration
 
@@ -761,7 +776,7 @@ class Pipeline:
             executor,
         )
 
-    def get_stage(self, name: str) -> Optional[StageType]:
+    def get_stage(self, name: str) -> Optional[Stage[DataT] | BatchStage[DataT]]:
         """
         Get a stage instance by its name
         """
@@ -771,13 +786,13 @@ class Pipeline:
     def append(
         self,
         name: str,
-        stage: StageType,
+        stage: Stage[DataT] | BatchStage[DataT],
         concurrency: int = 0,
         executor: ExecutorType = "threads",
         retryable_errors: Tuple[Type[Exception], ...] = tuple(),
         max_retries: int = 0,
         backoff: Union[float, int] = 0.0,
-    ) -> Pipeline:
+    ) -> Self:
         """
         Append a stage to the pipeline just after the last one appended, or after the source if it is the first stage
 
@@ -809,13 +824,10 @@ class Pipeline:
         self._containers[name] = container
         return self
 
-    # deprecated
-    append_stage = append  # pragma: no cover
-
     def append_concurrently(
         self,
         name: str,
-        stage_class: Type[StageType],
+        stage_class: Type[Stage[DataT]] | Type[BatchStage[DataT]],
         args: Optional[Sequence] = None,
         kwargs: Optional[Mapping] = None,
         concurrency: int = 0,
@@ -823,7 +835,7 @@ class Pipeline:
         retryable_errors: Tuple[Type[Exception], ...] = tuple(),
         max_retries: int = 0,
         backoff: Union[float, int] = 0.0,
-    ) -> Pipeline:
+    ) -> Self:
         """
         Append a stage class to the pipeline just after the last one appended, or after the source if it is the first stage.
         The stage construction will be executed concurrently respect to the general pipeline construction
@@ -870,7 +882,7 @@ class Pipeline:
         else:
             future = init_executor.submit(stage_class, *args, **kwargs)
 
-        def append_stage(stage_future: Future):
+        def finish_append(stage_future: Future):
             try:
                 stage = stage_future.result()
                 container = self._build_container(
@@ -889,11 +901,8 @@ class Pipeline:
                 # raises it instead of running a fake stage without feedback
                 self._init_errors.append(e)
 
-        future.add_done_callback(append_stage)
+        future.add_done_callback(finish_append)
         return self
-
-    # deprecated
-    append_stage_concurrently = append_concurrently
 
     def _get_init_executor(self, executor: ExecutorType = "threads") -> Executor:
         """

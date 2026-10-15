@@ -158,7 +158,7 @@ def test_new_shared_event_dispatch():
     with mock.patch.object(
         pipeline, "_new_mp_event", return_value="mp-event"
     ) as mp_event:
-        pipeline._sync_manager = mock.sentinel.manager  # type: ignore
+        pipeline._sync_manager = mock.sentinel.manager
         assert pipeline._new_shared_event() == "mp-event"
         mp_event.assert_called_once_with()
 
@@ -206,17 +206,20 @@ def test_get_processed_or_abort():
         def get_processed(self, block=True, timeout=None):
             return self._items.pop(0) if self._items else None
 
-    assert pipeline._get_processed_or_abort(_FakeContainer([_text_item()])) is not None  # type: ignore
-    assert pipeline._get_processed_or_abort(_FakeContainer([None, _text_item()])) is not None  # type: ignore
+    assert pipeline._get_processed_or_abort(_FakeContainer([_text_item()])) is not None
+    assert (
+        pipeline._get_processed_or_abort(_FakeContainer([None, _text_item()]))
+        is not None
+    )
     pipeline._fatal_event = Event()
     pipeline._fatal_event.set()
     with mock.patch.object(
         pipeline, "_wait_for_runner_error", side_effect=RuntimeError("runner")
     ):
         with pytest.raises(RuntimeError):
-            pipeline._get_processed_or_abort(_FakeContainer([None]))  # type: ignore
+            pipeline._get_processed_or_abort(_FakeContainer([None]))
     with mock.patch.object(pipeline, "_wait_for_runner_error", return_value=None):
-        assert pipeline._get_processed_or_abort(_FakeContainer([None])) is None  # type: ignore
+        assert pipeline._get_processed_or_abort(_FakeContainer([None])) is None
 
 
 def test_process_propagates_runner_error():
@@ -274,7 +277,7 @@ def test_logs_receiver_stop_timeout_warns(caplog):
     sleeper = threading.Thread(target=lambda: done.wait(10), daemon=True)
     sleeper.start()
     receiver = LogsReceiver(Queue(), stop_timeout=0.01)
-    receiver._thread = sleeper  # type: ignore
+    receiver._thread = sleeper
     try:
         with caplog.at_level(logging.WARNING):
             receiver.stop()
@@ -314,7 +317,7 @@ def test_concurrent_shutdown_oserror(caplog):
         def shutdown(self):
             raise OSError("boom")
 
-    container._stage_executor = _BoomExecutor()  # type: ignore
+    container._stage_executor = _BoomExecutor()
     with caplog.at_level(logging.WARNING):
         container.shutdown()
     assert any("shutting down" in record.msg.lower() for record in caplog.records)

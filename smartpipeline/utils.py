@@ -12,7 +12,7 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 from typing import Any, Callable, Optional, OrderedDict, Sequence
 
 from smartpipeline.defaults import CONCURRENCY_WAIT, LOGS_STOP_TIMEOUT
-from smartpipeline.item import Item
+from smartpipeline.item import DataT, Item
 from smartpipeline.stage import ItemsQueue
 
 
@@ -37,7 +37,7 @@ def raise_collected_errors(errors: Sequence[Exception], message: str) -> None:
 
 def put_or_abort(
     items_queue: ItemsQueue,
-    item: Optional[Item],
+    item: Optional[Item[DataT]],
     *guards: Callable[[], bool],
     timeout: float = CONCURRENCY_WAIT,
 ) -> bool:

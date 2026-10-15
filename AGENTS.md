@@ -105,9 +105,11 @@ which documents breaking changes per release (this project uses Git Flow branche
 
 Anything added to the public surface should get an `autoclass` entry in `docs/api.rst` (docs are built
 by Read the Docs from `docs/conf.py`, deps pinned in `docs/requirements.txt`, e.g. `docutils<0.17`)
-and a `CHANGELOG.md` entry. Deprecated aliases still exist and must be kept working: `Item.payload`,
+and a `CHANGELOG.md` entry. Former deprecated aliases (`Item.payload`,
 `Item.set_metadata`/`get_metadata`, `DataItem`, `Pipeline.append_stage`,
-`Pipeline.append_stage_concurrently`.
+`Pipeline.append_stage_concurrently`) were removed in the breaking generics
+release: do not reintroduce compatibility shims, and do not add new aliases
+for renamed API.
 
 ## Style conventions
 

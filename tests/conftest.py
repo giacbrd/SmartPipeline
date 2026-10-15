@@ -1,6 +1,7 @@
 import itertools
 import os
 from tempfile import TemporaryDirectory
+from typing import Any, Dict
 
 import pytest
 
@@ -19,9 +20,7 @@ def text_samples_fx():
 def items_generator_fx():
     def _generator():
         for i in itertools.count():
-            item = Item()
-            item.data["id"] = i
-            item.data["text"] = random_text()
+            item = Item[Dict[str, Any]]({"id": i, "text": random_text()})
             yield item
 
     yield _generator()

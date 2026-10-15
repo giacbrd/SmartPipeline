@@ -2,9 +2,9 @@ import uuid
 from abc import ABC, abstractmethod
 from logging import Logger, getLogger
 from queue import Queue
-from typing import Any, Optional, Sequence, TypeVar, Union
+from typing import Any, Generic, Optional, Sequence, TypeVar, Union
 
-from smartpipeline.item import Item
+from smartpipeline.item import DataT, Item
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -60,9 +60,9 @@ class ConstructorMixin:
         pass
 
 
-class Processor(ABC):
+class Processor(ABC, Generic[DataT]):
     @abstractmethod
-    def process(self, item: Item) -> Item:
+    def process(self, item: Item[DataT]) -> Item[DataT]:
         """
         Process a single item received by the stage.
         Must be overridden for properly defining a stage
@@ -72,9 +72,9 @@ class Processor(ABC):
         return item
 
 
-class BatchProcessor(ABC):
+class BatchProcessor(ABC, Generic[DataT]):
     @abstractmethod
-    def process_batch(self, items: Sequence[Item]) -> Sequence[Item]:
+    def process_batch(self, items: Sequence[Item[DataT]]) -> Sequence[Item[DataT]]:
         """
         Process a batch of items received by the stage.
         Must be overridden for properly defining a batch stage
@@ -84,18 +84,20 @@ class BatchProcessor(ABC):
         return items
 
 
-class Stage(AliveMixin, ConstructorMixin, Processor):
+class Stage(AliveMixin, ConstructorMixin, Processor[DataT], Generic[DataT]):
     """
-    Extend this class and override :meth:`.Stage.process` for defining a stage
+    Extend this class and override :meth:`.Stage.process` for defining a stage,
+    e.g. `Stage[MyData]` processes `Item[MyData]` items
     """
 
     def __str__(self) -> str:
         return f"Stage {self.name}"
 
 
-class BatchStage(AliveMixin, ConstructorMixin, BatchProcessor):
+class BatchStage(AliveMixin, ConstructorMixin, BatchProcessor[DataT], Generic[DataT]):
     """
-    Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage
+    Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage,
+    e.g. `BatchStage[MyData]` processes `Item[MyData]` items
     """
 
     def __init__(self, size: int, timeout: float = 1.0):
@@ -124,13 +126,14 @@ class BatchStage(AliveMixin, ConstructorMixin, BatchProcessor):
         return self._timeout
 
 
-class Source(ABC, AliveMixin):
+class Source(ABC, AliveMixin, Generic[DataT]):
     """
-    Extend this for defining a pipeline source
+    Extend this for defining a pipeline source,
+    e.g. `Source[MyData]` generates `Item[MyData]` items
     """
 
     @abstractmethod
-    def pop(self) -> Optional[Item]:
+    def pop(self) -> Optional[Item[DataT]]:
         """
         Generate items for feeding a pipeline.
         Must be overridden for properly defining a source.
@@ -154,6 +157,6 @@ class Source(ABC, AliveMixin):
         return getattr(self, "_is_stopped", False)
 
 
-ItemsQueue = Queue[Optional[Item]]
-StageType = Union[Stage, BatchStage]
+ItemsQueue = Queue[Optional[Item[Any]]]
+StageType = Union[Stage[Any], BatchStage[Any]]
 StageTypeVar = TypeVar("StageTypeVar", bound=StageType)
