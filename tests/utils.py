@@ -1,9 +1,20 @@
 import logging
 import random
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import Thread
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Type, TypedDict
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Type,
+    TypedDict,
+)
 
 import pytest
 
@@ -425,6 +436,22 @@ def get_pipeline(*args, **kwargs) -> Pipeline[Dict[str, Any]]:
     return Pipeline[Dict[str, Any]](*args, **kwargs).set_error_manager(
         ErrorManager().raise_on_critical_error()
     )
+
+
+@contextmanager
+def cleanup_on_exit(pipeline: Pipeline) -> Iterator[Pipeline]:
+    """Guarantee pipeline cleanup (logs receiver and executors) on test exit."""
+    try:
+        yield pipeline
+    finally:
+        try:
+            pipeline._stop_logs_receiver()
+        except Exception:
+            pass
+        try:
+            pipeline.shutdown()
+        except Exception:
+            pass
 
 
 class TypedRow(TypedDict):

@@ -231,8 +231,8 @@ def test_mixed_concurrent_run():
     check_items(items, 100, pipeline)
 
 
-def test_concurrency_errors():
-    """Failing concurrent batch stages raise without sticking, at any queue size."""
+def test_concurrent_batch_single_stage_error_raises():
+    """A failing single stage in a concurrent batch pipeline raises out of run."""
     with pytest.raises(Exception):
         pipeline = (
             get_pipeline()
@@ -249,7 +249,6 @@ def test_concurrency_errors():
             assert 'Exception("test exception")' in tb
             assert "CriticalError" in tb
             raise
-        assert pipeline.count == 1
     with pytest.raises(Exception):
         pipeline = (
             get_pipeline()
@@ -265,7 +264,10 @@ def test_concurrency_errors():
         )
         for _ in pipeline.run():
             pass
-        assert pipeline.count == 1
+
+
+def test_concurrent_batch_single_soft_errors_flow():
+    """Single-stage soft errors flow with timings through concurrent batch pipelines."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(29))
@@ -280,6 +282,10 @@ def test_concurrency_errors():
         assert any(k.startswith("text_") for k in item.data.keys())
         assert item.get_timing("error")
     assert pipeline.count == 29
+
+
+def test_concurrent_batch_stage_error_raises():
+    """A failing concurrent batch stage raises the wrapped error."""
     with pytest.raises(Exception):
         pipeline = (
             get_pipeline()
@@ -296,7 +302,6 @@ def test_concurrency_errors():
             assert 'Exception("test exception")' in tb
             assert "CriticalError" in tb
             raise
-        assert pipeline.count == 1
     with pytest.raises(Exception):
         pipeline = (
             get_pipeline()
@@ -323,7 +328,10 @@ def test_concurrency_errors():
             assert 'Exception("test exception")' in tb
             assert "CriticalError" in tb
             raise
-        assert pipeline.count == 1
+
+
+def test_concurrent_batch_wide_soft_errors_flow():
+    """Batch-wide soft errors flow with timings through concurrent batch pipelines."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(29))
@@ -338,6 +346,10 @@ def test_concurrency_errors():
         assert any(k.startswith("text_") for k in item.data.keys())
         assert item.get_timing("error")
     assert pipeline.count == 29
+
+
+def test_concurrent_batch_error_never_sticks_pipeline():
+    """A failing concurrent batch stage never sticks the pipeline, at any queue size."""
     # a failing batch stage must not make the pipeline stuck, whatever the queues size is
     for max_queues_size in (0, 1, 10):
         with pytest.raises(Exception):

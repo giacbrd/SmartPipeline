@@ -53,17 +53,20 @@ def _wait_for_count(container, expected, timeout=30.0):
     return container.count()
 
 
-def test_source_container():
-    """SourceContainer streams, prepends, queues and stops."""
-    manager = Manager()
+def _hundred_items():
     data = [Item() for _ in range(100)]
     for i, item in enumerate(data):
         item.metadata["id"] = i + 1
+    return data
+
+
+def test_source_container_streams_until_stop():
+    """SourceContainer streams items in order until Stop and reports stopped."""
+    data = _hundred_items()
     container = SourceContainer()
     assert str(container)
     assert not container.is_set()
-    source = ListSource(data)
-    container.set(source)
+    container.set(ListSource(data))
     assert not container.is_stopped()
     assert container.is_set()
     item = container.get_processed()
@@ -73,9 +76,12 @@ def test_source_container():
         item = container.get_processed()
     assert container.is_stopped()
 
+
+def test_source_container_prepends_items():
+    """SourceContainer serves prepended items before the source stream."""
+    data = _hundred_items()
     container = SourceContainer()
-    source = ListSource(data)
-    container.set(source)
+    container.set(ListSource(data))
     item = Item()
     item.metadata["id"] = 1001
     container.prepend_item(item)
@@ -92,6 +98,14 @@ def test_source_container():
     assert container.get_processed().metadata["id"] == 1003
     assert container.get_processed().metadata["id"] == 3
     assert not container.is_stopped()
+
+
+def test_source_container_queued_pop_and_stop():
+    """SourceContainer pops into queues and stops with a prepended item left."""
+    manager = Manager()
+    data = _hundred_items()
+    container = SourceContainer()
+    container.set(ListSource(data))
     container.init_queue(manager.Queue)
     queue = container.out_queue
     item = Item()
@@ -99,11 +113,10 @@ def test_source_container():
     queue.put(item)
     assert container.get_processed().metadata["id"] == 1004
     container.pop_into_queue(Queue())
-    assert container.get_processed().metadata["id"] == 4
+    assert container.get_processed().metadata["id"] == 1
 
     container = SourceContainer()
-    source = ListSource([])
-    container.set(source)
+    container.set(ListSource([]))
     container.prepend_item(Item())
     container.stop()
     assert isinstance(container.get_processed(), Item)

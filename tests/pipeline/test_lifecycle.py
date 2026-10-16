@@ -25,6 +25,7 @@ from tests.utils import (
     SlowOnEndStage,
     TextGenerator,
     TextReverser,
+    cleanup_on_exit,
     get_pipeline,
     run_with_timeout,
     text_item,
@@ -85,83 +86,53 @@ def _scripted_container(pipeline, fail_on=()):
 def test_on_start_error_manager_raises_on_build():
     """Error-manager on_start failures abort the build with cleanup."""
     pipeline = get_pipeline().set_error_manager(BrokenOnStartErrorManager())
-    try:
+    with cleanup_on_exit(pipeline):
         with pytest.raises(RuntimeError, match="on_start"):
             (
                 pipeline.set_source(RandomTextSource(3))
                 .append("stage", TextReverser(), concurrency=1, executor="processes")
                 .build()
             )
-    finally:
-        try:
-            pipeline._stop_logs_receiver()
-        except Exception:
-            pass
-        try:
-            pipeline.shutdown()
-        except Exception:
-            pass
 
 
-def test_on_end_inline_raises_on_run():
-    """Inline on_end failures raise on run."""
+@pytest.mark.parametrize(
+    "stage,kwargs,timeout,match",
+    [
+        pytest.param(BrokenOnEndStage(), {}, 30.0, "test on_end failure", id="inline"),
+        pytest.param(
+            BrokenOnEndStage(),
+            {"concurrency": 1},
+            30.0,
+            "test on_end failure",
+            id="threads",
+        ),
+        pytest.param(
+            BrokenOnEndStage(),
+            {"concurrency": 1, "executor": "processes"},
+            40.0,
+            "test on_end failure",
+            id="processes",
+        ),
+        pytest.param(
+            BrokenOnEndBatchStage(),
+            {"concurrency": 1, "executor": "processes"},
+            40.0,
+            "test batch on_end failure",
+            id="batch-processes",
+        ),
+    ],
+)
+def test_on_end_failure_raises_on_run(stage, kwargs, timeout, match):
+    """Stage on_end failures raise on run, inline and concurrent."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(3))
-        .append("reverser", TextReverser())
-        .append("boom", BrokenOnEndStage())
+        .append("boom", stage, **kwargs)
         .build()
     )
-    with pytest.raises(RuntimeError, match="test on_end failure"):
-        run_with_timeout(pipeline)
-
-
-def test_on_end_thread_raises_on_run():
-    """Threaded on_end failures raise on run."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(3))
-        .append("boom", BrokenOnEndStage(), concurrency=1)
-        .build()
-    )
-    with pytest.raises(RuntimeError, match="test on_end failure"):
-        run_with_timeout(pipeline)
-
-
-def test_on_end_processes_raises_on_run():
-    """Process on_end failures raise on run."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(3))
-        .append("boom", BrokenOnEndStage(), concurrency=1, executor="processes")
-        .build()
-    )
-    try:
-        with pytest.raises(RuntimeError, match="test on_end failure"):
-            run_with_timeout(pipeline, timeout=40)
-    finally:
-        try:
-            pipeline.shutdown()
-        except Exception:
-            pass
-
-
-def test_on_end_batch_processes_raises_on_run():
-    """Batch process on_end failures raise on run."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(3))
-        .append("boom", BrokenOnEndBatchStage(), concurrency=1, executor="processes")
-        .build()
-    )
-    try:
-        with pytest.raises(RuntimeError, match="test batch on_end failure"):
-            run_with_timeout(pipeline, timeout=40)
-    finally:
-        try:
-            pipeline.shutdown()
-        except Exception:
-            pass
+    with cleanup_on_exit(pipeline):
+        with pytest.raises(RuntimeError, match=match):
+            run_with_timeout(pipeline, timeout=timeout)
 
 
 def test_on_end_error_manager_raises_on_run():
@@ -206,14 +177,9 @@ def test_process_error_preserved_when_on_end_fails(concurrency):
         )
         .build()
     )
-    try:
+    with cleanup_on_exit(pipeline):
         with pytest.raises(ValueError, match="test process failure"):
             run_with_timeout(pipeline, timeout=40)
-    finally:
-        try:
-            pipeline.shutdown()
-        except Exception:
-            pass
 
 
 def test_concurrent_init_failure_raises_on_build():
@@ -223,18 +189,9 @@ def test_concurrent_init_failure_raises_on_build():
         .set_source(RandomTextSource(2))
         .append_concurrently("broken", BrokenInitStage)
     )
-    try:
+    with cleanup_on_exit(pipeline):
         with pytest.raises(RuntimeError, match="test init failure"):
             pipeline.build()
-    finally:
-        try:
-            pipeline._stop_logs_receiver()
-        except Exception:
-            pass
-        try:
-            pipeline.shutdown()
-        except Exception:
-            pass
 
 
 def test_concurrent_on_start_failure_raises_on_build():
@@ -244,18 +201,9 @@ def test_concurrent_on_start_failure_raises_on_build():
         .set_source(RandomTextSource(2))
         .append_concurrently("broken", ErrorSerializableStage, concurrency=1)
     )
-    try:
+    with cleanup_on_exit(pipeline):
         with pytest.raises(IOError):
             pipeline.build()
-    finally:
-        try:
-            pipeline._stop_logs_receiver()
-        except Exception:
-            pass
-        try:
-            pipeline.shutdown()
-        except Exception:
-            pass
 
 
 def test_build_waits_for_slow_concurrent_init():
@@ -265,18 +213,9 @@ def test_build_waits_for_slow_concurrent_init():
         .set_source(RandomTextSource(2))
         .append_concurrently("slow", SlowInitializer, args=[1])
     )
-    try:
+    with cleanup_on_exit(pipeline):
         pipeline.build()
         assert pipeline._executors_ready
-    finally:
-        try:
-            pipeline._stop_logs_receiver()
-        except Exception:
-            pass
-        try:
-            pipeline.shutdown()
-        except Exception:
-            pass
 
 
 def test_concurrent_linker_returns_on_init_errors():
@@ -287,18 +226,9 @@ def test_concurrent_linker_returns_on_init_errors():
         .append_concurrently("broken", BrokenInitStage)
         .append_concurrently("second", TextReverser)
     )
-    try:
+    with cleanup_on_exit(pipeline):
         with pytest.raises(RuntimeError, match="test init failure"):
             pipeline.build()
-    finally:
-        try:
-            pipeline._stop_logs_receiver()
-        except Exception:
-            pass
-        try:
-            pipeline.shutdown()
-        except Exception:
-            pass
 
 
 def test_terminator_error_surfaces_during_run():

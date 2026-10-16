@@ -19,8 +19,8 @@ def _log_record(message):
     )
 
 
-def test_logging_pipeline_forwards_stage_records(caplog):
-    """Stage logs from thread and process workers reach the root logger."""
+def test_logging_threads_forwards_records(caplog):
+    """Stage logs from thread workers reach the root logger."""
     with caplog.at_level(logging.INFO):
         pipeline = (
             get_pipeline()
@@ -35,7 +35,11 @@ def test_logging_pipeline_forwards_stage_records(caplog):
         ]
         assert len(messages) == 100
         assert all("logging item " in record.msg.lower() for record in messages)
-        caplog.clear()
+
+
+def test_logging_processes_forwards_records(caplog):
+    """Stage logs from process workers reach the root logger, with init logs."""
+    with caplog.at_level(logging.INFO):
         pipeline = (
             get_pipeline()
             .set_source(RandomTextSource(10))
@@ -69,16 +73,19 @@ def test_logging_pipeline_forwards_stage_records(caplog):
         assert len(messages) == 100
         assert all("logging item " in record.msg.lower() for record in messages)
 
-        assert isinstance(
-            _stage_initialization_with_logger(Queue(), TextReverser, [], {}),
-            TextReverser,
-        )
-        assert any(isinstance(h, QueueHandler) for h in logging.getLogger().handlers)
 
-        with pytest.raises(AttributeError):
-            get_pipeline().append(
-                "reverser", TextReverser()
-            ).build()._get_logs_receiver_queue()
+def test_concurrent_logging_wiring():
+    """Concurrent stage init attaches a queue handler and needs a logs queue."""
+    assert isinstance(
+        _stage_initialization_with_logger(Queue(), TextReverser, [], {}),
+        TextReverser,
+    )
+    assert any(isinstance(h, QueueHandler) for h in logging.getLogger().handlers)
+
+    with pytest.raises(AttributeError):
+        get_pipeline().append(
+            "reverser", TextReverser()
+        ).build()._get_logs_receiver_queue()
 
 
 def test_logs_receiver_stop(caplog):

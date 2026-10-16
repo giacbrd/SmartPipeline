@@ -22,6 +22,7 @@ from tests.utils import (
     TextReverser,
     TimeWaster,
     check_items,
+    cleanup_on_exit,
     get_pipeline,
     mark_item_checked,
     run_with_timeout,
@@ -175,16 +176,9 @@ def test_queue_sizes():
     check_items(items, 100, pipeline)
 
 
-def test_concurrency_errors(caplog):
-    """Failing concurrent stages raise without sticking the pipeline, at any queue size."""
+def _assert_stage_error_raised(pipeline, caplog, count):
+    """Consume a failing run, then check the processed count and the single error log."""
     with pytest.raises(Exception):
-        pipeline = (
-            get_pipeline()
-            .set_source(RandomTextSource(10))
-            .append("reverser", TextReverser(), concurrency=1)
-            .append("error", ExceptionStage(counter=3), concurrency=1)
-            .build()
-        )
         try:
             for _ in pipeline.run():
                 pass
@@ -193,19 +187,43 @@ def test_concurrency_errors(caplog):
             assert 'Exception("test exception")' in tb
             assert "CriticalError" in tb
             raise
-        assert (
-            len(
-                [
-                    record
-                    for record in caplog.records
-                    if record.levelno == logging.ERROR
-                    and "has generated an error" in record.msg.lower()
-                ]
-            )
-            == 1
+    assert pipeline.count == count
+    assert (
+        len(
+            [
+                record
+                for record in caplog.records
+                if record.levelno == logging.ERROR
+                and "has generated an error" in record.msg.lower()
+            ]
         )
-        assert pipeline.count == 1
+        == 1
+    )
+
+
+def test_concurrent_stage_error_raises_and_logs(caplog):
+    """A failing concurrent stage raises the wrapped error and logs it once."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(10))
+        .append("reverser", TextReverser(), concurrency=1)
+        .append("error", ExceptionStage(counter=3), concurrency=1)
+        .build()
+    )
+    _assert_stage_error_raised(pipeline, caplog, 4)
     caplog.clear()
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(10))
+        .append("reverser", TextReverser(), concurrency=1, executor="processes")
+        .append("error", ExceptionStage(), concurrency=1, executor="processes")
+        .build()
+    )
+    _assert_stage_error_raised(pipeline, caplog, 1)
+
+
+def test_concurrent_error_never_sticks_pipeline():
+    """A failing concurrent stage never sticks the pipeline, whatever the queues do."""
     # next: test pipeline don't get stuck on many items that fill the queues
     with pytest.raises(Exception):
         pipeline = (
@@ -277,35 +295,10 @@ def test_concurrency_errors(caplog):
             .build()
         )
         run_with_timeout(pipeline)
-    with pytest.raises(Exception):
-        pipeline = (
-            get_pipeline()
-            .set_source(RandomTextSource(10))
-            .append("reverser", TextReverser(), concurrency=1, executor="processes")
-            .append("error", ExceptionStage(), concurrency=1, executor="processes")
-            .build()
-        )
-        try:
-            for _ in pipeline.run():
-                pass
-        except Exception:
-            tb = traceback.format_exc()
-            assert 'Exception("test exception")' in tb
-            assert "CriticalError" in tb
-            raise
-        assert (
-            len(
-                [
-                    record
-                    for record in caplog.records
-                    if record.levelno == logging.ERROR
-                    and "has generated an error" in record.msg.lower()
-                ]
-            )
-            == 1
-        )
-        assert pipeline.count == 1
-    caplog.clear()
+
+
+def test_concurrent_soft_errors_are_counted(caplog):
+    """Concurrent soft errors attach per item and are all logged."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(10))
@@ -380,9 +373,13 @@ def test_concurrent_constructions():
     assert pipeline.count == 10
     assert serializable_stage.is_closed()
     assert error_manager.is_closed()
-    with pytest.raises(IOError):
-        try:
-            pipeline = get_pipeline()
+
+
+def test_concurrent_construction_start_failures():
+    """Concurrent on_start failures raise on build and run, closing managers."""
+    pipeline = get_pipeline()
+    with cleanup_on_exit(pipeline):
+        with pytest.raises(IOError):
             (
                 pipeline.set_error_manager(SerializableErrorManager())
                 .set_source(RandomTextSource(10))
@@ -394,21 +391,18 @@ def test_concurrent_constructions():
                 )
                 .build()
             )
-        finally:
-            pipeline._stop_logs_receiver()
     error_manager = SerializableErrorManager().raise_on_critical_error()
-    with pytest.raises(IOError):
-        pipeline = (
-            get_pipeline()
-            .set_error_manager(error_manager)
-            .set_source(RandomTextSource(10))
-            .append(
-                "stage", CriticalIOErrorStage(), concurrency=1, executor="processes"
-            )
-            .build()
-        )
-        for item in pipeline.run():
-            pass
+    pipeline = (
+        get_pipeline()
+        .set_error_manager(error_manager)
+        .set_source(RandomTextSource(10))
+        .append("stage", CriticalIOErrorStage(), concurrency=1, executor="processes")
+        .build()
+    )
+    with cleanup_on_exit(pipeline):
+        with pytest.raises(IOError):
+            for _ in pipeline.run():
+                pass
     assert error_manager.is_closed()
 
 
