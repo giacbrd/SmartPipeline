@@ -1,126 +1,88 @@
 # AGENTS.md
 
-SmartPipeline is a zero-dependency, single-package Python **library** for building producer-consumer
-data pipelines. There is no app, no server, no CLI: `smartpipeline/` is the only shipped package and
-everything else is docs/tests/examples.
+SmartPipeline is a zero-dependency, single-package Python **library** for producer-consumer
+data pipelines. No app/server/CLI: `smartpipeline/` is the only shipped package.
 
 ## Commands
 
-No `pyproject.toml`, no Makefile, no tox — everything is setup.py + pre-commit + raw pytest.
-Use the repo venv binaries (`.venv`, Python 3.14; has pytest, flake8, mypy, black, isort).
+No `pyproject.toml`/Makefile/tox — setup.py + pre-commit + raw pytest.
+Use repo venv binaries (`.venv`, Python 3.14; has pytest, flake8, mypy, black, isort).
+Always run tests from repo root (`tests/` is a package: `from tests.utils import ...`).
 
 ```bash
-# tests (always run from repo root: tests/ is a package and imports use `from tests.utils import ...`)
 .venv/bin/python -m pytest -q
-.venv/bin/python -m pytest -q tests/pipeline/test_concurrent.py::test_concurrency_errors   # single test
-.venv/bin/python -m pytest -q --durations=10 tests/          # find slow tests
-
-# CI order is: flake8 -> mypy -> pytest
-.venv/bin/flake8 .             # .flake8 ignores E501 and W503, excludes docs/*
+.venv/bin/python -m pytest -q tests/pipeline/test_concurrent.py::test_concurrency_errors  # single test
+.venv/bin/flake8 .             # .flake8 ignores E501,W503, excludes docs/*
 .venv/bin/mypy smartpipeline  # same target as pre-commit (pass_filenames: false)
-.venv/bin/black . && .venv/bin/isort --profile black .
 .venv/bin/coverage run -m pytest -v   # CI entrypoint
 ```
 
-CI (`.github/workflows/tests.yml`) runs **flake8 → mypy → coverage/pytest** on Python 3.12–3.14
-after `ulimit -n 8192`. `setup.py` requires `python_requires=">=3.12"`, so modern syntax
-(`ExceptionGroup`, builtin generics like `list[...]`) is fine.
+CI (`.github/workflows/tests.yml`, py 3.12–3.14 after `ulimit -n 8192`): only the first
+flake8 invocation gates the build (`--select=E9,F63,F7,F82`; the second is `--exit-zero`
+advisory) → `mypy smartpipeline` → `coverage run -m pytest`.
+`setup.py` requires `python_requires=">=3.12"` (`ExceptionGroup`, `list[...]` OK).
 
-**The suite is slow (minutes), not because of heavy setup but because concurrency tests spawn real
-processes and sleep.** `tests/pipeline/test_concurrent.py` and `test_batch_concurrent.py` use
-`executor="processes"` everywhere. Iterate on focused files/tests, run the whole suite before finishing.
+Suite takes minutes: concurrency tests spawn real processes and sleep. Iterate on focused
+tests, run the full suite before finishing.
 
-## Architecture: where things live
+## Architecture
 
-Execution flows `pipeline.py -> containers.py -> runners.py`. Read these in that order before changing
-pipeline behaviour.
+Execution flows `pipeline.py -> containers.py -> runners.py`; read in that order.
 
-- `smartpipeline/pipeline.py` — `Pipeline`: the builder + public API. `append()` (stage instance),
-  `append_concurrently()` (stage **class** + `args`/`kwargs`, rejects instances), `set_source()`,
-  `set_error_manager()`, `build()`, `run()`, `process()`/`process_async()`/`get_item()`/`stop()`.
-- `smartpipeline/containers.py` — per-stage wiring objects: `SourceContainer`, `StageContainer`,
-  `BatchStageContainer`, `ConcurrentStageContainer`, `BatchConcurrentStageContainer`
-  (grouped as `ConcurrentContainerTypes` for `isinstance` checks). `build()` blocks
-  in `_wait_executors` until stage construction and container linking finish, then sets the shared
-  fatal event and starts concurrent runners.
-- `smartpipeline/runners.py` — the actual worker loops (`process`, `process_batch`, `stage_runner`,
-  `batch_stage_runner`) plus lifecycle helpers (`OnEndErrors`, `_call_on_start`,
-  `_call_on_end_best_effort`, `_raise_on_end_errors`). Collected fatal errors are reported via
-  `raise_collected_errors` (`smartpipeline/utils.py`): a single error is re-raised unchanged,
-  several become an `ExceptionGroup`.
-- `smartpipeline/stage.py` — `Source` (`pop()` + `self.stop()`), `Stage` (`process`), `BatchStage`
-  (`process_batch`, `__init__(size, timeout)`), plus `AliveMixin` (name/logger) and `ConstructorMixin`
-  (`on_start`/`on_end`).
-- `smartpipeline/item.py` — `Item` (`data`, `metadata`, per-stage timings, soft/critical errors) and the
-  internal `Stop` sentinel item that signals flow end.
-- `smartpipeline/error/` — `exceptions.py` (`Error` -> `SoftError` / `CriticalError` / `RetryError`),
-  `handling.py` (`ErrorManager`, `RetryManager`).
-- `smartpipeline/helpers.py` — `LocalFilesSource`, `FilePathItem`.
-- `smartpipeline/defaults.py` — tuning constants: `CONCURRENCY_WAIT=0.1`, `MAX_QUEUES_SIZE=1000`,
-  `DATA_SNIPPET_SIZE=100`.
+- `pipeline.py` — `Pipeline`: `set_source()`, `append()` (stage **instance**),
+  `append_concurrently()` (stage **class** + `args`/`kwargs`, rejects instances),
+  `build()`, `run()`, `process()`/`process_async()`/`get_item()`/`stop()`.
+- `containers.py` — per-stage wiring (`SourceContainer`, `StageContainer`,
+  `BatchStageContainer`, concurrent variants).
+- `runners.py` — worker loops; fatal errors surface via `raise_collected_errors`
+  (`utils.py`): single error re-raised as-is, several as `ExceptionGroup`.
+- `stage.py` — `Source` (`pop()` + `self.stop()` to end), `Stage.process`,
+  `BatchStage.process_batch` (`__init__(size, timeout)`); `on_start`/`on_end` hooks.
+- `item.py` — `Item` (generic `Item[MyData]`; `.data` is writable); internal `Stop`
+  sentinel ends flow.
+- `error/` — `SoftError`/`CriticalError`/`RetryError`; `ErrorManager` (**critical errors
+  are skipped by default** — `raise_on_critical_error()` to raise).
+- `defaults.py` — `CONCURRENCY_WAIT=0.1`, `MAX_QUEUES_SIZE=1000`.
 
-`smartpipeline/__init__.py` exports **nothing** (only `__author__` and `__version__`). There is no
-`from smartpipeline import Pipeline` — every user imports from a submodule
-(`from smartpipeline.pipeline import Pipeline`, `from smartpipeline.stage import Stage`, etc.).
-`examples/dump_es_ids.py` shows the intended import style.
+`smartpipeline/__init__.py` exports nothing (`__author__`, `__version__` only) — always
+import from submodules (`from smartpipeline.pipeline import Pipeline`).
 
-## Non-obvious invariants
+Payloads are generic: `Item[MyData]`/`Stage[MyData]`/`Source[MyData]`/`Pipeline[MyData]`;
+`Item()` infers `Item[Dict[str, Any]]`. Concurrency uses
+`executor: Literal["threads","processes"]` (default `"threads"`), not a `parallel` bool.
+`append(..., retryable_errors, max_retries, backoff)` retries then raises `RetryError`.
 
-- **`build()` must be called after appending and before `run()`/`process()`**; it blocks until all
-  stages finish initializing and raises `ValueError` if no stage was appended. `append_concurrently()`
-  construction/`on_start` failures are stored from their done-callbacks and raised from `build()`
-  (single error as-is, several as `ExceptionGroup`), never silently replaced by the fake container.
-  `run()` raises `ValueError` if no source was set. Stage names must be unique.
-- **`concurrency=0` means inline execution** (no thread/process). A `BatchStage` with `concurrency < 1`
-  is silently forced to `concurrency=1, executor="threads"` (two `FIXME`s in `pipeline.py`: `append` and
-  `append_concurrently`).
-- **`executor="processes"` uses the `spawn` start method and stage instances are copied into workers.** Anything
-  non-picklable (files, sockets, models) must be created in `on_start()`, not `__init__` — see
-  `SerializableStage`/`SerializableErrorManager` in `tests/utils.py` for the pattern.
-- **`on_start`/`on_end` failures are fatal and bypass `ErrorManager`.** There is no `Item` to
-  attach them to, so they are never soft/critical-filtered or retried: workers set the shared
-  fatal event and the original exception reaches the caller — `on_start` via `build()`
-  (inline/threaded `on_start` can also raise from `append()`), `on_end` via `run()` termination.
-  A single failure is re-raised as-is, several become an `ExceptionGroup`. `_terminate_all` is
-  best-effort (every stage's `on_end` is attempted, worker errors collected via `check_errors()`)
-  and the background terminator thread's error is re-raised in the main `run()` loop — never let
-  termination die silently or the pipeline hangs with no feedback. On the `process()` error path,
-  `on_end` failures are logged and the original processing error is kept, not masked.
-- **All cross-process state goes through one `multiprocessing.Manager()`** (`SyncManager`): queues,
-  events, counters. This is deliberate (see the comment in `pipeline._new_mp_queue` explaining why not
-  `multiprocessing.Queue`). Don't swap in raw mp primitives.
-- **Cross-process logging** needs the `LogsReceiver`/`QueueHandler` wiring
-  (`pipeline._start_logs_receiver` + `_stage_initialization_with_logger`); stage loggers are named after
-  the stage name.
-- Timing uses `time.perf_counter`; item timings are **seconds** per stage name (`item.set_timing`).
+## Invariants agents get wrong
 
-## Version bump checklist
+- `run()`/`process()`/`process_async()` auto-call `build()` if skipped — but call
+  `build()` explicitly after appending anyway; it raises `ValueError` with no stages,
+  and `run()` raises `ValueError` with no source. Stage names must be unique.
+- `concurrency=0` means inline (no threads/processes). `BatchStage` with
+  `concurrency < 1` is silently forced to `concurrency=1, executor="threads"`.
+- `executor="processes"` uses `spawn`; stage instances are pickled into workers.
+  Non-picklable resources (files, sockets, models) go in `on_start()`, not `__init__`
+  (see `SerializableStage`/`SerializableErrorManager` in `tests/utils.py`).
+- `on_start`/`on_end` failures are fatal and bypass `ErrorManager` (no `Item` to attach
+  to): single failure re-raised as-is, several as `ExceptionGroup`. Never swallow
+  termination errors or the pipeline hangs silently.
+- All cross-process state via one `multiprocessing.Manager()` (`_new_mp_queue` etc.) —
+  don't swap in raw mp primitives. Cross-process logging needs the `LogsReceiver` wiring.
 
-The version string is duplicated in three places and must stay in sync: `setup.py` (`version=`),
-`smartpipeline/__init__.py` (`__version__`), `docs/conf.py` (`release`). Also update `CHANGELOG.md`,
-which documents breaking changes per release (this project uses Git Flow branches off `develop`, per
-`CONTRIBUTING.md`).
+## Tests
 
-## Public API changes
+- Never invent ad-hoc stages/sources: reuse `tests/utils.py` + fixtures in
+  `tests/conftest.py`; `get_pipeline()` already sets `raise_on_critical_error()`.
+- Never consume `pipeline.run()` directly — a stuck pipeline hangs the suite. Use
+  `run_with_timeout(pipeline)` (fails instead of hanging).
+- Annotate new public functions (`py.typed` shipped, mypy enforced).
 
-Anything added to the public surface should get an `autoclass` entry in `docs/api.rst` (docs are built
-by Read the Docs from `docs/conf.py`, deps pinned in `docs/requirements.txt`, e.g. `docutils<0.17`)
-and a `CHANGELOG.md` entry. Former deprecated aliases (`Item.payload`,
-`Item.set_metadata`/`get_metadata`, `DataItem`, `Pipeline.append_stage`,
-`Pipeline.append_stage_concurrently`) were removed in the breaking generics
-release: do not reintroduce compatibility shims, and do not add new aliases
-for renamed API.
+## Release / docs / style
 
-## Style conventions
-
-- Each module starts with `__author__ = "Giacomo Berardi <giacbrd.com>"` (below imports, per
-  `.pre-commit-config.yaml`/`black`).
-- Tests never define ad-hoc stages/sources: reuse the shared ones in `tests/utils.py` and the fixtures in
-  `tests/conftest.py` (`text_samples_fx`, `items_generator_fx`, `file_directory_source_fx`).
-  `tests/utils.py:get_pipeline()` builds a pipeline with `raise_on_critical_error()` already set.
-- Never consume `pipeline.run()` directly in a test: a stuck pipeline hangs the suite. Use
-  `tests/utils.py:run_with_timeout(pipeline)`, which fails the test instead of hanging.
-- Annotate new public functions — the package ships `py.typed` and CI runs `mypy`.
-- The venv's `black` (26.x) is newer than the pre-commit pin (23.7.0): running `black .` can
-  reformat unrelated files and collapse stub `...` bodies in ways flake8 (E704) rejects. Check
-  `git status` after formatting and revert unrelated hunks.
+- Version triple-sync: `setup.py` (`version=`), `smartpipeline/__init__.py`
+  (`__version__`), `docs/conf.py` (`release`) + `CHANGELOG.md` entry. Git Flow off
+  `develop` (see `CONTRIBUTING.md`).
+- New public API needs an `autoclass` entry in `docs/api.rst`. Don't reintroduce removed
+  aliases (`Item.payload`, `DataItem`, `append_stage*`) or add new ones.
+- Each module starts with `__author__ = "Giacomo Berardi <giacbrd.com>"`.
+- The venv's `black` (26.x) is newer than the pre-commit pin (23.7.0): check `git status`
+  after formatting and revert unrelated hunks.
