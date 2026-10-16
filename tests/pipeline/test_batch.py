@@ -85,8 +85,8 @@ def test_run_different_sizes():
     assert n == 5 == pipeline.count - 1
 
 
-def test_errors(caplog):
-    """Single-item errors inside batch pipelines attach per item with timings."""
+def test_soft_errors_flow_through_batches(caplog):
+    """Soft errors attach per item with timings while batched downstream stages still run."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager())
@@ -129,6 +129,10 @@ def test_errors(caplog):
         assert str(error) == "test pipeline error"
     assert pipeline.count == 28
     assert any(caplog.records)
+
+
+def test_batch_critical_error_skips_downstream(caplog):
+    """Critical errors skip downstream stages and are logged."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager())
@@ -138,7 +142,6 @@ def test_errors(caplog):
         .append("error2", ErrorStage())
         .build()
     )
-    caplog.clear()
     for item in pipeline.run():
         assert item.has_critical_errors()
         assert item.get_timing("reverser")
@@ -152,6 +155,10 @@ def test_errors(caplog):
             )
     assert pipeline.count == 10
     assert any(caplog.records)
+
+
+def test_batch_raise_on_critical_error_stops_run():
+    """A critical error raises out of run when raise_on_critical_error is set."""
     with pytest.raises(Exception):
         pipeline = (
             get_pipeline()
@@ -162,7 +169,10 @@ def test_errors(caplog):
         )
         for _ in pipeline.run():
             pass
-        assert pipeline.count == 1
+
+
+def test_batch_no_skip_on_critical_error_runs_downstream():
+    """Critical errors still run downstream batch stages when skipping is disabled."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager().no_skip_on_critical_error())
@@ -179,8 +189,8 @@ def test_errors(caplog):
     assert pipeline.count == 10
 
 
-def test_batch_errors(caplog):
-    """Batch-wide soft and critical errors attach to every item in the batch."""
+def test_batch_wide_soft_errors(caplog):
+    """Batch-wide soft errors attach to every item with timings."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager())
@@ -218,6 +228,10 @@ def test_batch_errors(caplog):
         assert str(error) == "test pipeline error"
     assert pipeline.count == 28
     assert any(caplog.records)
+
+
+def test_batch_wide_critical_errors(caplog):
+    """Batch-wide critical errors attach to every item and can stop the run."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager())
@@ -250,7 +264,6 @@ def test_batch_errors(caplog):
         )
         for _ in pipeline.run():
             pass
-        assert pipeline.count == 1
 
 
 def test_retryable_batch_stages(items_generator_fx):

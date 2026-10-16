@@ -36,7 +36,7 @@ def test_on_end_errors_type():
 
 
 def test_runners_with_shared_counters():
-    """Stage and batch runners drain queues with shared counters, on threads and processes."""
+    """Stage and batch runners drain managed queues with shared counters."""
     manager = Manager()
     terminated = manager.Event()
     in_queue = manager.Queue()
@@ -62,55 +62,39 @@ def test_runners_with_shared_counters():
     assert "bad item" in str(excinfo.value)
     assert out_queue.get(block=True).data["file"]
 
-    terminated = manager.Event()
-    for _ in range(100):
-        in_queue.put(Item())
-    item = Item()
-    item.data["file"] = "f"
-    in_queue.put(item)
-    terminated.set()
-    with pytest.raises(ValueError) as excinfo:
-        batch_stage_runner(
-            SerializableBatchStage(100, 1),
-            in_queue,
-            out_queue,
-            SerializableErrorManager().raise_on_critical_error(),
-            RetryManager(),
-            terminated,
-            ProcessCounter(manager),
-            ProcessCounter(manager),
-            manager.Queue(),
-        )
-    assert "bad item" in str(excinfo.value)
-    for _ in range(100):
-        assert out_queue.get(block=True).data["file"]
-    assert out_queue.empty()
+    for _ in range(2):
+        terminated = manager.Event()
+        for _ in range(100):
+            in_queue.put(Item())
+        item = Item()
+        item.data["file"] = "f"
+        in_queue.put(item)
+        terminated.set()
+        with pytest.raises(ValueError) as excinfo:
+            batch_stage_runner(
+                SerializableBatchStage(100, 1),
+                in_queue,
+                out_queue,
+                SerializableErrorManager().raise_on_critical_error(),
+                RetryManager(),
+                terminated,
+                ProcessCounter(manager),
+                ProcessCounter(manager),
+                manager.Queue(),
+            )
+        assert "bad item" in str(excinfo.value)
+        for _ in range(100):
+            assert out_queue.get(block=True).data["file"]
+        assert out_queue.empty()
 
-    terminated = manager.Event()
-    for _ in range(100):
-        in_queue.put(Item())
-    item = Item()
-    item.data["file"] = "f"
-    in_queue.put(item)
-    terminated.set()
-    with pytest.raises(ValueError) as excinfo:
-        batch_stage_runner(
-            SerializableBatchStage(100, 1),
-            in_queue,
-            out_queue,
-            SerializableErrorManager().raise_on_critical_error(),
-            RetryManager(),
-            terminated,
-            ProcessCounter(manager),
-            ProcessCounter(manager),
-            manager.Queue(),
-        )
-    assert "bad item" in str(excinfo.value)
-    for _ in range(100):
-        assert out_queue.get(block=True).data["file"]
-    assert out_queue.empty()
 
-    # also test when running concurrently, both on processes and threads, that is how batch stages always run
+def test_batch_runner_in_executors():
+    """Batch runners drain queues inside process and thread executors."""
+    manager = Manager()
+    in_queue = manager.Queue()
+    out_queue = manager.Queue()
+
+    # batch stages always run concurrently, both on processes and threads
     terminated = manager.Event()
     future = ProcessPoolExecutor(mp_context=get_context("spawn")).submit(
         batch_stage_runner,
@@ -187,15 +171,15 @@ def test_stage_runner_sets_fatal_on_error():
     assert fatal.is_set()
 
 
-def test_stage_runner_aborts_put_on_fatal():
-    """A stage runner skips output puts once fatal is set."""
-    in_queue: Queue = Queue()
-    in_queue.put(text_item())
-    out_queue: Queue = Queue(maxsize=1)
-    out_queue.put(text_item())
+def test_stage_runner_aborts_output_on_fatal():
+    """A stage runner drops items and Stop instead of blocking on a full queue once fatal is set."""
     fatal = Event()
     fatal.set()
+    out_queue: Queue = Queue(maxsize=1)
+    out_queue.put(text_item())
     counter = ThreadCounter()
+    in_queue: Queue = Queue()
+    in_queue.put(text_item())
     stage_runner(
         TextReverser(),
         in_queue,
@@ -210,16 +194,8 @@ def test_stage_runner_aborts_put_on_fatal():
     )
     assert out_queue.qsize() == 1
     assert counter.value == 0
-
-
-def test_stage_runner_aborts_stop_on_fatal():
-    """A stage runner skips Stop forwarding once fatal is set."""
-    in_queue: Queue = Queue()
+    in_queue = Queue()
     in_queue.put(Stop())
-    out_queue: Queue = Queue(maxsize=1)
-    out_queue.put(text_item())
-    fatal = Event()
-    fatal.set()
     stage_runner(
         TextReverser(),
         in_queue,
@@ -257,16 +233,16 @@ def test_batch_runner_sets_fatal_on_error():
     assert fatal.is_set()
 
 
-def test_batch_runner_aborts_put_on_fatal():
-    """A batch runner skips output puts once fatal is set."""
+def test_batch_runner_aborts_output_on_fatal():
+    """A batch runner drops batches and Stop instead of blocking on a full queue once fatal is set."""
+    fatal = Event()
+    fatal.set()
+    out_queue: Queue = Queue(maxsize=1)
+    out_queue.put(text_item())
+    counter = ThreadCounter()
     in_queue: Queue = Queue()
     in_queue.put(text_item())
     in_queue.put(text_item())
-    out_queue: Queue = Queue(maxsize=1)
-    out_queue.put(text_item())
-    fatal = Event()
-    fatal.set()
-    counter = ThreadCounter()
     batch_stage_runner(
         BatchTextGenerator(size=2, timeout=0.01),
         in_queue,
@@ -281,16 +257,8 @@ def test_batch_runner_aborts_put_on_fatal():
     )
     assert out_queue.qsize() == 1
     assert counter.value == 0
-
-
-def test_batch_runner_aborts_stop_on_fatal():
-    """A batch runner skips Stop forwarding once fatal is set."""
-    in_queue: Queue = Queue()
+    in_queue = Queue()
     in_queue.put(Stop())
-    out_queue: Queue = Queue(maxsize=1)
-    out_queue.put(text_item())
-    fatal = Event()
-    fatal.set()
     batch_stage_runner(
         BatchTextGenerator(size=2, timeout=0.01),
         in_queue,

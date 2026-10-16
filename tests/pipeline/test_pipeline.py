@@ -52,8 +52,8 @@ def test_run():
         Pipeline().append("reverser", TextReverser()).append("reverser", TextReverser())
 
 
-def test_errors(caplog):
-    """Soft errors attach per item while critical errors skip downstream stages."""
+def test_soft_errors_are_logged_and_flow(caplog):
+    """Soft errors attach per item with timings while downstream stages still run."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(10))
@@ -78,6 +78,10 @@ def test_errors(caplog):
         if record.levelno == logging.ERROR
     )
     assert pipeline.count == 10
+
+
+def test_soft_errors_with_downstream_stages(caplog):
+    """Soft errors do not stop downstream stages from processing the item."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager())
@@ -87,7 +91,6 @@ def test_errors(caplog):
         .append("duplicator", TextDuplicator())
         .build()
     )
-    caplog.clear()
     for item in pipeline.run():
         assert item.has_soft_errors()
         assert item.get_timing("reverser")
@@ -104,6 +107,10 @@ def test_errors(caplog):
         if record.levelno == logging.ERROR
     )
     assert pipeline.count == 10
+
+
+def test_critical_io_error_skips_downstream():
+    """Critical IO errors attach the cause and skip downstream stages."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager())
@@ -119,6 +126,10 @@ def test_errors(caplog):
         for error in item.critical_errors():
             assert isinstance(error.get_exception(), IOError)
             assert str(error) == "test pipeline critical IO error"
+
+
+def test_critical_error_skips_downstream(caplog):
+    """Critical errors skip downstream stages and are logged."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager())
@@ -128,7 +139,6 @@ def test_errors(caplog):
         .append("error2", ErrorStage())
         .build()
     )
-    caplog.clear()
     for item in pipeline.run():
         assert item.has_critical_errors()
         assert item.get_timing("reverser")
@@ -149,21 +159,28 @@ def test_errors(caplog):
         if record.levelno == logging.ERROR
     )
     assert pipeline.count == 10
+
+
+def test_raise_on_critical_error_stops_run():
+    """A critical error raises out of run when raise_on_critical_error is set."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(10))
+        .append("reverser", TextReverser())
+        .append("error", ExceptionStage())
+        .build()
+    )
     with pytest.raises(Exception):
-        pipeline = (
-            get_pipeline()
-            .set_source(RandomTextSource(10))
-            .append("reverser", TextReverser())
-            .append("error", ExceptionStage())
-            .build()
-        )
         try:
             for _ in pipeline.run():
                 pass
         except Exception:
             assert 'Exception("test exception")' in traceback.format_exc()
             raise
-        assert pipeline.count == 1
+
+
+def test_no_skip_on_critical_error_runs_downstream():
+    """Critical errors still run downstream stages when skipping is disabled."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager().no_skip_on_critical_error())
@@ -453,8 +470,8 @@ def test_empty_stage_returns_item_unchanged():
     assert EmptyStage().process(item) is item
 
 
-def test_run_without_explicit_build():
-    """run() builds the pipeline implicitly on first use."""
+def test_implicit_build_on_first_use():
+    """run() and process_async() build the pipeline implicitly on first use."""
     pipeline: Pipeline[Dict[str, Any]] = (
         get_pipeline()
         .set_source(RandomTextSource(3))
@@ -465,9 +482,6 @@ def test_run_without_explicit_build():
     assert pipeline._executors_ready
     assert len(items) == 3
 
-
-def test_process_async_without_explicit_build():
-    """process_async() builds the pipeline implicitly on first use."""
     pipeline = get_pipeline().append("reverser", TextReverser())
     assert not pipeline._executors_ready
     item = Item()
