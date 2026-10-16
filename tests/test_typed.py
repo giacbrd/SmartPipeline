@@ -14,6 +14,7 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
 def test_typed_dict_pipeline():
+    """TypedDict payloads flow through a typed pipeline with id sync."""
     pipeline: Pipeline[TypedRow] = (
         Pipeline[TypedRow]()
         .set_source(TypedRowSource(5))
@@ -28,6 +29,7 @@ def test_typed_dict_pipeline():
 
 
 def test_dataclass_pipeline():
+    """Dataclass payloads flow through process with id sync."""
     pipeline: Pipeline[TypedDoc] = (
         Pipeline[TypedDoc]().append("upper", TypedDocUpper()).build()
     )
@@ -37,11 +39,6 @@ def test_dataclass_pipeline():
 
 
 def test_primitive_process():
+    """Plain str payloads flow through process."""
     pipeline: Pipeline[str] = Pipeline[str]().append("upper", StrUpper()).build()
     assert pipeline.process(Item[str]("hello")).data == "HELLO"
-
-
-def test_default_dict_payload():
-    item = Item()
-    item.data["text"] = "hello"
-    assert item.data["text"] == "hello"

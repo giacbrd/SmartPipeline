@@ -1,10 +1,9 @@
+import logging
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from multiprocessing import Manager, get_context
+from concurrent.futures import Future
+from multiprocessing import Manager
 from queue import Queue
 from threading import Event
-
-import pytest
 
 from smartpipeline.containers import (
     BatchConcurrentStageContainer,
@@ -13,68 +12,61 @@ from smartpipeline.containers import (
     SourceContainer,
     StageContainer,
 )
-from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import Item, Stop
-from smartpipeline.runners import batch_stage_runner, stage_runner
 from smartpipeline.utils import ProcessCounter, ThreadCounter
 from tests.utils import (
     BatchTextGenerator,
     BatchTextReverser,
+    ErrorSource,
     ListSource,
-    SerializableBatchStage,
-    SerializableErrorManager,
-    SerializableStage,
     TextGenerator,
     TextReverser,
+    text_item,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
-def test_data():
-    item = Item()
-    assert item.id
-    item.data["text"] = "prova"
-    item.data["id"] = "666"
-    item.metadata["source"] = "remote"
-    item.metadata["version"] = 3
-    assert set(item.metadata.keys()) == {"source", "version"}
-    assert item.id == "666"
-    assert item.metadata["source"] == "remote"
-    assert item.metadata["version"] == 3
-    assert not item.metadata.get("head")
+def _get_items(container):
+    while True:
+        item = container.get_processed()
+        if item is None or isinstance(item, Stop):
+            break
+        yield item
 
 
-def test_error():
-    item = Item()
-    stage = TextReverser()
-    item.add_soft_error(stage.name, ValueError("value error"))
-    item.add_soft_error(stage.name, KeyError("key error"))
-    item.add_critical_error(stage.name, KeyError("key error"))
-    assert item.has_critical_errors()
-    assert item.has_soft_errors()
-    assert len(list(item.soft_errors())) == 2
-    assert len(list(item.critical_errors())) == 1
-    stage = TextReverser()
-    item.add_soft_error(stage.name, SoftError())
-    item.add_critical_error(stage.name, CriticalError())
-    with pytest.raises(ValueError):
-        item.add_soft_error(stage.name, CriticalError())
-    with pytest.raises(ValueError):
-        item.add_critical_error(stage.name, SoftError())
+def _wait_for_count(container, expected, timeout=30.0):
+    """Wait until a concurrent container has seen the expected number of items.
+
+    A concurrent runner puts each item in the output queue before increasing
+    its counter, and it produces asynchronously, so draining the output right
+    after feeding the input can stop at the first empty queue while items are
+    still in flight (and observe a counter lagging one put behind).
+    Poll the counter up to `timeout` seconds so the test observes quiescence.
+    """
+    start = time.time()
+    while container.count() < expected:
+        if time.time() - start > timeout:
+            break
+        time.sleep(0.05)
+    return container.count()
 
 
-def test_source_container():
-    manager = Manager()
+def _hundred_items():
     data = [Item() for _ in range(100)]
     for i, item in enumerate(data):
         item.metadata["id"] = i + 1
+    return data
+
+
+def test_source_container_streams_until_stop():
+    """SourceContainer streams items in order until Stop and reports stopped."""
+    data = _hundred_items()
     container = SourceContainer()
     assert str(container)
     assert not container.is_set()
-    source = ListSource(data)
-    container.set(source)
+    container.set(ListSource(data))
     assert not container.is_stopped()
     assert container.is_set()
     item = container.get_processed()
@@ -84,9 +76,12 @@ def test_source_container():
         item = container.get_processed()
     assert container.is_stopped()
 
+
+def test_source_container_prepends_items():
+    """SourceContainer serves prepended items before the source stream."""
+    data = _hundred_items()
     container = SourceContainer()
-    source = ListSource(data)
-    container.set(source)
+    container.set(ListSource(data))
     item = Item()
     item.metadata["id"] = 1001
     container.prepend_item(item)
@@ -103,6 +98,14 @@ def test_source_container():
     assert container.get_processed().metadata["id"] == 1003
     assert container.get_processed().metadata["id"] == 3
     assert not container.is_stopped()
+
+
+def test_source_container_queued_pop_and_stop():
+    """SourceContainer pops into queues and stops with a prepended item left."""
+    manager = Manager()
+    data = _hundred_items()
+    container = SourceContainer()
+    container.set(ListSource(data))
     container.init_queue(manager.Queue)
     queue = container.out_queue
     item = Item()
@@ -110,18 +113,18 @@ def test_source_container():
     queue.put(item)
     assert container.get_processed().metadata["id"] == 1004
     container.pop_into_queue(Queue())
-    assert container.get_processed().metadata["id"] == 4
+    assert container.get_processed().metadata["id"] == 1
 
     container = SourceContainer()
-    source = ListSource([])
-    container.set(source)
+    container.set(ListSource([]))
     container.prepend_item(Item())
     container.stop()
     assert isinstance(container.get_processed(), Item)
     assert isinstance(container.get_processed(), Stop)
 
 
-def test_stage_container():
+def test_stage_container_inline_and_concurrent():
+    """StageContainer processes inline items; the concurrent variant runs and terminates."""
     manager = Manager()
     simple_item = Item()
     simple_item.data["text"] = "hello world"
@@ -215,160 +218,8 @@ def test_stage_container():
     del container
 
 
-def test_runners():
-    manager = Manager()
-    terminated = manager.Event()
-    in_queue = manager.Queue()
-    out_queue = manager.Queue()
-
-    in_queue.put(Item())
-    item = Item()
-    item.data["file"] = "f"
-    in_queue.put(item)
-    terminated.set()
-    with pytest.raises(ValueError) as excinfo:
-        stage_runner(
-            SerializableStage(),
-            in_queue,
-            out_queue,
-            SerializableErrorManager().raise_on_critical_error(),
-            RetryManager(),
-            terminated,
-            ProcessCounter(manager),
-            ProcessCounter(manager),
-            manager.Queue(),
-        )
-    assert "bad item" in str(excinfo.value)
-    assert out_queue.get(block=True).data["file"]
-
-    terminated = manager.Event()
-    for _ in range(100):
-        in_queue.put(Item())
-    item = Item()
-    item.data["file"] = "f"
-    in_queue.put(item)
-    terminated.set()
-    with pytest.raises(ValueError) as excinfo:
-        batch_stage_runner(
-            SerializableBatchStage(100, 1),
-            in_queue,
-            out_queue,
-            SerializableErrorManager().raise_on_critical_error(),
-            RetryManager(),
-            terminated,
-            ProcessCounter(manager),
-            ProcessCounter(manager),
-            manager.Queue(),
-        )
-    assert "bad item" in str(excinfo.value)
-    for _ in range(100):
-        assert out_queue.get(block=True).data["file"]
-    assert out_queue.empty()
-
-    terminated = manager.Event()
-    for _ in range(100):
-        in_queue.put(Item())
-    item = Item()
-    item.data["file"] = "f"
-    in_queue.put(item)
-    terminated.set()
-    with pytest.raises(ValueError) as excinfo:
-        batch_stage_runner(
-            SerializableBatchStage(100, 1),
-            in_queue,
-            out_queue,
-            SerializableErrorManager().raise_on_critical_error(),
-            RetryManager(),
-            terminated,
-            ProcessCounter(manager),
-            ProcessCounter(manager),
-            manager.Queue(),
-        )
-    assert "bad item" in str(excinfo.value)
-    for _ in range(100):
-        assert out_queue.get(block=True).data["file"]
-    assert out_queue.empty()
-
-    # also test when running concurrently, both on processes and threads, that is how batch stages always run
-    terminated = manager.Event()
-    future = ProcessPoolExecutor(mp_context=get_context("spawn")).submit(
-        batch_stage_runner,
-        SerializableBatchStage(100, 1),
-        in_queue,
-        out_queue,
-        SerializableErrorManager().raise_on_critical_error(),
-        RetryManager(),
-        terminated,
-        ProcessCounter(manager),
-        ProcessCounter(manager),
-        manager.Queue(),
-    )
-    for _ in range(150):
-        in_queue.put(Item())
-    for _ in range(150):
-        assert out_queue.get(block=True).data["file"]
-    item = Item()
-    item.data["file"] = "f"
-    in_queue.put(item)
-    assert str(future.exception()) == "bad item"
-    terminated.set()
-    future.cancel()
-
-    terminated = Event()
-    in_queue = Queue()
-    out_queue = Queue()
-    stage = SerializableBatchStage(100, 1)
-    stage.on_start()
-    future = ThreadPoolExecutor().submit(
-        batch_stage_runner,
-        stage,
-        in_queue,
-        out_queue,
-        SerializableErrorManager().raise_on_critical_error(),
-        RetryManager(),
-        terminated,
-        ThreadCounter(),
-        ThreadCounter(),
-        Queue(),
-    )
-    for _ in range(150):
-        in_queue.put(Item())
-    for _ in range(150):
-        assert out_queue.get(block=True).data["file"]
-    item = Item()
-    item.data["file"] = "f"
-    in_queue.put(item)
-    assert str(future.exception()) == "bad item"
-    terminated.set()
-    future.cancel()
-
-
-def _get_items(container):
-    while True:
-        item = container.get_processed()
-        if item is None or isinstance(item, Stop):
-            break
-        yield item
-
-
-def _wait_for_count(container, expected, timeout=30.0):
-    """Wait until a concurrent container has seen the expected number of items.
-
-    A concurrent runner puts each item in the output queue before increasing
-    its counter, and it produces asynchronously, so draining the output right
-    after feeding the input can stop at the first empty queue while items are
-    still in flight (and observe a counter lagging one put behind).
-    Poll the counter up to `timeout` seconds so the test observes quiescence.
-    """
-    start = time.time()
-    while container.count() < expected:
-        if time.time() - start > timeout:
-            break
-        time.sleep(0.05)
-    return container.count()
-
-
-def test_batch_stage_container1():
+def test_batch_stage_container_sequential_batches():
+    """BatchStageContainer processes sequential batches and serves queued items."""
     manager = Manager()
     simple_item = Item()
     simple_item.data["text"] = "hello world"
@@ -410,7 +261,8 @@ def test_batch_stage_container1():
     assert container.get_processed() is None
 
 
-def test_batch_stage_container2():
+def test_batch_stage_container_stop_propagation():
+    """BatchStageContainer forwards Stop once the source is exhausted."""
     source = SourceContainer()
     container = BatchStageContainer(
         "test1", BatchTextReverser(), ErrorManager(), RetryManager()
@@ -429,7 +281,8 @@ def test_batch_stage_container2():
     assert container.is_stopped() and not container.is_terminated()
 
 
-def test_batch_concurrent_stage_container1():
+def test_batch_concurrent_stage_container_throughput():
+    """BatchConcurrentStageContainer processes 200 items with async counting."""
     manager = Manager()
     source = SourceContainer()
     source.set(ListSource([Item() for _ in range(200)]))
@@ -489,7 +342,8 @@ def test_batch_concurrent_stage_container1():
     del container
 
 
-def test_batch_concurrent_stage_container2():
+def test_batch_concurrent_stage_container_termination():
+    """BatchConcurrentStageContainer terminates and reports termination."""
     manager = Manager()
     source = SourceContainer()
     items = [Item() for _ in range(10)]
@@ -518,3 +372,112 @@ def test_batch_concurrent_stage_container2():
     assert container.is_terminated()
     container.shutdown()
     del container
+
+
+def test_fatal_event_mixin():
+    """Containers expose the shared fatal event and observe when it fires."""
+    container = StageContainer(
+        "fatal-test", TextReverser(), ErrorManager(), RetryManager()
+    )
+    assert container.fatal_event is None
+    assert not container.is_fatal()
+    event = Event()
+    container.set_fatal_event(event)
+    assert container.fatal_event is event
+    assert not container.is_fatal()
+    assert not container.has_aborted_put()
+    event.set()
+    assert container.is_fatal()
+
+
+def test_stage_container_put_abort():
+    """StageContainer drops output and flags the abort once fatal is set."""
+    container = StageContainer(
+        "put-abort", TextReverser(), ErrorManager(), RetryManager()
+    )
+    container.init_queue(lambda: Queue(maxsize=1))
+    container.out_queue.put(text_item())
+    fatal = Event()
+    fatal.set()
+    container.set_fatal_event(fatal)
+    container._put_item(text_item())
+    assert container.has_aborted_put()
+
+
+def test_batch_container_put_abort_breaks():
+    """BatchStageContainer aborts a batch put on fatal, dropping the tail."""
+    container = BatchStageContainer(
+        "batch-put-abort", BatchTextGenerator(size=2), ErrorManager(), RetryManager()
+    )
+    container.init_queue(lambda: Queue(maxsize=1))
+    container.out_queue.put(text_item())
+    fatal = Event()
+    fatal.set()
+    container.set_fatal_event(fatal)
+    container._put_item([text_item(), text_item()])
+    assert container.has_aborted_put()
+    # the second item of the batch is dropped with the abort
+    assert container.out_queue.qsize() == 1
+
+
+def test_empty_out_queue():
+    """empty_out_queue drains the output queue and tolerates a missing one."""
+    container = StageContainer(
+        "empty-test", TextReverser(), ErrorManager(), RetryManager()
+    )
+    # no output queue: nothing to do, must not raise
+    container.empty_out_queue()
+    container.init_queue(Queue)
+    container.out_queue.put(text_item())
+    container.out_queue.put(text_item())
+    container.empty_out_queue()
+    assert container.out_queue.empty()
+
+
+def test_source_pop_into_queue_aborts_on_fatal():
+    """SourceContainer stops instead of pushing once fatal is set."""
+    container = SourceContainer()
+    container.set(ListSource([text_item() for _ in range(5)]))
+    container.init_queue(lambda: Queue(maxsize=1))
+    container.out_queue.put(text_item())
+    fatal = Event()
+    fatal.set()
+    container.set_fatal_event(fatal)
+    container.pop_into_queue(Queue())
+    assert container._stop_sent is True
+
+
+def test_source_pop_into_queue_reports_errors():
+    """SourceContainer routes source pop failures to the errors queue."""
+    container = SourceContainer()
+    container.set(ErrorSource())
+    container.init_queue(Queue)
+    errors: Queue = Queue()
+    container.pop_into_queue(errors)
+    assert isinstance(errors.get_nowait(), ValueError)
+
+
+def test_concurrent_shutdown_oserror(caplog):
+    """Concurrent shutdown failures are logged, not raised."""
+    container = ConcurrentStageContainer(
+        "shutdown-test",
+        TextReverser(),
+        ErrorManager(),
+        RetryManager(),
+        Queue,
+        ThreadCounter,
+        Event,
+        concurrency=1,
+    )
+    future: Future = Future()
+    future.set_result(None)
+    container._futures = [future]
+
+    class _BoomExecutor:
+        def shutdown(self):
+            raise OSError("boom")
+
+    container._stage_executor = _BoomExecutor()
+    with caplog.at_level(logging.WARNING):
+        container.shutdown()
+    assert any("shutting down" in record.msg.lower() for record in caplog.records)

@@ -20,6 +20,7 @@ from tests.utils import (
     TextReverser,
     get_pipeline,
     run_with_timeout,
+    text_item,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 def test_run():
+    """An inline pipeline runs 10 items with timings and rejects duplicate stage names."""
     pipeline: Pipeline[Dict[str, Any]] = (
         get_pipeline()
         .set_source(RandomTextSource(10))
@@ -50,7 +52,8 @@ def test_run():
         Pipeline().append("reverser", TextReverser()).append("reverser", TextReverser())
 
 
-def test_errors(caplog):
+def test_soft_errors_are_logged_and_flow(caplog):
+    """Soft errors attach per item with timings while downstream stages still run."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(10))
@@ -75,6 +78,10 @@ def test_errors(caplog):
         if record.levelno == logging.ERROR
     )
     assert pipeline.count == 10
+
+
+def test_soft_errors_with_downstream_stages(caplog):
+    """Soft errors do not stop downstream stages from processing the item."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager())
@@ -84,7 +91,6 @@ def test_errors(caplog):
         .append("duplicator", TextDuplicator())
         .build()
     )
-    caplog.clear()
     for item in pipeline.run():
         assert item.has_soft_errors()
         assert item.get_timing("reverser")
@@ -101,6 +107,10 @@ def test_errors(caplog):
         if record.levelno == logging.ERROR
     )
     assert pipeline.count == 10
+
+
+def test_critical_io_error_skips_downstream():
+    """Critical IO errors attach the cause and skip downstream stages."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager())
@@ -116,6 +126,10 @@ def test_errors(caplog):
         for error in item.critical_errors():
             assert isinstance(error.get_exception(), IOError)
             assert str(error) == "test pipeline critical IO error"
+
+
+def test_critical_error_skips_downstream(caplog):
+    """Critical errors skip downstream stages and are logged."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager())
@@ -125,7 +139,6 @@ def test_errors(caplog):
         .append("error2", ErrorStage())
         .build()
     )
-    caplog.clear()
     for item in pipeline.run():
         assert item.has_critical_errors()
         assert item.get_timing("reverser")
@@ -146,21 +159,28 @@ def test_errors(caplog):
         if record.levelno == logging.ERROR
     )
     assert pipeline.count == 10
+
+
+def test_raise_on_critical_error_stops_run():
+    """A critical error raises out of run when raise_on_critical_error is set."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(10))
+        .append("reverser", TextReverser())
+        .append("error", ExceptionStage())
+        .build()
+    )
     with pytest.raises(Exception):
-        pipeline = (
-            get_pipeline()
-            .set_source(RandomTextSource(10))
-            .append("reverser", TextReverser())
-            .append("error", ExceptionStage())
-            .build()
-        )
         try:
             for _ in pipeline.run():
                 pass
         except Exception:
             assert 'Exception("test exception")' in traceback.format_exc()
             raise
-        assert pipeline.count == 1
+
+
+def test_no_skip_on_critical_error_runs_downstream():
+    """Critical errors still run downstream stages when skipping is disabled."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager().no_skip_on_critical_error())
@@ -230,6 +250,7 @@ def test_build():
 
 
 def test_retryable_stage(items_generator_fx):
+    """Retryable stages turn failures into RetryError soft errors; bad configs raise."""
     # default behaviour
     item = next(items_generator_fx)
     pipeline = (
@@ -373,6 +394,7 @@ def test_retryable_stage(items_generator_fx):
 
 
 def test_retry_on_different_errors(items_generator_fx):
+    """Retries collect one soft error per attempt across mixed exception types."""
     item = next(items_generator_fx)
     pipeline = (
         Pipeline()
@@ -401,6 +423,7 @@ def test_retry_on_different_errors(items_generator_fx):
 
 
 def test_exponential_backoff_retry_strategy(items_generator_fx):
+    """Retry backoff delays grow exponentially with max_retries."""
     item = next(items_generator_fx)
     pipeline = (
         Pipeline()
@@ -442,11 +465,13 @@ def test_exponential_backoff_retry_strategy(items_generator_fx):
 
 
 def test_empty_stage_returns_item_unchanged():
+    """EmptyStage passes the item through untouched."""
     item = Item({"text": "hello"})
     assert EmptyStage().process(item) is item
 
 
-def test_run_without_explicit_build():
+def test_implicit_build_on_first_use():
+    """run() and process_async() build the pipeline implicitly on first use."""
     pipeline: Pipeline[Dict[str, Any]] = (
         get_pipeline()
         .set_source(RandomTextSource(3))
@@ -457,8 +482,6 @@ def test_run_without_explicit_build():
     assert pipeline._executors_ready
     assert len(items) == 3
 
-
-def test_process_async_without_explicit_build():
     pipeline = get_pipeline().append("reverser", TextReverser())
     assert not pipeline._executors_ready
     item = Item()
@@ -469,6 +492,7 @@ def test_process_async_without_explicit_build():
 
 
 def test_build_container_rejects_inline_batch_stage():
+    """Inline batch stages are rejected at build time."""
     pipeline = get_pipeline()
     with pytest.raises(ValueError, match="concurrency"):
         pipeline._build_container(
@@ -477,7 +501,17 @@ def test_build_container_rejects_inline_batch_stage():
 
 
 def test_shutdown_with_pending_init_executor():
+    """Shutdown tolerates an init executor that is still pending."""
     pipeline = get_pipeline().append_concurrently("reverser", TextReverser)
     assert pipeline._init_executor is not None
     pipeline._stop_logs_receiver()
     pipeline.shutdown()
+
+
+def test_process_async_without_callback():
+    """process_async without a callback still delivers the item to get_item."""
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+    pipeline.process_async(text_item("hello"))
+    pipeline.stop()
+    result = pipeline.get_item()
+    assert result.data["text"] == "olleh"

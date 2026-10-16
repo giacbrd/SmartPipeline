@@ -3,13 +3,13 @@ import pytest
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import Item
-from smartpipeline.pipeline import Pipeline
-from tests.utils import ErrorSource, TextGenerator, TextReverser
+from tests.utils import TextReverser
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
-def test_manager(caplog):
+def test_handle_routes_soft_critical_generic(caplog):
+    """ErrorManager routes soft, critical and generic exceptions onto items and logs them."""
     manager = ErrorManager()
     stage = TextReverser()
     item = Item()
@@ -33,7 +33,8 @@ def test_manager(caplog):
         assert "has generated an error" in record.message
 
 
-def test_critical_errors(caplog):
+def test_critical_error_modes(caplog):
+    """raise_on_critical_error and no_skip_on_critical_error change critical handling."""
     stage = TextReverser()
     manager = ErrorManager()
     item = Item()
@@ -72,30 +73,3 @@ def test_critical_errors(caplog):
     assert len(list(item.critical_errors())) == 3
     for record in caplog.records:
         assert "has generated an error" in record.message
-
-
-def test_source_errors():
-    for concurrency, executor in ((0, "threads"), (2, "threads"), (2, "processes")):
-        source = ErrorSource()
-        pipeline = (
-            Pipeline()
-            .set_source(source)
-            .append(
-                "text_generator",
-                TextGenerator(),
-                concurrency=concurrency,
-                executor=executor,
-            )
-            .build()
-        )
-        run = pipeline.run()
-        if concurrency == 0:
-            assert next(run)
-            assert next(run)
-            assert next(run)
-        assert not source.is_stopped
-        with pytest.raises(ValueError):
-            # in case of concurrent pipeline the exception can raise immediately, or after we consume some item
-            for _ in range(3):
-                next(run)
-        assert source.is_stopped

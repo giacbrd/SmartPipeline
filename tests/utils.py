@@ -1,11 +1,20 @@
 import logging
 import random
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
 from threading import Thread
-from time import sleep
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Type, TypedDict
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    Type,
+    TypedDict,
+)
 
 import pytest
 
@@ -30,6 +39,12 @@ TEXT_SAMPLES = (
 
 def random_text():
     return random.choice(TEXT_SAMPLES)
+
+
+def text_item(text: str = "hello") -> Item[Dict[str, Any]]:
+    item: Item[Dict[str, Any]] = Item()
+    item.data["text"] = text
+    return item
 
 
 class CustomException(Exception):
@@ -364,12 +379,24 @@ class SerializableErrorManager(ErrorManager):
         return self._file.closed
 
 
-def wait_service(timeout, predicate, args):
-    start = datetime.now()
-    while not predicate(*args):
-        sleep(1)
-        if (datetime.now() - start).seconds > timeout:
-            raise TimeoutError()
+def check_items(items, num, pipeline=None):
+    """Assert that a run produced every expected item, in any order.
+
+    Items are expected to carry a ``count`` field (as produced by
+    :class:`RandomTextSource`) covering ``1..num``; when a pipeline is given
+    its processed count is asserted too.
+    """
+    diff = frozenset(range(1, num + 1)).difference(item.data["count"] for item in items)
+    assert not diff, "Not found items: {}".format(", ".join(str(x) for x in diff))
+    assert len(items) == num
+    if pipeline is not None:
+        assert num == pipeline.count
+
+
+def mark_item_checked(item: Item):
+    """Callback for ``process_async`` asserting the result and flagging it."""
+    assert item.data
+    item.metadata["check"] = True
 
 
 def run_with_timeout(
@@ -409,6 +436,22 @@ def get_pipeline(*args, **kwargs) -> Pipeline[Dict[str, Any]]:
     return Pipeline[Dict[str, Any]](*args, **kwargs).set_error_manager(
         ErrorManager().raise_on_critical_error()
     )
+
+
+@contextmanager
+def cleanup_on_exit(pipeline: Pipeline) -> Iterator[Pipeline]:
+    """Guarantee pipeline cleanup (logs receiver and executors) on test exit."""
+    try:
+        yield pipeline
+    finally:
+        try:
+            pipeline._stop_logs_receiver()
+        except Exception:
+            pass
+        try:
+            pipeline.shutdown()
+        except Exception:
+            pass
 
 
 class TypedRow(TypedDict):
