@@ -4,7 +4,6 @@ from typing import Any, Dict
 
 import pytest
 
-from smartpipeline.containers import BatchStageContainer
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import Item
@@ -469,12 +468,12 @@ def test_process_async_without_explicit_build():
     assert pipeline.get_item().data["text"] == "olleh"
 
 
-def test_build_container_supports_inline_batch_stage():
+def test_build_container_rejects_inline_batch_stage():
     pipeline = get_pipeline()
-    container = pipeline._build_container(
-        "batch", BatchTextReverser(), 0, "threads", tuple(), 0, 0.0
-    )
-    assert isinstance(container, BatchStageContainer)
+    with pytest.raises(ValueError, match="concurrency"):
+        pipeline._build_container(
+            "batch", BatchTextReverser(), 0, "threads", tuple(), 0, 0.0
+        )
 
 
 def test_shutdown_with_pending_init_executor():

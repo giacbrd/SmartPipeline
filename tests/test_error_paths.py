@@ -482,3 +482,10 @@ def test_exit_run_joins_terminator_thread():
     terminator_thread.join()
     pipeline._exit_run(source_thread, terminator_thread)
     assert pipeline.count == 1
+
+
+def test_wait_for_runner_error_warns_when_no_error_surfaced(caplog):
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+    with caplog.at_level(logging.WARNING):
+        pipeline._wait_for_runner_error(retries=2, wait_seconds=0.01)
+    assert any("runner error" in record.msg.lower() for record in caplog.records)

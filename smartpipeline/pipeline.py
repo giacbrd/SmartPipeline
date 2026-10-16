@@ -28,7 +28,7 @@ from smartpipeline.containers import (
     SourceContainer,
     StageContainer,
 )
-from smartpipeline.defaults import CONCURRENCY_WAIT, MAX_QUEUES_SIZE
+from smartpipeline.defaults import CONCURRENCY_WAIT, MAX_QUEUES_SIZE, RUN_LOOP_BACKOFF
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import DataT, Item, Stop
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage
@@ -210,6 +210,12 @@ class Pipeline(Generic[DataT]):
         if self._init_executor is not None:
             self._init_executor.shutdown(wait=True)
             self._init_executor = None
+        # Note that stage constructions (and their done-callbacks, which run
+        # synchronously when the relative future completes) are already joined by the
+        # shutdown above, so normally no placeholder is left at this point. This loop only
+        # covers the narrow window in which a `ProcessPoolExecutor` result delivery (and
+        # its callback replacing the placeholder) lags behind, and it breaks on
+        # construction errors instead of hanging without feedback.
         while any(
             container is self._fake_container for container in self._containers.values()
         ):
@@ -242,7 +248,10 @@ class Pipeline(Generic[DataT]):
                     try:
                         container.terminate()
                     except BaseException:
-                        pass
+                        self._logger.exception(
+                            "Problems in terminating %s during build cleanup",
+                            container,
+                        )
             try:
                 self.shutdown()
             except BaseException:
@@ -305,7 +314,7 @@ class Pipeline(Generic[DataT]):
             self._source_container.empty_out_queue()
             if source_thread is not None:
                 source_thread.join()
-            # TODO in case of errors we loose pending items!
+            # TODO in case of errors we lose pending items!
             self._terminate_all(force=True)
             if terminator_thread is not None:
                 terminator_thread.join()
@@ -347,6 +356,7 @@ class Pipeline(Generic[DataT]):
             )
             source_thread.start()
         while True:
+            progressed = False
             for name, container in self._containers.items():
                 try:
                     # first, check errors from the source
@@ -359,7 +369,7 @@ class Pipeline(Generic[DataT]):
                             raise source_error
                     # concurrent stages run by themselves in threads/processes
                     if not isinstance(container, ConcurrentContainerTypes):
-                        container.process()
+                        progressed |= bool(container.process())
                         # a put is aborted only when terminated or when a stage runner
                         # failed, in the latter case we raise its exception
                         if container.has_aborted_put():
@@ -378,6 +388,7 @@ class Pipeline(Generic[DataT]):
                             # an item is None if the final output queue is empty
                             if item is None:
                                 break
+                            progressed = True
                             if not isinstance(item, Stop):
                                 try:
                                     yield item
@@ -410,6 +421,10 @@ class Pipeline(Generic[DataT]):
             if terminator_errors:
                 self._exit_run(source_thread, terminator_thread)
                 _raise_terminator_error()
+            # back off instead of busy spinning when no container made any progress
+            # in this iteration (e.g. while concurrent runners work or termination drains)
+            if not progressed:
+                time.sleep(RUN_LOOP_BACKOFF)
             # exit the loop only when all items have been returned
             if self._all_empty() and counter >= self._source_container.count():
                 if source_thread is not None:
@@ -562,6 +577,7 @@ class Pipeline(Generic[DataT]):
         for _ in range(retries):
             self._check_errors()
             time.sleep(wait_seconds)
+        self._logger.warning("Stage runner error not surfaced after %d checks", retries)
 
     def process(self, item: Item[DataT]) -> Item[DataT]:
         """
@@ -621,7 +637,7 @@ class Pipeline(Generic[DataT]):
             return item
         else:
             raise ValueError(
-                "No pipeline is running asynchronously, not item can be retrieved from the output queue"
+                "No pipeline is running asynchronously, no item can be retrieved from the output queue"
             )
 
     def set_source(self, source: Source[DataT]) -> Self:
@@ -717,9 +733,9 @@ class Pipeline(Generic[DataT]):
             # if not concurrent we must explicitly finalize initialization of this single stage object
             stage.on_start()
             if isinstance(stage, BatchStage):
-                return BatchStageContainer(
-                    name, stage, self._error_manager, retry_manager
-                )
+                # unreachable through the public API (`append` and `append_concurrently`
+                # always force batch stages to `concurrency=1`): guard the private contract
+                raise ValueError("Batch stages require concurrency >= 1")
             return StageContainer(name, stage, self._error_manager, retry_manager)
         if executor == "processes":
             self._start_logs_receiver()
