@@ -674,6 +674,8 @@ class Pipeline(Generic[DataT]):
             return
 
         def _waiter():
+            # `last_stage_name` is never None here: the fast path above already
+            # links synchronously when the pipeline is still empty
             if last_stage_name is not None:
                 while (
                     self._containers[last_stage_name] is self._fake_container
@@ -683,8 +685,6 @@ class Pipeline(Generic[DataT]):
                 if self._init_errors:
                     return
                 container.set_previous(self._containers[last_stage_name])
-            else:
-                container.set_previous(self._source_container)
 
         executor = self._get_wait_previous_executor()
         executor.submit(_waiter)

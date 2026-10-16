@@ -465,3 +465,20 @@ def test_process_async_without_callback():
     pipeline.stop()
     result = pipeline.get_item()
     assert result.data["text"] == "olleh"
+
+
+def test_exit_run_joins_terminator_thread():
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(1))
+        .append("reverser", TextReverser())
+        .build()
+    )
+    source_thread = threading.Thread(target=lambda: None)
+    terminator_thread = threading.Thread(target=lambda: None)
+    source_thread.start()
+    terminator_thread.start()
+    source_thread.join()
+    terminator_thread.join()
+    pipeline._exit_run(source_thread, terminator_thread)
+    assert pipeline.count == 1

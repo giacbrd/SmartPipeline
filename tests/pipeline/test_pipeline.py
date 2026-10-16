@@ -4,10 +4,13 @@ from typing import Any, Dict
 
 import pytest
 
+from smartpipeline.containers import BatchStageContainer
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager
-from smartpipeline.pipeline import Pipeline
+from smartpipeline.item import Item
+from smartpipeline.pipeline import EmptyStage, Pipeline
 from tests.utils import (
+    BatchTextReverser,
     CriticalIOErrorStage,
     CustomException,
     CustomizableBrokenStage,
@@ -17,6 +20,7 @@ from tests.utils import (
     TextDuplicator,
     TextReverser,
     get_pipeline,
+    run_with_timeout,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -436,3 +440,45 @@ def test_exponential_backoff_retry_strategy(items_generator_fx):
         isinstance(err, RetryError) and isinstance(err.get_exception(), CustomException)
         for err in soft_errors
     )
+
+
+def test_empty_stage_returns_item_unchanged():
+    item = Item({"text": "hello"})
+    assert EmptyStage().process(item) is item
+
+
+def test_run_without_explicit_build():
+    pipeline: Pipeline[Dict[str, Any]] = (
+        get_pipeline()
+        .set_source(RandomTextSource(3))
+        .append("reverser", TextReverser())
+    )
+    assert not pipeline._executors_ready
+    items = run_with_timeout(pipeline)
+    assert pipeline._executors_ready
+    assert len(items) == 3
+
+
+def test_process_async_without_explicit_build():
+    pipeline = get_pipeline().append("reverser", TextReverser())
+    assert not pipeline._executors_ready
+    item = Item()
+    item.data["text"] = "hello"
+    pipeline.process_async(item)
+    pipeline.stop()
+    assert pipeline.get_item().data["text"] == "olleh"
+
+
+def test_build_container_supports_inline_batch_stage():
+    pipeline = get_pipeline()
+    container = pipeline._build_container(
+        "batch", BatchTextReverser(), 0, "threads", tuple(), 0, 0.0
+    )
+    assert isinstance(container, BatchStageContainer)
+
+
+def test_shutdown_with_pending_init_executor():
+    pipeline = get_pipeline().append_concurrently("reverser", TextReverser)
+    assert pipeline._init_executor is not None
+    pipeline._stop_logs_receiver()
+    pipeline.shutdown()

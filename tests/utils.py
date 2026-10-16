@@ -301,6 +301,18 @@ class BrokenOnEndStage(Stage):
         raise RuntimeError("test on_end failure")
 
 
+class SlowOnEndStage(Stage):
+    def __init__(self, delay: float = 2.0):
+        self._delay = delay
+
+    def process(self, item: Item):
+        return item
+
+    def on_end(self):
+        time.sleep(self._delay)
+        raise RuntimeError("test slow on_end failure")
+
+
 class BrokenOnEndBatchStage(BatchStage):
     def __init__(self, size: int = 10, timeout: float = 0.1):
         super().__init__(size, timeout)
