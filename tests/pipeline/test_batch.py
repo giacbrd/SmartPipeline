@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 def test_run():
+    """Inline batch stages run mixed with single stages over full and partial batches."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(35))
@@ -56,6 +57,7 @@ def test_run():
 
 
 def test_run_different_sizes():
+    """Undersized batches flush partial results instead of losing items."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
@@ -84,6 +86,7 @@ def test_run_different_sizes():
 
 
 def test_errors(caplog):
+    """Single-item errors inside batch pipelines attach per item with timings."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager())
@@ -177,6 +180,7 @@ def test_errors(caplog):
 
 
 def test_batch_errors(caplog):
+    """Batch-wide soft and critical errors attach to every item in the batch."""
     pipeline = (
         get_pipeline()
         .set_error_manager(ErrorManager())
@@ -250,6 +254,7 @@ def test_batch_errors(caplog):
 
 
 def test_retryable_batch_stages(items_generator_fx):
+    """Failing batch stages retry into per-item soft RetryErrors."""
     pipeline = (
         Pipeline()
         .set_source(RandomTextSource(10))

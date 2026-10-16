@@ -20,6 +20,7 @@ from tests.utils import (
     TextReverser,
     get_pipeline,
     run_with_timeout,
+    text_item,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 def test_run():
+    """An inline pipeline runs 10 items with timings and rejects duplicate stage names."""
     pipeline: Pipeline[Dict[str, Any]] = (
         get_pipeline()
         .set_source(RandomTextSource(10))
@@ -51,6 +53,7 @@ def test_run():
 
 
 def test_errors(caplog):
+    """Soft errors attach per item while critical errors skip downstream stages."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(10))
@@ -230,6 +233,7 @@ def test_build():
 
 
 def test_retryable_stage(items_generator_fx):
+    """Retryable stages turn failures into RetryError soft errors; bad configs raise."""
     # default behaviour
     item = next(items_generator_fx)
     pipeline = (
@@ -373,6 +377,7 @@ def test_retryable_stage(items_generator_fx):
 
 
 def test_retry_on_different_errors(items_generator_fx):
+    """Retries collect one soft error per attempt across mixed exception types."""
     item = next(items_generator_fx)
     pipeline = (
         Pipeline()
@@ -401,6 +406,7 @@ def test_retry_on_different_errors(items_generator_fx):
 
 
 def test_exponential_backoff_retry_strategy(items_generator_fx):
+    """Retry backoff delays grow exponentially with max_retries."""
     item = next(items_generator_fx)
     pipeline = (
         Pipeline()
@@ -442,11 +448,13 @@ def test_exponential_backoff_retry_strategy(items_generator_fx):
 
 
 def test_empty_stage_returns_item_unchanged():
+    """EmptyStage passes the item through untouched."""
     item = Item({"text": "hello"})
     assert EmptyStage().process(item) is item
 
 
 def test_run_without_explicit_build():
+    """run() builds the pipeline implicitly on first use."""
     pipeline: Pipeline[Dict[str, Any]] = (
         get_pipeline()
         .set_source(RandomTextSource(3))
@@ -459,6 +467,7 @@ def test_run_without_explicit_build():
 
 
 def test_process_async_without_explicit_build():
+    """process_async() builds the pipeline implicitly on first use."""
     pipeline = get_pipeline().append("reverser", TextReverser())
     assert not pipeline._executors_ready
     item = Item()
@@ -469,6 +478,7 @@ def test_process_async_without_explicit_build():
 
 
 def test_build_container_rejects_inline_batch_stage():
+    """Inline batch stages are rejected at build time."""
     pipeline = get_pipeline()
     with pytest.raises(ValueError, match="concurrency"):
         pipeline._build_container(
@@ -477,7 +487,17 @@ def test_build_container_rejects_inline_batch_stage():
 
 
 def test_shutdown_with_pending_init_executor():
+    """Shutdown tolerates an init executor that is still pending."""
     pipeline = get_pipeline().append_concurrently("reverser", TextReverser)
     assert pipeline._init_executor is not None
     pipeline._stop_logs_receiver()
     pipeline.shutdown()
+
+
+def test_process_async_without_callback():
+    """process_async without a callback still delivers the item to get_item."""
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+    pipeline.process_async(text_item("hello"))
+    pipeline.stop()
+    result = pipeline.get_item()
+    assert result.data["text"] == "olleh"

@@ -8,6 +8,7 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
 def test_file_items(file_directory_source_fx):
+    """LocalFilesSource yields FilePathItems whose text gets extracted."""
     pipeline: Pipeline[Dict[str, Any]] = (
         Pipeline[Dict[str, Any]]()
         .set_source(LocalFilesSource(dir_path=file_directory_source_fx))
@@ -22,6 +23,7 @@ def test_file_items(file_directory_source_fx):
 
 
 def test_fileitem():
+    """FilePathItem exposes its path and starts with empty data."""
     item = FilePathItem("/path/to/file")
     assert item.id
     assert not item.data

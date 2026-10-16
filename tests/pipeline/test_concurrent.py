@@ -1,25 +1,19 @@
 import copy
 import logging
-import queue
 import time
 import traceback
-from logging.handlers import QueueHandler
-from threading import Thread
 
 import pytest
 
-from smartpipeline.defaults import LOGS_STOP_TIMEOUT
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager
-from smartpipeline.pipeline import Pipeline, _stage_initialization_with_logger
-from smartpipeline.utils import LogsReceiver
+from smartpipeline.pipeline import Pipeline
 from tests.utils import (
     CriticalIOErrorStage,
     CustomizableBrokenStage,
     ErrorSerializableStage,
     ErrorStage,
     ExceptionStage,
-    Logger,
     RandomTextSource,
     SerializableErrorManager,
     SerializableStage,
@@ -27,7 +21,9 @@ from tests.utils import (
     TextDuplicator,
     TextReverser,
     TimeWaster,
+    check_items,
     get_pipeline,
+    mark_item_checked,
     run_with_timeout,
 )
 
@@ -36,15 +32,8 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 logger = logging.getLogger(__name__)
 
 
-def _check(items, num, pipeline=None):
-    diff = frozenset(range(1, num + 1)).difference(item.data["count"] for item in items)
-    assert not diff, "Not found items: {}".format(", ".join(str(x) for x in diff))
-    assert len(items) == num
-    if pipeline:
-        assert num == pipeline.count
-
-
 def test_concurrent_run():
+    """Mixed inline, thread and process stage pipelines deliver all 100 items."""
     # no stages
     with pytest.raises(ValueError):
         get_pipeline().build()
@@ -75,7 +64,7 @@ def test_concurrent_run():
     )
     items = list(pipeline.run())
     assert pipeline._wait_executors() is None
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(100))
@@ -86,7 +75,7 @@ def test_concurrent_run():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(100))
@@ -96,7 +85,7 @@ def test_concurrent_run():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(100))
@@ -106,7 +95,7 @@ def test_concurrent_run():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(100))
@@ -116,7 +105,7 @@ def test_concurrent_run():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(100))
@@ -126,10 +115,11 @@ def test_concurrent_run():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
 
 
 def test_queue_sizes():
+    """Bounded and unbounded queues deliver all items across executors."""
     pipeline = (
         get_pipeline(max_queues_size=1)
         .set_source(RandomTextSource(100))
@@ -140,7 +130,7 @@ def test_queue_sizes():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline(max_queues_size=1)
         .set_source(RandomTextSource(100))
@@ -151,7 +141,7 @@ def test_queue_sizes():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline(max_queues_size=3)
         .set_source(RandomTextSource(100))
@@ -160,7 +150,7 @@ def test_queue_sizes():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline(max_queues_size=0)
         .set_source(RandomTextSource(100))
@@ -171,7 +161,7 @@ def test_queue_sizes():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline(max_queues_size=0)
         .set_source(RandomTextSource(100))
@@ -182,10 +172,11 @@ def test_queue_sizes():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
 
 
 def test_concurrency_errors(caplog):
+    """Failing concurrent stages raise without sticking the pipeline, at any queue size."""
     with pytest.raises(Exception):
         pipeline = (
             get_pipeline()
@@ -346,7 +337,7 @@ def test_concurrency_errors(caplog):
 
 
 def test_concurrent_constructions():
-    """test `on_start` and `on_end` methods"""
+    """on_start and on_end hooks run inside workers; start failures raise on build."""
     serializable_stage = SerializableStage()
     error_manager = SerializableErrorManager()
     pipeline = (
@@ -422,6 +413,7 @@ def test_concurrent_constructions():
 
 
 def test_concurrent_initialization():
+    """append_concurrently wires stage classes with args and kwargs across executors."""
     with pytest.raises(ValueError):
         get_pipeline().append_concurrently(
             "reverser0", TextReverser(), kwargs={"cycles": 3}, concurrency=2
@@ -438,7 +430,7 @@ def test_concurrent_initialization():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(100))
@@ -455,7 +447,7 @@ def test_concurrent_initialization():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(100))
@@ -465,7 +457,7 @@ def test_concurrent_initialization():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(100))
@@ -475,7 +467,7 @@ def test_concurrent_initialization():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(100))
@@ -485,7 +477,7 @@ def test_concurrent_initialization():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline(max_init_workers=1)
         .set_source(RandomTextSource(100))
@@ -501,7 +493,7 @@ def test_concurrent_initialization():
         .build()
     )
     items = list(pipeline.run())
-    _check(items, 100, pipeline)
+    check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline(max_init_workers=1)
         .set_source(RandomTextSource(100))
@@ -585,6 +577,7 @@ def test_build():
 # TODO it has problems also on dual core machine
 @pytest.mark.skip
 def test_huge_run():
+    """Strongly parallel pipelines beat sequential ones on CPU-bound stages."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(200))
@@ -601,7 +594,7 @@ def test_huge_run():
     items = list(runner)
     elapsed1 = time.time() - start_time
     logger.debug("Time for strongly parallel: %s", elapsed1)
-    _check(items, 200)
+    check_items(items, 200)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(200))
@@ -618,7 +611,7 @@ def test_huge_run():
     items = list(runner)
     elapsed2 = time.time() - start_time
     logger.debug("Time for mildly parallel: %s", elapsed2)
-    _check(items, 200)
+    check_items(items, 200)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(200))
@@ -633,13 +626,14 @@ def test_huge_run():
     items = list(runner)
     elapsed3 = time.time() - start_time
     logger.debug("Time for sequential: %s", elapsed3)
-    _check(items, 200)
+    check_items(items, 200)
     assert elapsed3 > elapsed1
     assert elapsed3 > elapsed2
     assert elapsed2 > elapsed1
 
 
 def test_run_times():
+    """Thread and process pipelines beat sequential ones on sleep-bound stages."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(10))
@@ -651,7 +645,7 @@ def test_run_times():
     )
     start_time = time.time()
     items = list(pipeline.run())
-    _check(items, 10)
+    check_items(items, 10)
     elapsed0 = time.time() - start_time
     logger.debug("Time for multi-threading: %s", elapsed0)
     pipeline = (
@@ -665,7 +659,7 @@ def test_run_times():
     )
     start_time = time.time()
     items = list(pipeline.run())
-    _check(items, 10)
+    check_items(items, 10)
     elapsed1 = time.time() - start_time
     logger.debug("Time for multi-process: %s", elapsed1)
     pipeline = (
@@ -679,19 +673,15 @@ def test_run_times():
     )
     start_time = time.time()
     items = list(pipeline.run())
-    _check(items, 10)
+    check_items(items, 10)
     elapsed2 = time.time() - start_time
     logger.debug("Time for sequential: %s", elapsed2)
     assert elapsed2 > elapsed0
     assert elapsed2 > elapsed1
 
 
-def _check_item(item):
-    assert item.data
-    item.metadata["check"] = True
-
-
 def test_single_items(items_generator_fx):
+    """process, process_async and get_item round-trip single items across executors."""
     pipeline = (
         get_pipeline()
         .append("reverser0", TextReverser())
@@ -718,7 +708,7 @@ def test_single_items(items_generator_fx):
     with pytest.raises(ValueError):
         pipeline.get_item()
     item = next(items_generator_fx)
-    pipeline.process_async(copy.deepcopy(item), callback=_check_item)
+    pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
     result = pipeline.get_item()
     assert result.id == item.id
@@ -740,7 +730,7 @@ def test_single_items(items_generator_fx):
         .build()
     )
     item = next(items_generator_fx)
-    pipeline.process_async(item, callback=_check_item)
+    pipeline.process_async(item, callback=mark_item_checked)
     pipeline.stop()
     result = pipeline.get_item()
     assert result.id == item.id
@@ -755,7 +745,7 @@ def test_single_items(items_generator_fx):
         .build()
     )
     item = next(items_generator_fx)
-    pipeline.process_async(copy.deepcopy(item), callback=_check_item)
+    pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
     result = pipeline.get_item()
     assert result.id == item.id
@@ -770,7 +760,7 @@ def test_single_items(items_generator_fx):
         .build()
     )
     item = next(items_generator_fx)
-    pipeline.process_async(copy.deepcopy(item), callback=_check_item)
+    pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
     result = pipeline.get_item()
     assert result.id == item.id
@@ -785,7 +775,7 @@ def test_single_items(items_generator_fx):
         .build()
     )
     item = next(items_generator_fx)
-    pipeline.process_async(copy.deepcopy(item), callback=_check_item)
+    pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
     result = pipeline.get_item()
     assert result.id == item.id
@@ -806,7 +796,7 @@ def test_single_items(items_generator_fx):
         .build()
     )
     item = next(items_generator_fx)
-    pipeline.process_async(item, callback=_check_item)
+    pipeline.process_async(item, callback=mark_item_checked)
     pipeline.stop()
     result = pipeline.get_item()
     assert result.id == item.id
@@ -816,6 +806,7 @@ def test_single_items(items_generator_fx):
 
 
 def test_concurrent_run_with_retryable_stages():
+    """Retryable stages retry concurrently according to their own config."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
@@ -876,6 +867,8 @@ def test_concurrent_run_with_retryable_stages():
 
 
 def test_broken_loop():
+    """Breaking out of run() early still yields a countable item prefix."""
+
     def _get_pipeline():
         return (
             get_pipeline()
@@ -900,92 +893,3 @@ def test_broken_loop():
                 raise IOError
     except IOError:
         assert len(items) == 10
-
-
-def test_logging(caplog):
-    with caplog.at_level(logging.INFO):
-        pipeline = (
-            get_pipeline()
-            .set_source(RandomTextSource(100))
-            .append("logger1", Logger(), concurrency=2)
-            .append("reverser0", TextReverser(), concurrency=1)
-            .build()
-        )
-        list(pipeline.run())
-        messages = [
-            record for record in caplog.records if record.levelno == logging.INFO
-        ]
-        assert len(messages) == 100
-        assert all("logging item " in record.msg.lower() for record in messages)
-        caplog.clear()
-        pipeline = (
-            get_pipeline()
-            .set_source(RandomTextSource(10))
-            .append_concurrently("logger1", Logger, concurrency=1, executor="processes")
-            .append("reverser0", TextReverser(), concurrency=1)
-            .build()
-        )
-        list(pipeline.run())
-        messages = [
-            record for record in caplog.records if record.levelno == logging.INFO
-        ]
-        assert len(messages) == 10
-        assert all("logging item " in record.msg.lower() for record in messages)
-        assert any(
-            "testing concurrent initialization" in record.msg.lower()
-            for record in caplog.records
-        )
-        caplog.clear()
-        pipeline = (
-            get_pipeline()
-            .set_source(RandomTextSource(100))
-            .append("reverser1", TextReverser(), concurrency=2)
-            .append("logger2", Logger(), concurrency=2, executor="processes")
-            .append("reverser2", TextReverser())
-            .build()
-        )
-        list(pipeline.run())
-        messages = [
-            record for record in caplog.records if record.levelno == logging.INFO
-        ]
-        assert len(messages) == 100
-        assert all("logging item " in record.msg.lower() for record in messages)
-
-        assert isinstance(
-            _stage_initialization_with_logger(queue.Queue(), TextReverser, [], {}),
-            TextReverser,
-        )
-        assert any(isinstance(h, QueueHandler) for h in logging.getLogger().handlers)
-
-        with pytest.raises(AttributeError):
-            get_pipeline().append(
-                "reverser", TextReverser()
-            ).build()._get_logs_receiver_queue()
-
-
-def test_logs_receiver_stop(caplog):
-    """stopping the logs receiver must not wait for records received after the sentinel"""
-    with caplog.at_level(logging.INFO):
-        logs_queue = queue.Queue()
-        receiver = LogsReceiver(logs_queue)
-        receiver.start()
-        assert receiver.queue is logs_queue
-        logs_queue.put(_log_record("first record"))
-        # a stage which is dying can log after the sentinel: that record is received by nobody
-        # and its task is never done, so the queue cannot be joined
-        logs_queue.put(None)
-        logs_queue.put(_log_record("lost record"))
-        stopper = Thread(target=receiver.stop, daemon=True)
-        stopper.start()
-        stopper.join(LOGS_STOP_TIMEOUT * 2)
-        assert not stopper.is_alive(), "the logs receiver has not been stopped"
-        assert len([r for r in caplog.records if r.levelno == logging.INFO]) == 1
-    # stopping a receiver which is not running must not raise
-    receiver.stop()
-    LogsReceiver(queue.Queue()).stop()
-
-
-def _log_record(message):
-    return logging.LogRecord(
-        "smartpipeline-test", logging.INFO, __file__, 1, message, None, None
-    )

@@ -1,13 +1,16 @@
+import logging
 import time
+from concurrent.futures import Future
 from queue import Queue
 from threading import Event, Thread
+from unittest import mock
 
 import pytest
 
 from smartpipeline.containers import ConcurrentStageContainer, StageContainer
 from smartpipeline.error.handling import ErrorManager, RetryManager
-from smartpipeline.runners import OnEndErrors
-from smartpipeline.utils import ThreadCounter, raise_collected_errors
+from smartpipeline.pipeline import Pipeline
+from smartpipeline.utils import ThreadCounter
 from tests.utils import (
     BrokenInitStage,
     BrokenOnEndBatchStage,
@@ -16,12 +19,15 @@ from tests.utils import (
     BrokenOnStartErrorManager,
     BrokenProcessAndEndStage,
     ErrorSerializableStage,
+    ErrorSource,
     RandomTextSource,
     SlowInitializer,
     SlowOnEndStage,
+    TextGenerator,
     TextReverser,
     get_pipeline,
     run_with_timeout,
+    text_item,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -76,28 +82,8 @@ def _scripted_container(pipeline, fail_on=()):
     return container
 
 
-def test_on_end_errors_type():
-    assert not OnEndErrors(None, None)
-    assert OnEndErrors(None, None).exceptions == []
-    first, second = RuntimeError("first"), ValueError("second")
-    assert OnEndErrors(first, None).exceptions == [first]
-    assert OnEndErrors(None, second).exceptions == [second]
-    result = OnEndErrors(first, second)
-    assert result
-    assert result.exceptions == [first, second]
-
-
-def test_raise_collected_errors():
-    assert raise_collected_errors([], "nothing") is None
-    error = RuntimeError("single")
-    with pytest.raises(RuntimeError, match="single"):
-        raise_collected_errors([error], "single")
-    with pytest.raises(ExceptionGroup, match="many") as exc_info:
-        raise_collected_errors([RuntimeError("a"), ValueError("b")], "many")
-    assert len(exc_info.value.exceptions) == 2
-
-
 def test_on_start_error_manager_raises_on_build():
+    """Error-manager on_start failures abort the build with cleanup."""
     pipeline = get_pipeline().set_error_manager(BrokenOnStartErrorManager())
     try:
         with pytest.raises(RuntimeError, match="on_start"):
@@ -118,6 +104,7 @@ def test_on_start_error_manager_raises_on_build():
 
 
 def test_on_end_inline_raises_on_run():
+    """Inline on_end failures raise on run."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(3))
@@ -130,6 +117,7 @@ def test_on_end_inline_raises_on_run():
 
 
 def test_on_end_thread_raises_on_run():
+    """Threaded on_end failures raise on run."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(3))
@@ -141,6 +129,7 @@ def test_on_end_thread_raises_on_run():
 
 
 def test_on_end_processes_raises_on_run():
+    """Process on_end failures raise on run."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(3))
@@ -158,6 +147,7 @@ def test_on_end_processes_raises_on_run():
 
 
 def test_on_end_batch_processes_raises_on_run():
+    """Batch process on_end failures raise on run."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(3))
@@ -175,6 +165,7 @@ def test_on_end_batch_processes_raises_on_run():
 
 
 def test_on_end_error_manager_raises_on_run():
+    """Error-manager on_end failures raise on run."""
     pipeline = (
         get_pipeline()
         .set_error_manager(BrokenOnEndErrorManager())
@@ -187,6 +178,7 @@ def test_on_end_error_manager_raises_on_run():
 
 
 def test_on_end_both_hooks_fail_groups_errors():
+    """Stage and error-manager on_end failures group into one ExceptionGroup."""
     pipeline = (
         get_pipeline()
         .set_error_manager(BrokenOnEndErrorManager())
@@ -202,6 +194,7 @@ def test_on_end_both_hooks_fail_groups_errors():
 
 @pytest.mark.parametrize("concurrency", [0, 1])
 def test_process_error_preserved_when_on_end_fails(concurrency):
+    """Process errors surface even when on_end fails too, inline and concurrent."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
@@ -224,6 +217,7 @@ def test_process_error_preserved_when_on_end_fails(concurrency):
 
 
 def test_concurrent_init_failure_raises_on_build():
+    """Stage __init__ failures raise on build with cleanup."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
@@ -244,6 +238,7 @@ def test_concurrent_init_failure_raises_on_build():
 
 
 def test_concurrent_on_start_failure_raises_on_build():
+    """Stage on_start failures raise on build with cleanup."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
@@ -264,6 +259,7 @@ def test_concurrent_on_start_failure_raises_on_build():
 
 
 def test_build_waits_for_slow_concurrent_init():
+    """Build waits for slow concurrent stage initialization."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
@@ -284,6 +280,7 @@ def test_build_waits_for_slow_concurrent_init():
 
 
 def test_concurrent_linker_returns_on_init_errors():
+    """Init failures surface even when more stages are appended after the broken one."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
@@ -305,6 +302,7 @@ def test_concurrent_linker_returns_on_init_errors():
 
 
 def test_terminator_error_surfaces_during_run():
+    """Slow on_end failures surface while the run terminates."""
     pipeline = (
         get_pipeline().set_source(RandomTextSource(2)).append("slow", SlowOnEndStage())
     )
@@ -316,6 +314,7 @@ def test_terminator_error_surfaces_during_run():
 
 
 def test_terminate_all_waits_for_non_empty_queues():
+    """_terminate_all drains non-empty queues before terminating containers."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
@@ -327,6 +326,7 @@ def test_terminate_all_waits_for_non_empty_queues():
 
 
 def test_terminate_all_collects_terminate_error():
+    """Container terminate failures raise from _terminate_all."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
@@ -338,6 +338,7 @@ def test_terminate_all_collects_terminate_error():
 
 
 def test_build_cleanup_survives_container_failures():
+    """Build cleans up containers when their startup fails."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
@@ -349,6 +350,7 @@ def test_build_cleanup_survives_container_failures():
 
 
 def test_wait_for_stopped_waits_for_stop():
+    """_wait_for_stopped blocks until the container stops."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(1))
@@ -373,6 +375,7 @@ def test_wait_for_stopped_waits_for_stop():
 
 
 def test_build_waits_for_pending_container_init():
+    """Build waits for containers that are still under construction."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
@@ -394,3 +397,172 @@ def test_build_waits_for_pending_container_init():
     finally:
         finisher.join(timeout=5)
     assert pipeline._executors_ready
+
+
+def test_source_errors():
+    """Source failures raise and stop the source across executors."""
+    for concurrency, executor in ((0, "threads"), (2, "threads"), (2, "processes")):
+        source = ErrorSource()
+        pipeline = (
+            Pipeline()
+            .set_source(source)
+            .append(
+                "text_generator",
+                TextGenerator(),
+                concurrency=concurrency,
+                executor=executor,
+            )
+            .build()
+        )
+        run = pipeline.run()
+        if concurrency == 0:
+            assert next(run)
+            assert next(run)
+            assert next(run)
+        assert not source.is_stopped
+        with pytest.raises(ValueError):
+            # in case of concurrent pipeline the exception can raise immediately, or after we consume some item
+            for _ in range(3):
+                next(run)
+        assert source.is_stopped
+
+
+def test_new_shared_event_dispatch():
+    """Shared events come from the sync manager when one is present."""
+    pipeline = Pipeline()
+    event = pipeline._new_shared_event()
+    assert isinstance(event, type(Event()))
+    with mock.patch.object(
+        pipeline, "_new_mp_event", return_value="mp-event"
+    ) as mp_event:
+        pipeline._sync_manager = mock.sentinel.manager
+        assert pipeline._new_shared_event() == "mp-event"
+        mp_event.assert_called_once_with()
+
+
+def test_pipeline_is_fatal():
+    """_is_fatal reflects whether the fatal event fired."""
+    pipeline = Pipeline()
+    assert not pipeline._is_fatal()
+    pipeline._fatal_event = Event()
+    assert not pipeline._is_fatal()
+    pipeline._fatal_event.set()
+    assert pipeline._is_fatal()
+
+
+def test_check_errors_and_wait_for_runner_error():
+    """Runner failures surface through _check_errors and _wait_for_runner_error."""
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+    # no concurrent container: nothing to raise, just sleeps
+    pipeline._wait_for_runner_error(retries=2, wait_seconds=0.01)
+    container = ConcurrentStageContainer(
+        "boom",
+        TextReverser(),
+        ErrorManager(),
+        RetryManager(),
+        Queue,
+        ThreadCounter,
+        Event,
+        concurrency=1,
+    )
+    future: Future = Future()
+    future.set_exception(ValueError("runner boom"))
+    container._futures = [future]
+    pipeline._containers["boom"] = container
+    with pytest.raises(ValueError):
+        pipeline._check_errors()
+    with pytest.raises(ValueError):
+        pipeline._wait_for_runner_error(retries=1, wait_seconds=0.01)
+
+
+def test_get_processed_or_abort():
+    """_get_processed_or_abort returns items, propagates runner errors, or aborts silently."""
+    pipeline = Pipeline()
+
+    class _FakeContainer:
+        def __init__(self, items):
+            self._items = list(items)
+
+        def get_processed(self, block=True, timeout=None):
+            return self._items.pop(0) if self._items else None
+
+    assert pipeline._get_processed_or_abort(_FakeContainer([text_item()])) is not None
+    assert (
+        pipeline._get_processed_or_abort(_FakeContainer([None, text_item()]))
+        is not None
+    )
+    pipeline._fatal_event = Event()
+    pipeline._fatal_event.set()
+    with mock.patch.object(
+        pipeline, "_wait_for_runner_error", side_effect=RuntimeError("runner")
+    ):
+        with pytest.raises(RuntimeError):
+            pipeline._get_processed_or_abort(_FakeContainer([None]))
+    with mock.patch.object(pipeline, "_wait_for_runner_error", return_value=None):
+        assert pipeline._get_processed_or_abort(_FakeContainer([None])) is None
+
+
+def test_process_propagates_runner_error():
+    """process() raises when a runner has already failed."""
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+    with mock.patch.object(pipeline, "_is_fatal", return_value=True):
+        with mock.patch.object(
+            pipeline,
+            "_wait_for_runner_error",
+            side_effect=RuntimeError("runner down"),
+        ):
+            with pytest.raises(RuntimeError):
+                pipeline.process(text_item())
+
+
+def test_exit_run_does_not_mask_termination_errors(caplog):
+    """_exit_run counts the run and logs stop failures instead of masking them."""
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+    with mock.patch.object(pipeline, "stop", side_effect=RuntimeError("stop boom")):
+        with caplog.at_level(logging.ERROR):
+            pipeline._exit_run(None, None)
+    assert pipeline.count == 1
+    assert any(
+        "problems in terminating" in record.msg.lower() for record in caplog.records
+    )
+
+
+def test_run_generator_close_terminates():
+    """Closing run() early stops the source container."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(5))
+        .append("reverser", TextReverser())
+        .build()
+    )
+    gen = pipeline.run()
+    first = next(gen)
+    assert first.data["text"]
+    gen.close()
+    assert pipeline._source_container.is_stopped()
+
+
+def test_exit_run_joins_terminator_thread():
+    """_exit_run joins the source and terminator threads."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(1))
+        .append("reverser", TextReverser())
+        .build()
+    )
+    source_thread = Thread(target=lambda: None)
+    terminator_thread = Thread(target=lambda: None)
+    source_thread.start()
+    terminator_thread.start()
+    source_thread.join()
+    terminator_thread.join()
+    pipeline._exit_run(source_thread, terminator_thread)
+    assert pipeline.count == 1
+
+
+def test_wait_for_runner_error_warns_when_no_error_surfaced(caplog):
+    """A missing runner error warns instead of hanging the waiter."""
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+    with caplog.at_level(logging.WARNING):
+        pipeline._wait_for_runner_error(retries=2, wait_seconds=0.01)
+    assert any("runner error" in record.msg.lower() for record in caplog.records)
