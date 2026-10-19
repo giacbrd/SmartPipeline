@@ -8,7 +8,13 @@ import pytest
 from smartpipeline.defaults import LOGS_STOP_TIMEOUT
 from smartpipeline.pipeline import _stage_initialization_with_logger
 from smartpipeline.utils import LogsReceiver
-from tests.utils import Logger, RandomTextSource, TextReverser, get_pipeline
+from tests.utils import (
+    Logger,
+    RandomTextSource,
+    TextReverser,
+    get_pipeline,
+    run_with_timeout,
+)
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -29,7 +35,7 @@ def test_logging_threads_forwards_records(caplog):
             .append("reverser0", TextReverser(), concurrency=1)
             .build()
         )
-        list(pipeline.run())
+        run_with_timeout(pipeline)
         messages = [
             record for record in caplog.records if record.levelno == logging.INFO
         ]
@@ -47,7 +53,7 @@ def test_logging_processes_forwards_records(caplog):
             .append("reverser0", TextReverser(), concurrency=1)
             .build()
         )
-        list(pipeline.run())
+        run_with_timeout(pipeline)
         messages = [
             record for record in caplog.records if record.levelno == logging.INFO
         ]
@@ -66,7 +72,7 @@ def test_logging_processes_forwards_records(caplog):
             .append("reverser2", TextReverser())
             .build()
         )
-        list(pipeline.run())
+        run_with_timeout(pipeline)
         messages = [
             record for record in caplog.records if record.levelno == logging.INFO
         ]

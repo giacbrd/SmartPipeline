@@ -10,6 +10,7 @@ from smartpipeline.item import Item, Stop
 from smartpipeline.runners import OnEndErrors, batch_stage_runner, stage_runner
 from smartpipeline.utils import ProcessCounter, ThreadCounter
 from tests.utils import (
+    QUEUE_TIMEOUT,
     BatchTextGenerator,
     CustomizableBrokenBatchStage,
     CustomizableBrokenStage,
@@ -60,7 +61,7 @@ def test_runners_with_shared_counters():
             manager.Queue(),
         )
     assert "bad item" in str(excinfo.value)
-    assert out_queue.get(block=True).data["file"]
+    assert out_queue.get(block=True, timeout=QUEUE_TIMEOUT).data["file"]
 
     for _ in range(2):
         terminated = manager.Event()
@@ -84,7 +85,7 @@ def test_runners_with_shared_counters():
             )
         assert "bad item" in str(excinfo.value)
         for _ in range(100):
-            assert out_queue.get(block=True).data["file"]
+            assert out_queue.get(block=True, timeout=QUEUE_TIMEOUT).data["file"]
         assert out_queue.empty()
 
 
@@ -96,56 +97,56 @@ def test_batch_runner_in_executors():
 
     # batch stages always run concurrently, both on processes and threads
     terminated = manager.Event()
-    future = ProcessPoolExecutor(mp_context=get_context("spawn")).submit(
-        batch_stage_runner,
-        SerializableBatchStage(100, 1),
-        in_queue,
-        out_queue,
-        SerializableErrorManager().raise_on_critical_error(),
-        RetryManager(),
-        terminated,
-        ProcessCounter(manager),
-        ProcessCounter(manager),
-        manager.Queue(),
-    )
-    for _ in range(150):
-        in_queue.put(Item())
-    for _ in range(150):
-        assert out_queue.get(block=True).data["file"]
-    item = Item()
-    item.data["file"] = "f"
-    in_queue.put(item)
-    assert str(future.exception()) == "bad item"
-    terminated.set()
-    future.cancel()
+    with ProcessPoolExecutor(mp_context=get_context("spawn")) as executor:
+        future = executor.submit(
+            batch_stage_runner,
+            SerializableBatchStage(100, 1),
+            in_queue,
+            out_queue,
+            SerializableErrorManager().raise_on_critical_error(),
+            RetryManager(),
+            terminated,
+            ProcessCounter(manager),
+            ProcessCounter(manager),
+            manager.Queue(),
+        )
+        for _ in range(150):
+            in_queue.put(Item())
+        for _ in range(150):
+            assert out_queue.get(block=True, timeout=QUEUE_TIMEOUT).data["file"]
+        item = Item()
+        item.data["file"] = "f"
+        in_queue.put(item)
+        assert str(future.exception(timeout=QUEUE_TIMEOUT)) == "bad item"
+        terminated.set()
 
     terminated = Event()
     in_queue = Queue()
     out_queue = Queue()
     stage = SerializableBatchStage(100, 1)
     stage.on_start()
-    future = ThreadPoolExecutor().submit(
-        batch_stage_runner,
-        stage,
-        in_queue,
-        out_queue,
-        SerializableErrorManager().raise_on_critical_error(),
-        RetryManager(),
-        terminated,
-        ThreadCounter(),
-        ThreadCounter(),
-        Queue(),
-    )
-    for _ in range(150):
-        in_queue.put(Item())
-    for _ in range(150):
-        assert out_queue.get(block=True).data["file"]
-    item = Item()
-    item.data["file"] = "f"
-    in_queue.put(item)
-    assert str(future.exception()) == "bad item"
-    terminated.set()
-    future.cancel()
+    with ThreadPoolExecutor() as executor:
+        future = executor.submit(
+            batch_stage_runner,
+            stage,
+            in_queue,
+            out_queue,
+            SerializableErrorManager().raise_on_critical_error(),
+            RetryManager(),
+            terminated,
+            ThreadCounter(),
+            ThreadCounter(),
+            Queue(),
+        )
+        for _ in range(150):
+            in_queue.put(Item())
+        for _ in range(150):
+            assert out_queue.get(block=True, timeout=QUEUE_TIMEOUT).data["file"]
+        item = Item()
+        item.data["file"] = "f"
+        in_queue.put(item)
+        assert str(future.exception(timeout=QUEUE_TIMEOUT)) == "bad item"
+        terminated.set()
 
 
 def test_stage_runner_sets_fatal_on_error():

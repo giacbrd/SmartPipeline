@@ -26,6 +26,7 @@ setup(
         "Programming Language :: Python :: 3.12",
         "Programming Language :: Python :: 3.13",
         "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
         "Development Status :: 5 - Production/Stable",
     ],
     url="https://github.com/giacbrd/SmartPipeline",
@@ -46,6 +47,6 @@ setup(
     package_data={
         "smartpipeline": ["py.typed"],
     },
-    tests_require=["pytest", "coverage"],
+    tests_require=["pytest", "pytest-timeout", "coverage"],
     python_requires=">=3.12",
 )

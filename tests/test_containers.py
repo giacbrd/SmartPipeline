@@ -16,6 +16,7 @@ from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import Item, Stop
 from smartpipeline.utils import ProcessCounter, ThreadCounter
 from tests.utils import (
+    QUEUE_TIMEOUT,
     BatchTextGenerator,
     BatchTextReverser,
     ErrorSource,
@@ -177,11 +178,11 @@ def test_stage_container_inline_and_concurrent():
     container.set_previous(previous)
     container.run()
     previous.process()
-    item5 = container.get_processed(block=True)
+    item5 = container.get_processed(block=True, timeout=QUEUE_TIMEOUT)
     assert item5
     assert list(item5.timed_stages)
     previous.process()
-    item6 = container.get_processed(block=True)
+    item6 = container.get_processed(block=True, timeout=QUEUE_TIMEOUT)
     assert item6
     assert item5 != item6
     assert not container.is_stopped() and not container.is_terminated()
@@ -207,9 +208,9 @@ def test_stage_container_inline_and_concurrent():
     container.run()
     source_errors = Queue()
     source.pop_into_queue(source_errors)
-    assert container.get_processed(block=True)
+    assert container.get_processed(block=True, timeout=QUEUE_TIMEOUT) is not None
     source.pop_into_queue(source_errors)
-    assert isinstance(container.get_processed(block=True), Stop)
+    assert isinstance(container.get_processed(block=True, timeout=QUEUE_TIMEOUT), Stop)
     container.terminate()
     source.prepend_item(None)
     time.sleep(1)

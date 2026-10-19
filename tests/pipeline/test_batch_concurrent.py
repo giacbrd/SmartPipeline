@@ -20,6 +20,7 @@ from tests.utils import (
     TextReverser,
     TimeWaster,
     check_items,
+    get_item_with_timeout,
     get_pipeline,
     mark_item_checked,
     run_with_timeout,
@@ -41,7 +42,7 @@ def test_concurrent_run():
         .append("duplicator", BatchTextDuplicator(), concurrency=2)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 96, pipeline)
     pipeline = (
         get_pipeline()
@@ -54,7 +55,7 @@ def test_concurrent_run():
         )
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 81, pipeline)
     pipeline = (
         get_pipeline()
@@ -64,7 +65,7 @@ def test_concurrent_run():
         .append("duplicator", BatchTextDuplicator(), concurrency=0)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 92, pipeline)
     pipeline = (
         get_pipeline()
@@ -76,7 +77,7 @@ def test_concurrent_run():
         )
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 83, pipeline)
     pipeline = (
         get_pipeline()
@@ -86,7 +87,7 @@ def test_concurrent_run():
         .append("duplicator1", BatchTextDuplicator(), concurrency=0)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 101, pipeline)
     pipeline = (
         get_pipeline()
@@ -96,7 +97,7 @@ def test_concurrent_run():
         .append("duplicator1", BatchTextDuplicator(check_batch=True), concurrency=1)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
 
 
@@ -111,7 +112,7 @@ def test_queue_sizes():
         .append("duplicator", BatchTextDuplicator(), concurrency=2)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 93, pipeline)
     pipeline = (
         get_pipeline(max_queues_size=1)
@@ -124,7 +125,7 @@ def test_queue_sizes():
         )
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 79, pipeline)
     pipeline = (
         get_pipeline(max_queues_size=2)
@@ -135,7 +136,7 @@ def test_queue_sizes():
         .append("waster2", TimeWaster(0.03), concurrency=2)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 131, pipeline)
     pipeline = (
         get_pipeline(max_queues_size=0)
@@ -146,7 +147,7 @@ def test_queue_sizes():
         .append("duplicator", BatchTextDuplicator(), concurrency=2)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 4, pipeline)
     pipeline = (
         get_pipeline(max_queues_size=0)
@@ -159,7 +160,7 @@ def test_queue_sizes():
         )
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 11, pipeline)
 
 
@@ -174,7 +175,7 @@ def test_mixed_concurrent_run():
         .append("duplicator", BatchTextDuplicator(), concurrency=2)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 96, pipeline)
     pipeline = (
         get_pipeline()
@@ -187,7 +188,7 @@ def test_mixed_concurrent_run():
         )
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 81, pipeline)
     pipeline = (
         get_pipeline()
@@ -197,7 +198,7 @@ def test_mixed_concurrent_run():
         .append("duplicator", BatchTextDuplicator(), concurrency=0)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 92, pipeline)
     pipeline = (
         get_pipeline()
@@ -207,7 +208,7 @@ def test_mixed_concurrent_run():
         .append("duplicator", TextDuplicator(), concurrency=1, executor="processes")
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 83, pipeline)
     pipeline = (
         get_pipeline()
@@ -217,7 +218,7 @@ def test_mixed_concurrent_run():
         .append("duplicator1", BatchTextDuplicator(check_batch=True), concurrency=0)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -227,7 +228,7 @@ def test_mixed_concurrent_run():
         .append("duplicator1", BatchTextDuplicator(), concurrency=2)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
 
 
@@ -242,7 +243,7 @@ def test_concurrent_batch_single_stage_error_raises():
             .build()
         )
         try:
-            for _ in pipeline.run():
+            for _ in run_with_timeout(pipeline):
                 pass
         except Exception:
             tb = traceback.format_exc()
@@ -262,7 +263,7 @@ def test_concurrent_batch_single_stage_error_raises():
             .append("error", ExceptionStage(), concurrency=1, executor="processes")
             .build()
         )
-        for _ in pipeline.run():
+        for _ in run_with_timeout(pipeline):
             pass
 
 
@@ -276,7 +277,7 @@ def test_concurrent_batch_single_soft_errors_flow():
         .append("duplicator", BatchTextDuplicator(size=7), concurrency=2)
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
         assert any(k.startswith("text_") for k in item.data.keys())
@@ -295,7 +296,7 @@ def test_concurrent_batch_stage_error_raises():
             .build()
         )
         try:
-            for _ in pipeline.run():
+            for _ in run_with_timeout(pipeline):
                 pass
         except Exception:
             tb = traceback.format_exc()
@@ -321,7 +322,7 @@ def test_concurrent_batch_stage_error_raises():
             .build()
         )
         try:
-            for _ in pipeline.run():
+            for _ in run_with_timeout(pipeline):
                 pass
         except Exception:
             tb = traceback.format_exc()
@@ -340,7 +341,7 @@ def test_concurrent_batch_wide_soft_errors_flow():
         .append("duplicator", BatchTextDuplicator(size=7), concurrency=2)
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
         assert any(k.startswith("text_") for k in item.data.keys())
@@ -382,7 +383,7 @@ def test_batch_stage_termination():
         .append("stage", stage, concurrency=2)
         .build()
     )
-    assert len(list(pipeline.run())) == 10
+    assert len(run_with_timeout(pipeline)) == 10
     assert stage.is_closed()
     # a forced termination must drain the queues of a failing concurrent batch stage too
     pipeline = (
@@ -430,7 +431,7 @@ def test_concurrent_initialization():
         .append("duplicator", BatchTextDuplicator(), concurrency=2)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -455,7 +456,7 @@ def test_concurrent_initialization():
         )
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -465,7 +466,7 @@ def test_concurrent_initialization():
         .append("duplicator", BatchTextDuplicator(10), concurrency=0)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -475,7 +476,7 @@ def test_concurrent_initialization():
         .append_concurrently("duplicator1", BatchTextDuplicator, concurrency=0)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -485,7 +486,7 @@ def test_concurrent_initialization():
         .append("duplicator1", BatchTextDuplicator(), concurrency=1)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline(max_init_workers=1)
@@ -509,7 +510,7 @@ def test_concurrent_initialization():
         )
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
 
 
@@ -536,7 +537,7 @@ def test_huge_run():
         .build()
     )
     start_time = time.time()
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     elapsed1 = time.time() - start_time
     logger.debug("Time for parallel: %s", elapsed1)
     check_items(items, 200)
@@ -550,7 +551,7 @@ def test_huge_run():
         .build()
     )
     start_time = time.time()
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     elapsed2 = time.time() - start_time
     logger.debug("Time for sequential: %s", elapsed2)
     check_items(items, 200)
@@ -569,7 +570,7 @@ def test_timeouts():
         .build()
     )
     start_time = time.monotonic()
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     elapsed = time.monotonic() - start_time
     # Batch stages flush partial batches on timeout, but the exact total wait is
     # racy: concurrent runners overlap their gather waits and the sequential
@@ -590,7 +591,7 @@ def test_timeouts():
         .build()
     )
     start_time = time.monotonic()
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     elapsed = time.monotonic() - start_time
     assert 1 <= round(elapsed), f"expected batch timeout waits, got {elapsed:.3f}s"
     assert elapsed < 15, f"pipeline took too long: {elapsed:.3f}s"
@@ -625,7 +626,7 @@ def test_timeouts():
         .build()
     )
     start_time = time.monotonic()
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     elapsed = time.monotonic() - start_time
     assert 1 <= round(elapsed), f"expected batch timeout waits, got {elapsed:.3f}s"
     assert elapsed < 15, f"pipeline took too long: {elapsed:.3f}s"
@@ -646,12 +647,12 @@ def test_single_items(items_generator_fx):
     for _ in range(88):
         pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
     for _ in range(87):
-        pipeline.get_item()
+        get_item_with_timeout(pipeline)
 
     pipeline = (
         get_pipeline()
@@ -666,7 +667,7 @@ def test_single_items(items_generator_fx):
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
@@ -698,7 +699,7 @@ def test_single_items(items_generator_fx):
         pipeline.process_async(item, callback=mark_item_checked)
     pipeline.stop()
     for _ in range(88):
-        result = pipeline.get_item()
+        result = get_item_with_timeout(pipeline)
         assert result.id == item.id
         assert result.metadata["check"]
         assert result.data["text"]
@@ -714,7 +715,7 @@ def test_single_items(items_generator_fx):
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] == item.data["text"]
@@ -729,7 +730,7 @@ def test_single_items(items_generator_fx):
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
@@ -744,7 +745,7 @@ def test_single_items(items_generator_fx):
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
@@ -773,7 +774,7 @@ def test_single_items(items_generator_fx):
     item = next(items_generator_fx)
     pipeline.process_async(item, callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] == item.data["text"]
@@ -794,12 +795,12 @@ def test_mixed_single_items(items_generator_fx):
     for _ in range(88):
         pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
     for _ in range(87):
-        pipeline.get_item()
+        get_item_with_timeout(pipeline)
 
     pipeline = (
         get_pipeline()
@@ -814,7 +815,7 @@ def test_mixed_single_items(items_generator_fx):
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
@@ -846,7 +847,7 @@ def test_mixed_single_items(items_generator_fx):
         pipeline.process_async(item, callback=mark_item_checked)
     pipeline.stop()
     for _ in range(88):
-        result = pipeline.get_item()
+        result = get_item_with_timeout(pipeline)
         assert result.id == item.id
         assert result.metadata["check"]
         assert result.data["text"]

@@ -27,6 +27,7 @@ from tests.utils import (
     TextReverser,
     cleanup_on_exit,
     get_pipeline,
+    next_with_timeout,
     run_with_timeout,
     text_item,
 )
@@ -346,14 +347,14 @@ def test_source_errors():
         )
         run = pipeline.run()
         if concurrency == 0:
-            assert next(run)
-            assert next(run)
-            assert next(run)
+            assert next_with_timeout(run, pipeline=pipeline)
+            assert next_with_timeout(run, pipeline=pipeline)
+            assert next_with_timeout(run, pipeline=pipeline)
         assert not source.is_stopped
         with pytest.raises(ValueError):
             # in case of concurrent pipeline the exception can raise immediately, or after we consume some item
             for _ in range(3):
-                next(run)
+                next_with_timeout(run, pipeline=pipeline)
         assert source.is_stopped
 
 
@@ -466,7 +467,7 @@ def test_run_generator_close_terminates():
         .build()
     )
     gen = pipeline.run()
-    first = next(gen)
+    first = next_with_timeout(gen, pipeline=pipeline)
     assert first.data["text"]
     gen.close()
     assert pipeline._source_container.is_stopped()
