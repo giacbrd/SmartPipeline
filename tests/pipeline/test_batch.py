@@ -19,6 +19,7 @@ from tests.utils import (
     TextDuplicator,
     TextReverser,
     get_pipeline,
+    run_with_timeout,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -36,7 +37,7 @@ def test_run():
         .append("batch_duplicator", BatchTextDuplicator())
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert len([x for x in item.data.keys() if x.startswith("text")]) == 3
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
@@ -51,7 +52,7 @@ def test_run():
         .append("batch_duplicator", BatchTextDuplicator(check_batch=True))
         .build()
     )
-    for _ in pipeline.run():
+    for _ in run_with_timeout(pipeline):
         pass
     assert pipeline.count == 40
 
@@ -66,7 +67,7 @@ def test_run_different_sizes():
         .build()
     )
     n = 0
-    for n, item in enumerate(pipeline.run()):
+    for n, item in enumerate(run_with_timeout(pipeline)):
         assert len([x for x in item.data.keys() if x.startswith("text")]) == 2
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
@@ -78,7 +79,7 @@ def test_run_different_sizes():
         .append("duplicator", BatchTextDuplicator(size=20))
         .build()
     )
-    for n, item in enumerate(pipeline.run()):
+    for n, item in enumerate(run_with_timeout(pipeline)):
         assert len([x for x in item.data.keys() if x.startswith("text")]) == 2
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
@@ -95,7 +96,7 @@ def test_soft_errors_flow_through_batches(caplog):
         .append("error", ErrorStage())
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.has_soft_errors()
         assert item.get_timing("reverser")
         assert item.get_timing("error")
@@ -118,7 +119,7 @@ def test_soft_errors_flow_through_batches(caplog):
         .build()
     )
     caplog.clear()
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.has_soft_errors()
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
@@ -142,7 +143,7 @@ def test_batch_critical_error_skips_downstream(caplog):
         .append("error2", ErrorStage())
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.has_critical_errors()
         assert item.get_timing("reverser")
         assert item.get_timing("error1") >= 0.0003
@@ -167,7 +168,7 @@ def test_batch_raise_on_critical_error_stops_run():
             .append("error", ExceptionStage())
             .build()
         )
-        for _ in pipeline.run():
+        for _ in run_with_timeout(pipeline):
             pass
 
 
@@ -182,7 +183,7 @@ def test_batch_no_skip_on_critical_error_runs_downstream():
         .append("reverser2", BatchTextReverser(size=4))
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.get_timing("reverser1")
         assert item.get_timing("error")
         assert item.get_timing("reverser2")
@@ -199,7 +200,7 @@ def test_batch_wide_soft_errors(caplog):
         .append("error", BatchErrorStage(size=3))
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.has_soft_errors()
         assert item.get_timing("reverser")
         assert item.get_timing("error")
@@ -217,7 +218,7 @@ def test_batch_wide_soft_errors(caplog):
         .append("duplicator", BatchTextDuplicator(size=5))
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.has_soft_errors()
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
@@ -241,7 +242,7 @@ def test_batch_wide_critical_errors(caplog):
         .append("error2", BatchErrorStage(size=1))
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.has_critical_errors()
         assert item.get_timing("reverser")
         assert item.get_timing("error1") >= 0.0003
@@ -262,7 +263,7 @@ def test_batch_wide_critical_errors(caplog):
             .append("error", BatchExceptionStage(size=3))
             .build()
         )
-        for _ in pipeline.run():
+        for _ in run_with_timeout(pipeline):
             pass
 
 
@@ -295,7 +296,7 @@ def test_retryable_batch_stages(items_generator_fx):
     )
     item = next(items_generator_fx)
     pipeline.process(copy.deepcopy(item))
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     for item in items:
         assert not item.has_critical_errors()
         assert all(

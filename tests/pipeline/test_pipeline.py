@@ -18,6 +18,7 @@ from tests.utils import (
     RandomTextSource,
     TextDuplicator,
     TextReverser,
+    get_item_with_timeout,
     get_pipeline,
     run_with_timeout,
     text_item,
@@ -43,7 +44,7 @@ def test_run():
     for container in pipeline._containers.values():
         assert container.name
         assert str(container)
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert len([x for x in item.data.keys() if x.startswith("text")]) == 2
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
@@ -64,7 +65,7 @@ def test_soft_errors_are_logged_and_flow(caplog):
     error_manager = ErrorManager()
     pipeline.set_error_manager(error_manager)
     assert all(c.error_manager == error_manager for c in pipeline._containers.values())
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.has_soft_errors()
         assert item.get_timing("reverser")
         assert item.get_timing("error")
@@ -91,7 +92,7 @@ def test_soft_errors_with_downstream_stages(caplog):
         .append("duplicator", TextDuplicator())
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.has_soft_errors()
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
@@ -119,7 +120,7 @@ def test_critical_io_error_skips_downstream():
         .append("error1", CriticalIOErrorStage())
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.has_critical_errors()
         assert item.get_timing("reverser")
         assert item.get_timing("error1")
@@ -139,7 +140,7 @@ def test_critical_error_skips_downstream(caplog):
         .append("error2", ErrorStage())
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.has_critical_errors()
         assert item.get_timing("reverser")
         assert item.get_timing("error1")
@@ -172,7 +173,7 @@ def test_raise_on_critical_error_stops_run():
     )
     with pytest.raises(Exception):
         try:
-            for _ in pipeline.run():
+            for _ in run_with_timeout(pipeline):
                 pass
         except Exception:
             assert 'Exception("test exception")' in traceback.format_exc()
@@ -190,7 +191,7 @@ def test_no_skip_on_critical_error_runs_downstream():
         .append("reverser2", TextReverser())
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.get_timing("reverser1")
         assert item.get_timing("error")
         assert item.get_timing("reverser2")
@@ -214,7 +215,7 @@ def test_build():
         .build()
     )
     for pipeline in (pipeline1, pipeline2):
-        for item in pipeline.run():
+        for item in run_with_timeout(pipeline):
             assert len([x for x in item.data.keys() if x.startswith("text")]) == 2
             assert item.get_timing("reverser")
             assert item.get_timing("duplicator")
@@ -244,7 +245,7 @@ def test_build():
             isinstance(c.error_manager, ErrorManager)
             for c in pipeline._containers.values()
         )
-        for item in pipeline.run():
+        for item in run_with_timeout(pipeline):
             assert item.has_soft_errors()
         assert pipeline.count == 10
 
@@ -488,7 +489,7 @@ def test_implicit_build_on_first_use():
     item.data["text"] = "hello"
     pipeline.process_async(item)
     pipeline.stop()
-    assert pipeline.get_item().data["text"] == "olleh"
+    assert get_item_with_timeout(pipeline).data["text"] == "olleh"
 
 
 def test_build_container_rejects_inline_batch_stage():
@@ -513,5 +514,5 @@ def test_process_async_without_callback():
     pipeline = get_pipeline().append("reverser", TextReverser()).build()
     pipeline.process_async(text_item("hello"))
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.data["text"] == "olleh"

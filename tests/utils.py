@@ -18,6 +18,7 @@ from typing import (
 
 import pytest
 
+from smartpipeline.containers import ConcurrentContainerTypes
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.helpers import FilePathItem
@@ -26,6 +27,10 @@ from smartpipeline.pipeline import Pipeline
 from smartpipeline.stage import BatchStage, Source, Stage
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
+
+PIPELINE_TIMEOUT = 30.0
+QUEUE_TIMEOUT = 30.0
+CLEANUP_TIMEOUT = 10.0
 
 TEXT_SAMPLES = (
     "On the other hand, we denounce with righteous indignation and dislike men who are so beguiled and demoralized by the charms of pleasure of the moment,",
@@ -399,8 +404,121 @@ def mark_item_checked(item: Item):
     item.metadata["check"] = True
 
 
+def _stop_pipeline_forced(pipeline: Pipeline):
+    """
+    Best-effort abort of a stuck pipeline: stop the source, wake the runners through the
+    fatal event and terminate every container, without waiting on any blocking join.
+    """
+    try:
+        pipeline.stop()
+    except BaseException:
+        pass
+    fatal_event = getattr(pipeline, "_fatal_event", None)
+    if fatal_event is not None:
+        try:
+            fatal_event.set()
+        except BaseException:
+            pass
+    for container in list(getattr(pipeline, "_containers", {}).values()):
+        try:
+            if isinstance(container, ConcurrentContainerTypes):
+                container.empty_queues()
+            else:
+                container.stop()
+            container.terminate()
+        except BaseException:
+            pass
+
+
+def _shutdown_with_timeout(pipeline: Pipeline, timeout: float = CLEANUP_TIMEOUT):
+    """
+    Run ``pipeline.shutdown()`` in a daemon thread, never blocking the test suite on a
+    stuck executor or queue join.
+    """
+
+    def _shutdown():
+        try:
+            pipeline.shutdown()
+        except BaseException:
+            pass
+
+    thread = Thread(target=_shutdown, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        logging.warning("The pipeline shutdown did not end in %s seconds", timeout)
+
+
+def next_with_timeout(
+    iterator: Iterator[Item[DataT]],
+    timeout: float = PIPELINE_TIMEOUT,
+    pipeline: Optional[Pipeline[DataT]] = None,
+) -> Item[DataT]:
+    """
+    Call ``next()`` on a pipeline iterator in a separate thread, failing the test instead
+    of hanging forever when no item is produced.
+
+    :param iterator: An iterator over the processed items
+    :param timeout: Maximum time to wait for the next item
+    :param pipeline: The pipeline to abort when the timeout expires
+    :return: The next processed item
+    :raises BaseException: Whatever exception the iterator has raised
+    """
+    outcome: Dict[str, Any] = {}
+
+    def _next():
+        try:
+            outcome["item"] = next(iterator)
+        except BaseException as e:
+            outcome["error"] = e
+
+    thread = Thread(target=_next, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        if pipeline is not None:
+            _stop_pipeline_forced(pipeline)
+            _shutdown_with_timeout(pipeline)
+        pytest.fail("next() did not return in {} seconds".format(int(timeout)))
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["item"]
+
+
+def get_item_with_timeout(
+    pipeline: Pipeline[DataT], timeout: float = PIPELINE_TIMEOUT
+) -> Item[DataT]:
+    """
+    Call ``pipeline.get_item()`` in a separate thread, failing the test instead of hanging
+    forever when no asynchronously processed item is delivered.
+
+    :param pipeline: A pipeline running asynchronously
+    :param timeout: Maximum time to wait for the processed item
+    :return: The processed item
+    :raises BaseException: Whatever exception the pipeline has raised
+    """
+    outcome: Dict[str, Any] = {}
+
+    def _get():
+        try:
+            outcome["item"] = pipeline.get_item()
+        except BaseException as e:
+            outcome["error"] = e
+
+    thread = Thread(target=_get, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        _stop_pipeline_forced(pipeline)
+        _shutdown_with_timeout(pipeline)
+        pytest.fail("get_item() did not return in {} seconds".format(int(timeout)))
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["item"]
+
+
 def run_with_timeout(
-    pipeline: Pipeline[DataT], timeout: float = 30.0
+    pipeline: Pipeline[DataT], timeout: float = PIPELINE_TIMEOUT
 ) -> List[Item[DataT]]:
     """
     Consume a pipeline run in a separate thread, failing the test when the pipeline does not
@@ -411,7 +529,7 @@ def run_with_timeout(
     :return: The list of processed items, when the pipeline terminates without errors
     :raises BaseException: Whatever exception the pipeline has raised
     """
-    outcome = {}
+    outcome: Dict[str, Any] = {}
 
     def _runner():
         try:
@@ -423,8 +541,10 @@ def run_with_timeout(
     thread.start()
     thread.join(timeout)
     if thread.is_alive():
-        # a stuck pipeline leaves its executions behind: at least tell the source to stop
-        pipeline.stop()
+        # a stuck pipeline leaves its executions behind: abort it as a whole, so that
+        # non-daemon runner/terminator threads cannot keep the interpreter alive either
+        _stop_pipeline_forced(pipeline)
+        _shutdown_with_timeout(pipeline)
         # `pytest.fail` is not an `Exception`, so it is never captured by `pytest.raises`
         pytest.fail("The pipeline did not terminate in {} seconds".format(int(timeout)))
     if "error" in outcome:
@@ -440,7 +560,7 @@ def get_pipeline(*args, **kwargs) -> Pipeline[Dict[str, Any]]:
 
 @contextmanager
 def cleanup_on_exit(pipeline: Pipeline) -> Iterator[Pipeline]:
-    """Guarantee pipeline cleanup (logs receiver and executors) on test exit."""
+    """Guarantee pipeline cleanup (logs receiver and executors) on test exit, without hanging."""
     try:
         yield pipeline
     finally:
@@ -448,10 +568,8 @@ def cleanup_on_exit(pipeline: Pipeline) -> Iterator[Pipeline]:
             pipeline._stop_logs_receiver()
         except Exception:
             pass
-        try:
-            pipeline.shutdown()
-        except Exception:
-            pass
+        _stop_pipeline_forced(pipeline)
+        _shutdown_with_timeout(pipeline)
 
 
 class TypedRow(TypedDict):

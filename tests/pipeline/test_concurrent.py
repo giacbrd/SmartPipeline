@@ -23,8 +23,10 @@ from tests.utils import (
     TimeWaster,
     check_items,
     cleanup_on_exit,
+    get_item_with_timeout,
     get_pipeline,
     mark_item_checked,
+    next_with_timeout,
     run_with_timeout,
 )
 
@@ -41,7 +43,7 @@ def test_concurrent_run():
     # no source
     with pytest.raises(ValueError):
         pipeline = get_pipeline().append("reverser", TextReverser()).build()
-        list(pipeline.run())
+        run_with_timeout(pipeline)
     pipeline = get_pipeline().append("reverser", TextReverser()).build()
     assert pipeline._new_mp_queue() != pipeline._new_mp_queue()
     assert pipeline._new_queue() != pipeline._new_queue()
@@ -63,7 +65,7 @@ def test_concurrent_run():
         .append("duplicator", TextDuplicator(), concurrency=2)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     assert pipeline._wait_executors() is None
     check_items(items, 100, pipeline)
     pipeline = (
@@ -75,7 +77,7 @@ def test_concurrent_run():
         .append("duplicator", TextDuplicator(), concurrency=2, executor="processes")
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -85,7 +87,7 @@ def test_concurrent_run():
         .append("duplicator", TextDuplicator(), concurrency=0)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -95,7 +97,7 @@ def test_concurrent_run():
         .append("duplicator", TextDuplicator(), concurrency=1, executor="processes")
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -105,7 +107,7 @@ def test_concurrent_run():
         .append("duplicator1", TextDuplicator(), concurrency=0)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -115,7 +117,7 @@ def test_concurrent_run():
         .append("duplicator1", TextDuplicator(), concurrency=1)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
 
 
@@ -130,7 +132,7 @@ def test_queue_sizes():
         .append("duplicator", TextDuplicator(), concurrency=2)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline(max_queues_size=1)
@@ -141,7 +143,7 @@ def test_queue_sizes():
         .append("duplicator", TextDuplicator(), concurrency=2, executor="processes")
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline(max_queues_size=3)
@@ -150,7 +152,7 @@ def test_queue_sizes():
         .append("reverser", TimeWaster(0.04), concurrency=1, executor="processes")
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline(max_queues_size=0)
@@ -161,7 +163,7 @@ def test_queue_sizes():
         .append("duplicator", TextDuplicator(), concurrency=2)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline(max_queues_size=0)
@@ -172,7 +174,7 @@ def test_queue_sizes():
         .append("duplicator", TextDuplicator(), concurrency=2, executor="processes")
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
 
 
@@ -180,7 +182,7 @@ def _assert_stage_error_raised(pipeline, caplog, count):
     """Consume a failing run, then check the processed count and the single error log."""
     with pytest.raises(Exception):
         try:
-            for _ in pipeline.run():
+            for _ in run_with_timeout(pipeline):
                 pass
         except Exception:
             tb = traceback.format_exc()
@@ -308,7 +310,7 @@ def test_concurrent_soft_errors_are_counted(caplog):
         .append("duplicator", TextDuplicator(), concurrency=1, executor="processes")
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.get_timing("reverser")
         assert item.get_timing("duplicator")
         assert any(k.startswith("text_") for k in item.data.keys())
@@ -343,7 +345,7 @@ def test_concurrent_constructions():
         .append("error", ErrorStage(), concurrency=2, executor="processes")
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert serializable_stage._file is None
         assert item.data.get("file")
         assert item.get_timing("reverser1")
@@ -365,7 +367,7 @@ def test_concurrent_constructions():
         .append("error", ErrorStage())
         .build()
     )
-    for item in pipeline.run():
+    for item in run_with_timeout(pipeline):
         assert item.data.get("file")
         assert item.get_timing("reverser1")
         assert item.get_timing("reverser2")
@@ -401,7 +403,7 @@ def test_concurrent_construction_start_failures():
     )
     with cleanup_on_exit(pipeline):
         with pytest.raises(IOError):
-            for _ in pipeline.run():
+            for _ in run_with_timeout(pipeline):
                 pass
     assert error_manager.is_closed()
 
@@ -423,7 +425,7 @@ def test_concurrent_initialization():
         .append("duplicator", TextDuplicator(), concurrency=2)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -440,7 +442,7 @@ def test_concurrent_initialization():
         )
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -450,7 +452,7 @@ def test_concurrent_initialization():
         .append("duplicator", TextDuplicator(10), concurrency=0)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -460,7 +462,7 @@ def test_concurrent_initialization():
         .append_concurrently("duplicator1", TextDuplicator, concurrency=0)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline()
@@ -470,7 +472,7 @@ def test_concurrent_initialization():
         .append("duplicator1", TextDuplicator(), concurrency=1)
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline(max_init_workers=1)
@@ -486,7 +488,7 @@ def test_concurrent_initialization():
         )
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
         get_pipeline(max_init_workers=1)
@@ -527,7 +529,7 @@ def test_build():
         .build()
     )
     for pipeline in (pipeline1, pipeline2, pipeline3):
-        for item in pipeline.run():
+        for item in run_with_timeout(pipeline):
             assert len([x for x in item.data.keys() if x.startswith("text")]) == 2
             assert item.get_timing("reverser")
             assert item.get_timing("duplicator")
@@ -562,7 +564,7 @@ def test_build():
             isinstance(c.error_manager, ErrorManager)
             for c in pipeline._containers.values()
         )
-        for item in pipeline.run():
+        for item in run_with_timeout(pipeline):
             assert item.has_soft_errors()
         assert pipeline.count == 10
 
@@ -638,7 +640,7 @@ def test_run_times():
         .build()
     )
     start_time = time.time()
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 10)
     elapsed0 = time.time() - start_time
     logger.debug("Time for multi-threading: %s", elapsed0)
@@ -652,7 +654,7 @@ def test_run_times():
         .build()
     )
     start_time = time.time()
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 10)
     elapsed1 = time.time() - start_time
     logger.debug("Time for multi-process: %s", elapsed1)
@@ -666,7 +668,7 @@ def test_run_times():
         .build()
     )
     start_time = time.time()
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     check_items(items, 10)
     elapsed2 = time.time() - start_time
     logger.debug("Time for sequential: %s", elapsed2)
@@ -700,11 +702,11 @@ def test_single_items(items_generator_fx):
         .build()
     )
     with pytest.raises(ValueError):
-        pipeline.get_item()
+        get_item_with_timeout(pipeline)
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
@@ -726,7 +728,7 @@ def test_single_items(items_generator_fx):
     item = next(items_generator_fx)
     pipeline.process_async(item, callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
@@ -741,7 +743,7 @@ def test_single_items(items_generator_fx):
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] == item.data["text"]
@@ -756,7 +758,7 @@ def test_single_items(items_generator_fx):
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
@@ -771,7 +773,7 @@ def test_single_items(items_generator_fx):
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] != item.data["text"]
@@ -792,7 +794,7 @@ def test_single_items(items_generator_fx):
     item = next(items_generator_fx)
     pipeline.process_async(item, callback=mark_item_checked)
     pipeline.stop()
-    result = pipeline.get_item()
+    result = get_item_with_timeout(pipeline)
     assert result.id == item.id
     assert result.metadata["check"]
     assert result.data["text"] == item.data["text"]
@@ -833,7 +835,7 @@ def test_concurrent_run_with_retryable_stages():
         )
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     for item in items:
         assert not item.has_critical_errors()
         soft_errors = list(item.soft_errors())
@@ -874,16 +876,20 @@ def test_broken_loop():
         )
 
     items = []
-    for n, item in enumerate(_get_pipeline().run()):
-        items.append(item)
-        if n >= 9:
-            break
+    pipeline = _get_pipeline()
+    run = pipeline.run()
+    for _ in range(10):
+        items.append(next_with_timeout(run, pipeline=pipeline))
+    run.close()
     assert len(items) == 10
     items = []
+    pipeline = _get_pipeline()
+    run = pipeline.run()
     try:
-        for n, item in enumerate(_get_pipeline().run()):
-            items.append(item)
-            if n >= 9:
-                raise IOError
+        for _ in range(10):
+            items.append(next_with_timeout(run, pipeline=pipeline))
+        raise IOError
     except IOError:
         assert len(items) == 10
+    finally:
+        run.close()

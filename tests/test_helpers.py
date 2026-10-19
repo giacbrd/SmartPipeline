@@ -2,7 +2,7 @@ from typing import Any, Dict
 
 from smartpipeline.helpers import FilePathItem, LocalFilesSource
 from smartpipeline.pipeline import Pipeline
-from tests.utils import TEXT_SAMPLES, TextExtractor
+from tests.utils import TEXT_SAMPLES, TextExtractor, run_with_timeout
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -15,7 +15,7 @@ def test_file_items(file_directory_source_fx):
         .append("extractor", TextExtractor())
         .build()
     )
-    items = list(pipeline.run())
+    items = run_with_timeout(pipeline)
     assert len(items) == len(TEXT_SAMPLES)
     for item in items:
         assert isinstance(item, FilePathItem)
