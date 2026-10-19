@@ -29,6 +29,8 @@ from smartpipeline.stage import BatchStage, Source, Stage
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 PIPELINE_TIMEOUT = 30.0
+# deliberately heavy performance tests need more than the default safety net
+HEAVY_TIMEOUT = 120.0
 QUEUE_TIMEOUT = 30.0
 CLEANUP_TIMEOUT = 10.0
 

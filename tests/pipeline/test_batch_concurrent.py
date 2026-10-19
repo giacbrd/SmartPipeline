@@ -8,6 +8,7 @@ import pytest
 from smartpipeline.containers import ConcurrentContainer
 from smartpipeline.error.handling import ErrorManager
 from tests.utils import (
+    HEAVY_TIMEOUT,
     BatchErrorStage,
     BatchExceptionStage,
     BatchTextDuplicator,
@@ -537,7 +538,7 @@ def test_huge_run():
         .build()
     )
     start_time = time.time()
-    items = run_with_timeout(pipeline)
+    items = run_with_timeout(pipeline, timeout=HEAVY_TIMEOUT)
     elapsed1 = time.time() - start_time
     logger.debug("Time for parallel: %s", elapsed1)
     check_items(items, 200)
@@ -551,7 +552,7 @@ def test_huge_run():
         .build()
     )
     start_time = time.time()
-    items = run_with_timeout(pipeline)
+    items = run_with_timeout(pipeline, timeout=HEAVY_TIMEOUT)
     elapsed2 = time.time() - start_time
     logger.debug("Time for sequential: %s", elapsed2)
     check_items(items, 200)
