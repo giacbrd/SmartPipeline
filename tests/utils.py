@@ -28,10 +28,14 @@ from smartpipeline.stage import BatchStage, Source, Stage
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
-PIPELINE_TIMEOUT = 30.0
-# deliberately heavy performance tests need more than the default safety net
-HEAVY_TIMEOUT = 120.0
+# Default safety net for a whole pipeline run or a single item wait. The slowest
+# legitimate tests take ~20s (deliberate sleeps and backoffs), so keep a 3x margin.
+PIPELINE_TIMEOUT = 60.0
+# Deliberately heavy performance tests get twice the default safety net.
+HEAVY_TIMEOUT = 2 * PIPELINE_TIMEOUT
+# Blocking queue/future waits inside a test.
 QUEUE_TIMEOUT = 30.0
+# Best-effort forced cleanup after a timeout, so the failure path stays bounded.
 CLEANUP_TIMEOUT = 10.0
 
 TEXT_SAMPLES = (

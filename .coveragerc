@@ -1,6 +1,9 @@
 [run]
 relative_files = True
 source_pkgs = smartpipeline
+# sys.monitoring (Python 3.12+) is dramatically faster than the C tracer on
+# pure-Python CPU-bound tests, which otherwise blow up the CI time
+core = sysmon
 
 [report]
 exclude_lines =

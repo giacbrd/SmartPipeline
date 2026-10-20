@@ -13,7 +13,7 @@ jobs:
   test:
 
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       max-parallel: 2
       matrix:
@@ -31,7 +31,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        python -m pip install flake8 pytest pytest-timeout coverage mypy
+        python -m pip install flake8 pytest pytest-timeout "coverage>=7.4" mypy
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Lint with flake8
       run: |
@@ -44,8 +44,9 @@ jobs:
         mypy smartpipeline
     - name: Test with pytest
       run: |
-        # a stuck test must fail the job instead of hanging it until the timeout
-        coverage run -m pytest -v --timeout=600 --timeout-method=thread
+        # hard per-test stop above the in-test HEAVY_TIMEOUT (120s) plus its
+        # cleanup, so a stuck pipeline fails with diagnostics and cleanup first
+        coverage run -m pytest -v --timeout=180 --timeout-method=thread
     - name: Coveralls
       uses: AndreMiras/coveralls-python-action@develop
       with:

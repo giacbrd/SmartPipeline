@@ -97,33 +97,30 @@ def test_on_start_error_manager_raises_on_build():
 
 
 @pytest.mark.parametrize(
-    "stage,kwargs,timeout,match",
+    "stage,kwargs,match",
     [
-        pytest.param(BrokenOnEndStage(), {}, 30.0, "test on_end failure", id="inline"),
+        pytest.param(BrokenOnEndStage(), {}, "test on_end failure", id="inline"),
         pytest.param(
             BrokenOnEndStage(),
             {"concurrency": 1},
-            30.0,
             "test on_end failure",
             id="threads",
         ),
         pytest.param(
             BrokenOnEndStage(),
             {"concurrency": 1, "executor": "processes"},
-            40.0,
             "test on_end failure",
             id="processes",
         ),
         pytest.param(
             BrokenOnEndBatchStage(),
             {"concurrency": 1, "executor": "processes"},
-            40.0,
             "test batch on_end failure",
             id="batch-processes",
         ),
     ],
 )
-def test_on_end_failure_raises_on_run(stage, kwargs, timeout, match):
+def test_on_end_failure_raises_on_run(stage, kwargs, match):
     """Stage on_end failures raise on run, inline and concurrent."""
     pipeline = (
         get_pipeline()
@@ -133,7 +130,7 @@ def test_on_end_failure_raises_on_run(stage, kwargs, timeout, match):
     )
     with cleanup_on_exit(pipeline):
         with pytest.raises(RuntimeError, match=match):
-            run_with_timeout(pipeline, timeout=timeout)
+            run_with_timeout(pipeline)
 
 
 def test_on_end_error_manager_raises_on_run():
@@ -180,7 +177,7 @@ def test_process_error_preserved_when_on_end_fails(concurrency):
     )
     with cleanup_on_exit(pipeline):
         with pytest.raises(ValueError, match="test process failure"):
-            run_with_timeout(pipeline, timeout=40)
+            run_with_timeout(pipeline)
 
 
 def test_concurrent_init_failure_raises_on_build():
@@ -241,7 +238,7 @@ def test_terminator_error_surfaces_during_run():
         pipeline.append(f"reverser-{i}", TextReverser())
     pipeline.build()
     with pytest.raises(RuntimeError, match="slow on_end"):
-        run_with_timeout(pipeline, timeout=60)
+        run_with_timeout(pipeline)
 
 
 def test_terminate_all_waits_for_non_empty_queues():
