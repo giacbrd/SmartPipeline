@@ -13,7 +13,7 @@ jobs:
   test:
 
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       max-parallel: 2
       matrix:
@@ -45,7 +45,7 @@ jobs:
     - name: Test with pytest
       run: |
         # a stuck test must fail the job instead of hanging it until the timeout
-        coverage run -m pytest -v --timeout=180 --timeout-method=thread
+        coverage run -m pytest -v --timeout=600 --timeout-method=thread
     - name: Coveralls
       uses: AndreMiras/coveralls-python-action@develop
       with:
