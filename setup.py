@@ -47,6 +47,6 @@ setup(
     package_data={
         "smartpipeline": ["py.typed"],
     },
-    tests_require=["pytest", "pytest-timeout", "coverage"],
+    tests_require=["pytest", "pytest-timeout", "coverage>=7.4"],
     python_requires=">=3.12",
 )
