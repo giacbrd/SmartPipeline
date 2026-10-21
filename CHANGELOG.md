@@ -1,6 +1,6 @@
 # SmartPipeline changelog
 
-## Unreleased
+## Version 1.0.0 [2026-10-21]
 
 - BREAKING CHANGE: the item payload is now generic. Use `Item[MyData]`,
   `Stage[MyData]` / `BatchStage[MyData]`, `Source[MyData]` and `Pipeline[MyData]`
@@ -44,6 +44,15 @@
 - Fixed a concurrent batch stage which was sending the `Stop` item before the items of the
   batch which received it: those items were then dropped by the pipeline termination, which
   could lose items and never terminate
+- Fixed a hang of `Pipeline.run()` when no source has been set: the source is checked before
+  the pipeline is built, so a concurrent stage does not start its executions for a pipeline
+  which cannot run. The source container is not "set" anymore just because a concurrent stage
+  created its output queue
+- Fixed a hang of a second `build()` (or `run()`) after a failed concurrent stage
+  initialization: the initialization error is reported again instead of waiting forever for a
+  stage container which would never be ready
+- Fixed a `None` payload being silently replaced by the default empty dict one: `None` is a
+  valid payload (e.g. for `Optional` types) and it is now kept as it is
 
 ## Version 0.7.0 [2023-09-27]
 

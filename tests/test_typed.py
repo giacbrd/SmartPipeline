@@ -1,6 +1,9 @@
+from typing import Optional
+
 from smartpipeline.item import Item
 from smartpipeline.pipeline import Pipeline
 from tests.utils import (
+    OptionalNoOp,
     StrUpper,
     TypedDoc,
     TypedDocUpper,
@@ -42,3 +45,14 @@ def test_primitive_process():
     """Plain str payloads flow through process."""
     pipeline: Pipeline[str] = Pipeline[str]().append("upper", StrUpper()).build()
     assert pipeline.process(Item[str]("hello")).data == "HELLO"
+
+
+def test_optional_payload_process():
+    """An Optional payload keeps its None value through the pipeline."""
+    pipeline: Pipeline[Optional[str]] = (
+        Pipeline[Optional[str]]().append("noop", OptionalNoOp()).build()
+    )
+    out = pipeline.process(Item[Optional[str]](None))
+    assert out.data is None
+    out = pipeline.process(Item[Optional[str]]("hello"))
+    assert out.data == "hello"

@@ -558,6 +558,38 @@ def run_with_timeout(
     return outcome.get("items", [])
 
 
+def build_with_timeout(
+    pipeline: Pipeline[DataT], timeout: float = PIPELINE_TIMEOUT
+) -> Pipeline[DataT]:
+    """
+    Build a pipeline in a separate thread, failing the test instead of hanging forever
+    when the build does not terminate, e.g. when a stage initialization fails
+
+    :param pipeline: A pipeline to build
+    :param timeout: Maximum time to wait for the build termination
+    :return: The built pipeline
+    :raises BaseException: Whatever exception the build has raised
+    """
+    outcome: Dict[str, Any] = {}
+
+    def _builder():
+        try:
+            pipeline.build()
+        except BaseException as e:
+            outcome["error"] = e
+
+    thread = Thread(target=_builder, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    if thread.is_alive():
+        _stop_pipeline_forced(pipeline)
+        _shutdown_with_timeout(pipeline)
+        pytest.fail("The pipeline build did not end in {} seconds".format(int(timeout)))
+    if "error" in outcome:
+        raise outcome["error"]
+    return pipeline
+
+
 def get_pipeline(*args, **kwargs) -> Pipeline[Dict[str, Any]]:
     return Pipeline[Dict[str, Any]](*args, **kwargs).set_error_manager(
         ErrorManager().raise_on_critical_error()
@@ -617,4 +649,9 @@ class TypedDocUpper(Stage[TypedDoc]):
 class StrUpper(Stage[str]):
     def process(self, item: Item[str]) -> Item[str]:
         item.data = item.data.upper()
+        return item
+
+
+class OptionalNoOp(Stage[Optional[str]]):
+    def process(self, item: Item[Optional[str]]) -> Item[Optional[str]]:
         return item

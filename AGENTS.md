@@ -14,12 +14,14 @@ Always run tests from repo root (`tests/` is a package: `from tests.utils import
 .venv/bin/python -m pytest -q tests/pipeline/test_concurrent.py::test_concurrency_errors  # single test
 .venv/bin/flake8 .             # .flake8 ignores E501,W503, excludes docs/*
 .venv/bin/mypy smartpipeline  # same target as pre-commit (pass_filenames: false)
-.venv/bin/coverage run -m pytest -v   # CI entrypoint
+.venv/bin/coverage run -m pytest -v --timeout=180 --timeout-method=signal   # CI entrypoint
 ```
 
-CI (`.github/workflows/tests.yml`, py 3.12–3.14 after `ulimit -n 8192`): only the first
+CI (`.github/workflows/tests.yml`, py 3.12–3.15 after `ulimit -n 8192`): only the first
 flake8 invocation gates the build (`--select=E9,F63,F7,F82`; the second is `--exit-zero`
 advisory) → `mypy smartpipeline` → `coverage run -m pytest`.
+The pytest timeout uses the "signal" method on purpose: the "thread" one kills the process
+with `os._exit()`, which discards the coverage data of the whole matrix leg.
 `setup.py` requires `python_requires=">=3.12"` (`ExceptionGroup`, `list[...]` OK).
 
 Suite takes minutes: concurrency tests spawn real processes and sleep. Iterate on focused

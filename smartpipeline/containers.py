@@ -287,13 +287,13 @@ class SourceContainer(BaseContainer, Generic[DataT]):
 
     def is_set(self) -> bool:
         """
-        True if this container is ready to produce items in output
+        True if this container has a source of items to produce, or an item which has
+        been manually prepended to it.
+
+        The output queue is not taken into account: it is created when a concurrent stage
+        is linked to this container, but it does not mean that any item can be produced.
         """
-        return (
-            self._source is not None
-            or self._next_item is not None
-            or self._out_queue is not None
-        )
+        return self._source is not None or self._next_item is not None
 
     def is_stopped(self) -> bool:
         """

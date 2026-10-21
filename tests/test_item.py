@@ -1,3 +1,5 @@
+from typing import Optional
+
 import pytest
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
@@ -47,3 +49,13 @@ def test_default_dict_payload():
     item = Item()
     item.data["text"] = "hello"
     assert item.data["text"] == "hello"
+
+
+def test_none_is_a_valid_payload():
+    """A None payload is kept as it is, it is not replaced by the default one."""
+    item = Item[Optional[str]](None)
+    assert item.data is None
+    assert item.data_snippet() == "None"
+    # the default payload is only used when the data is not given at all
+    assert Item().data == {}
+    assert Item({"a": 1}).data == {"a": 1}

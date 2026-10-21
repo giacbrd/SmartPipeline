@@ -2,7 +2,11 @@
 relative_files = True
 source_pkgs = smartpipeline
 # sys.monitoring (Python 3.12+) is dramatically faster than the C tracer on
-# pure-Python CPU-bound tests, which otherwise blow up the CI time
+# pure-Python CPU-bound tests, which otherwise blow up the CI time.
+# The option requires coverage 7.9+ and it comes with some limitations: the sysmon
+# core does not support branch coverage on Python 3.12/3.13, and it cannot be
+# combined with the "multiprocessing" concurrency setting (drop it to measure the
+# code running in the spawned processes).
 core = sysmon
 
 [report]

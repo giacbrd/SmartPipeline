@@ -23,6 +23,10 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 # `Item[Dict[str, Any]]` through the `__init__` overloads below.
 DataT = TypeVar("DataT")
 
+# Sentinel for a missing payload: `None` is a valid payload (e.g. for `Optional`
+# types), so the absence of the payload cannot be detected by checking the value.
+_MISSING = object()
+
 
 class Item(Generic[DataT]):
     """
@@ -33,7 +37,8 @@ class Item(Generic[DataT]):
     (a `TypedDict`, a dataclass, a primitive, ...). `Item()` defaults to a
     `Dict[str, Any]` payload; a custom payload always requires explicit data,
     as in `Item[MyData](...)`. Heterogeneous dict literals need an explicit
-    `Item[Dict[str, Any]]({...})` for static checking.
+    `Item[Dict[str, Any]]({...})` for static checking. `None` is a valid payload
+    (e.g. for `Optional` types) and it is not replaced by the default one.
     """
 
     @overload
@@ -44,13 +49,14 @@ class Item(Generic[DataT]):
     def __init__(self, data: DataT) -> None:
         ...
 
-    def __init__(self, data: Any = None) -> None:
+    def __init__(self, data: Any = _MISSING) -> None:
         self._soft_errors: list[SoftError] = []
         self._critical_errors: list[CriticalError] = []
         self._meta: Dict[str, Any] = {}
         # Only the `Dict[str, Any]` overload may omit `data`, so `{}` below
-        # always matches the static type in well-typed code.
-        payload: Any = {} if data is None else data
+        # always matches the static type in well-typed code. An explicit `None` is
+        # kept as the payload, since it is a valid one for nullable types.
+        payload: Any = {} if data is _MISSING else data
         self._payload: DataT = payload
         self._timings: Dict[str, float] = {}
         self._callback_fun: Optional[Callable[[Item[DataT]], Any]] = None

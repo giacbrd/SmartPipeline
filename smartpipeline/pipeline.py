@@ -210,25 +210,27 @@ class Pipeline(Generic[DataT]):
         if self._init_executor is not None:
             self._init_executor.shutdown(wait=True)
             self._init_executor = None
-        # Note that stage constructions (and their done-callbacks, which run
-        # synchronously when the relative future completes) are already joined by the
-        # shutdown above, so normally no placeholder is left at this point. This loop only
-        # covers the narrow window in which a `ProcessPoolExecutor` result delivery (and
-        # its callback replacing the placeholder) lags behind, and it breaks on
-        # construction errors instead of hanging without feedback.
-        while any(
+        # A stage container which is still a placeholder is under construction: stage
+        # constructions (and their done-callbacks, which run synchronously when the
+        # relative future completes) are already joined by the shutdown above, so normally
+        # no placeholder is left at this point. This loop only covers the narrow window in
+        # which a `ProcessPoolExecutor` result delivery (and its callback replacing the
+        # placeholder) lags behind, and it gives up on a construction error instead of
+        # hanging without feedback.
+        while not self._init_errors and any(
             container is self._fake_container for container in self._containers.values()
         ):
-            if self._init_errors:
-                break
             time.sleep(wait_seconds)
         if self._wait_previous_executor is not None:
             self._wait_previous_executor.shutdown(wait=True)
             self._wait_previous_executor = None
         if self._init_errors:
-            errors = list(self._init_errors)
-            self._init_errors.clear()
-            raise_collected_errors(errors, "pipeline stage initialization failed")
+            # The errors are kept, not cleared: the pipeline cannot be built, so any further
+            # build()/run() must report the failure again instead of hanging on a stage
+            # container which will never be ready.
+            raise_collected_errors(
+                list(self._init_errors), "pipeline stage initialization failed"
+            )
         # all the containers are now ready, we can share the event which alerts a stage runner error
         self._fatal_event = self._new_shared_event()
         self._source_container.set_fatal_event(self._fatal_event)
@@ -324,6 +326,21 @@ class Pipeline(Generic[DataT]):
         finally:
             self._count += 1
 
+    def _terminate_unrunnable(self):
+        """
+        Terminate the executions of an already built pipeline which cannot run: the stage
+        runners would otherwise stay alive and keep the interpreter busy at exit. The
+        terminated pipeline cannot run anymore, a new one is needed to run the stages again.
+        """
+        if not self._executors_ready:
+            # nothing has been started yet, there is nothing to terminate
+            return
+        self._logger.warning("The pipeline cannot run, terminating its executions")
+        try:
+            self._terminate_all(force=True)
+        except BaseException:
+            self._logger.exception("Problems in terminating the pipeline")
+
     def run(self) -> Generator[Item[DataT], None, None]:
         """
         Run the pipeline given a source and a concatenation of stages.
@@ -332,10 +349,14 @@ class Pipeline(Generic[DataT]):
         :return: Iterator over processed items
         :raises ValueError: When a source has not been set for the pipeline
         """
+        # The source is checked before building the pipeline: a concurrent stage starts its
+        # executions when the pipeline is built, and they would be left running (keeping the
+        # interpreter busy at exit) while the error is raised.
+        if not self._source_container.is_set():
+            self._terminate_unrunnable()
+            raise ValueError("Set the data source for this pipeline")
         if not self._executors_ready:
             self.build()
-        if not self._source_container.is_set():
-            raise ValueError("Set the data source for this pipeline")
         self._logger.debug("Running the pipeline on stages: %s", self._log_stages())
         counter = 0
         last_stage_name = self._last_stage_name()

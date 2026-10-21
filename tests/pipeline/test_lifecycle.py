@@ -25,6 +25,7 @@ from tests.utils import (
     SlowOnEndStage,
     TextGenerator,
     TextReverser,
+    build_with_timeout,
     cleanup_on_exit,
     get_pipeline,
     next_with_timeout,
@@ -190,6 +191,25 @@ def test_concurrent_init_failure_raises_on_build():
     with cleanup_on_exit(pipeline):
         with pytest.raises(RuntimeError, match="test init failure"):
             pipeline.build()
+
+
+def test_repeated_build_after_init_failure_raises_again():
+    """A second build after a failed initialization raises again instead of hanging."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(2))
+        .append_concurrently("broken", BrokenInitStage)
+    )
+    with cleanup_on_exit(pipeline):
+        # the first build fails on the broken stage initialization
+        with pytest.raises(RuntimeError, match="test init failure"):
+            build_with_timeout(pipeline, timeout=10)
+        # the failed stage container will never be ready: any further build must report
+        # the failure again instead of waiting for it indefinitely
+        with pytest.raises(RuntimeError, match="test init failure"):
+            build_with_timeout(pipeline, timeout=10)
+        with pytest.raises(RuntimeError, match="test init failure"):
+            run_with_timeout(pipeline, timeout=10)
 
 
 def test_concurrent_on_start_failure_raises_on_build():

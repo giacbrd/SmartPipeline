@@ -47,6 +47,7 @@ setup(
     package_data={
         "smartpipeline": ["py.typed"],
     },
-    tests_require=["pytest", "pytest-timeout", "coverage>=7.4"],
+    # coverage 7.9 is the first version supporting the `core = sysmon` option
+    tests_require=["pytest", "pytest-timeout", "coverage>=7.9"],
     python_requires=">=3.12",
 )
