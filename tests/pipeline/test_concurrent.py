@@ -121,6 +121,20 @@ def test_concurrent_run():
     check_items(items, 100, pipeline)
 
 
+def test_concurrent_run_without_source_raises():
+    """A concurrent first stage with no source raises instead of hanging the run."""
+    pipeline = get_pipeline().append_concurrently(
+        "reverser", TextReverser, concurrency=1
+    )
+    with cleanup_on_exit(pipeline):
+        with pytest.raises(ValueError, match="Set the data source"):
+            run_with_timeout(pipeline, timeout=10)
+        # the source is checked before building the pipeline, so no stage execution
+        # has been started
+        assert not pipeline._executors_ready
+        assert not pipeline._containers["reverser"]._futures
+
+
 def test_queue_sizes():
     """Bounded and unbounded queues deliver all items across executors."""
     pipeline = (

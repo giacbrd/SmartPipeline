@@ -101,6 +101,18 @@ def test_source_container_prepends_items():
     assert not container.is_stopped()
 
 
+def test_source_container_is_set_needs_a_source():
+    """The output queue alone does not make the source container able to produce items."""
+    container = SourceContainer()
+    assert not container.is_set()
+    # the output queue is created when a concurrent stage is linked to the container,
+    # but it does not provide any item to produce
+    container.init_queue(Queue)
+    assert not container.is_set()
+    container.prepend_item(Item())
+    assert container.is_set()
+
+
 def test_source_container_queued_pop_and_stop():
     """SourceContainer pops into queues and stops with a prepended item left."""
     manager = Manager()
