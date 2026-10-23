@@ -1,3 +1,3 @@
 [flake8]
-ignore = E501, W503
-exclude = docs/*
+ignore = E501, W503, E704
+exclude = docs/*,.venv/*,build/*,dist/*,*.egg-info/*

@@ -52,7 +52,8 @@ import from submodules (`from smartpipeline.pipeline import Pipeline`).
 Payloads are generic: `Item[MyData]`/`Stage[MyData]`/`Source[MyData]`/`Pipeline[MyData]`;
 `Item()` infers `Item[Dict[str, Any]]`. Concurrency uses
 `executor: Literal["threads","processes"]` (default `"threads"`), not a `parallel` bool.
-`append(..., retryable_errors, max_retries, backoff)` retries then raises `RetryError`.
+`append(..., retryable_errors, max_retries, backoff)` retries; after the final failed
+attempt one `RetryError` soft error is attached to the item.
 
 ## Invariants agents get wrong
 
@@ -61,6 +62,9 @@ Payloads are generic: `Item[MyData]`/`Stage[MyData]`/`Source[MyData]`/`Pipeline[
   and `run()` raises `ValueError` with no source. Stage names must be unique.
 - `concurrency=0` means inline (no threads/processes). `BatchStage` with
   `concurrency < 1` is silently forced to `concurrency=1, executor="threads"`.
+  `process()` rejects any pipeline with concurrent stages; use `run()`/`process_async()`.
+  `BatchStage.process_batch()` must return exactly one item per input item; a mismatch
+  raises a fatal `BatchOutputError`.
 - `executor="processes"` uses `spawn`; stage instances are pickled into workers.
   Non-picklable resources (files, sockets, models) go in `on_start()`, not `__init__`
   (see `SerializableStage`/`SerializableErrorManager` in `tests/utils.py`).
@@ -86,5 +90,5 @@ Payloads are generic: `Item[MyData]`/`Stage[MyData]`/`Source[MyData]`/`Pipeline[
 - New public API needs an `autoclass` entry in `docs/api.rst`. Don't reintroduce removed
   aliases (`Item.payload`, `DataItem`, `append_stage*`) or add new ones.
 - Each module starts with `__author__ = "Giacomo Berardi <giacbrd.com>"`.
-- The venv's `black` (26.x) is newer than the pre-commit pin (23.7.0): check `git status`
-  after formatting and revert unrelated hunks.
+- The venv's `black` matches the pre-commit pin (26.5.1), whose one-line empty
+  definitions need `E704` ignored: check `git status` after formatting anyway.

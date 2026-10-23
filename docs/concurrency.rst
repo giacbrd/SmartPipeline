@@ -45,7 +45,7 @@ A ``BatchStage`` with ``concurrency<1`` is automatically promoted
 to ``concurrency=1`` on threads.
 
 How stages on processes work
-------------------------
+----------------------------
 
 OS processes do not share memory, unlike threads.
 SmartPipeline starts its worker processes with the ``spawn`` method
@@ -77,8 +77,10 @@ It is called once per process, on that process's copy,
 before the copy processes its first item.
 Without multiprocessing it is simply called once after ``__init__``.
 :meth:`.Stage.on_end` is the mirror hook: it runs when the worker terminates,
-even on pipeline failure, and is the right place to close
-files or connections opened in ``on_start``.
+including when the pipeline terminates because of a failure, and is the right
+place to close files or connections opened in ``on_start``.
+A stage whose construction or ``on_start`` fails before the pipeline starts may
+not reach ``on_end``.
 The same pair of hooks exists on :class:`.ErrorManager`
 as :meth:`.ErrorManager.on_start` and :meth:`.ErrorManager.on_end`,
 because the error manager is copied into worker processes together with the stage.
@@ -211,7 +213,7 @@ Reach for a ``Manager`` only for small, low-frequency coordination
 (e.g. a global progress counter), not for per-item hot paths.
 
 Logging in stages on processes
---------------------------
+------------------------------
 
 Worker processes do not inherit the parent logging configuration
 (when ``spawn`` is used, there is no inherited memory at all).

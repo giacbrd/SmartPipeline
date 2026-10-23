@@ -66,8 +66,19 @@ class CriticalError(Error):
 class RetryError(SoftError):
     """
     A stage processing an input item may raise some Exception for which the stage must try to reprocess the item using
-    an exponential backoff retry strategy. After several attempts a RetryError is raised and
-    that stage is skipped for that item
+    an exponential backoff retry strategy. After all attempts fail, a single RetryError is attached
+    to the item and that stage is skipped for it
+    """
+
+    pass
+
+
+class BatchOutputError(Error):
+    """
+    A :class:`.stage.BatchStage` returned a number of items different from its input batch.
+
+    This is a fatal contract error: the pipeline stops instead of retrying it or
+    attaching a per-item soft/critical error.
     """
 
     pass
