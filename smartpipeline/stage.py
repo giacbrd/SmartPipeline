@@ -79,7 +79,7 @@ class BatchProcessor(ABC, Generic[DataT]):
         Process a batch of items received by the stage.
         Must be overridden for properly defining a batch stage
 
-        :return: The same batch with items processed and enriched by the stage
+        :return: The same batch with items processed and enriched by the stage; it must contain exactly one item for each input item
         """
         return items
 

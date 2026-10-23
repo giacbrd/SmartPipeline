@@ -208,10 +208,17 @@ class BatchTextDuplicator(BatchStage):
                 )
         for item in items:
             for c in range(self._cycles):
-                item.data[
-                    "text_b_{}_{}".format(c, random.randint(1, 1000))
-                ] = item.data["text"]
+                item.data["text_b_{}_{}".format(c, random.randint(1, 1000))] = (
+                    item.data["text"]
+                )
         return items
+
+
+class TruncatingBatchStage(BatchStage):
+    """Return fewer items than the input batch, violating the batch contract."""
+
+    def process_batch(self, items):
+        return list(items)[:1]
 
 
 class CustomizableBrokenBatchStage(BatchStage):

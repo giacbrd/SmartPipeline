@@ -862,11 +862,11 @@ def test_concurrent_run_with_retryable_stages():
         soft_errors_broken_stage_3 = [
             err for err in soft_errors if err.get_stage() == "broken_stage3"
         ]
-        assert len(soft_errors_broken_stage_1) == 3 and all(
+        assert len(soft_errors_broken_stage_1) == 1 and all(
             isinstance(err, RetryError) and isinstance(err.get_exception(), ValueError)
             for err in soft_errors_broken_stage_1
         )
-        assert len(soft_errors_broken_stage_2) == 2 and all(
+        assert len(soft_errors_broken_stage_2) == 1 and all(
             isinstance(err, RetryError) and isinstance(err.get_exception(), TypeError)
             for err in soft_errors_broken_stage_2
         )

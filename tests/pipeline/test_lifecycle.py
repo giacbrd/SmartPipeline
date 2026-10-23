@@ -475,6 +475,25 @@ def test_exit_run_does_not_mask_termination_errors(caplog):
     )
 
 
+def test_run_cleans_up_on_keyboard_interrupt():
+    """run() terminates its workers when the consumer interrupts it."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(3))
+        .append("reverser", TextReverser())
+        .build()
+    )
+    run = pipeline.run()
+    next_with_timeout(run, pipeline=pipeline)
+    original_exit_run = pipeline._exit_run
+    with mock.patch.object(
+        pipeline, "_exit_run", side_effect=original_exit_run
+    ) as exit_run:
+        with pytest.raises(KeyboardInterrupt):
+            run.throw(KeyboardInterrupt())
+    exit_run.assert_called_once()
+
+
 def test_run_generator_close_terminates():
     """Closing run() early stops the source container."""
     pipeline = (
