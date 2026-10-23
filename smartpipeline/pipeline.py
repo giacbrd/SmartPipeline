@@ -65,6 +65,13 @@ class EmptyStage(Stage[Any]):
         return item
 
 
+class _AsyncPipelineError:
+    """An error raised by the asynchronous pipeline runner, delivered by `get_item`."""
+
+    def __init__(self, error: BaseException):
+        self.error = error
+
+
 class Pipeline(Generic[DataT]):
     """
     Main class for designing the sequence of stages and execute them,
@@ -90,8 +97,10 @@ class Pipeline(Generic[DataT]):
         self._wait_previous_executor: Optional[Executor] = None
         self._pipeline_executor: Optional[Thread] = None
         self._max_queues_size = max_queues_size
-        self._out_queue: Optional[Queue[Item[DataT]]] = None
+        self._out_queue: Optional[Queue[Any]] = None
         self._enqueue_source = False
+        # `process` is synchronous and cannot drive the runners of concurrent stages
+        self._has_concurrent_stages = False
         # we approach sharing memory between processes exclusively through a `multiprocessing.Manager`
         self._sync_manager: Optional[SyncManager] = None
         self._count = 0
@@ -376,10 +385,10 @@ class Pipeline(Generic[DataT]):
                 kwargs={"errors_queue": source_errors_queue},
             )
             source_thread.start()
-        while True:
-            progressed = False
-            for name, container in self._containers.items():
-                try:
+        try:
+            while True:
+                progressed = False
+                for name, container in self._containers.items():
                     # first, check errors from the source
                     if (
                         source_errors_queue is not None
@@ -413,10 +422,6 @@ class Pipeline(Generic[DataT]):
                             if not isinstance(item, Stop):
                                 try:
                                     yield item
-                                except GeneratorExit:
-                                    # when the caller kills the run loop terminate everything
-                                    self._exit_run(source_thread, terminator_thread)
-                                    return
                                 finally:
                                     counter += 1
                                 self._count += 1
@@ -435,27 +440,27 @@ class Pipeline(Generic[DataT]):
 
                                 terminator_thread = Thread(target=_terminator)
                                 terminator_thread.start()
-                except Exception as e:
-                    self._exit_run(source_thread, terminator_thread)
-                    raise e
-            # a failed termination must surface instead of hanging the run loop
-            if terminator_errors:
-                self._exit_run(source_thread, terminator_thread)
-                _raise_terminator_error()
-            # back off instead of busy spinning when no container made any progress
-            # in this iteration (e.g. while concurrent runners work or termination drains)
-            if not progressed:
-                time.sleep(RUN_LOOP_BACKOFF)
-            # exit the loop only when all items have been returned
-            if self._all_empty() and counter >= self._source_container.count():
-                if source_thread is not None:
-                    source_thread.join()
-                if terminator_thread is not None:
-                    terminator_thread.join()
-                    self.shutdown()
-                    if terminator_errors:
-                        _raise_terminator_error()
-                return
+                # a failed termination must surface instead of hanging the run loop
+                if terminator_errors:
+                    _raise_terminator_error()
+                # back off instead of busy spinning when no container made any progress
+                # in this iteration (e.g. while concurrent runners work or termination drains)
+                if not progressed:
+                    time.sleep(RUN_LOOP_BACKOFF)
+                # exit the loop only when all items have been returned
+                if self._all_empty() and counter >= self._source_container.count():
+                    if source_thread is not None:
+                        source_thread.join()
+                    if terminator_thread is not None:
+                        terminator_thread.join()
+                        self.shutdown()
+                        if terminator_errors:
+                            _raise_terminator_error()
+                    return
+        except BaseException:
+            # Includes KeyboardInterrupt and GeneratorExit: never leave runners behind.
+            self._exit_run(source_thread, terminator_thread)
+            raise
 
     @property
     def count(self) -> int:
@@ -603,7 +608,14 @@ class Pipeline(Generic[DataT]):
     def process(self, item: Item[DataT]) -> Item[DataT]:
         """
         Process a single item synchronously (no concurrency) through the pipeline
+
+        :raises RuntimeError: When the pipeline contains concurrent stages
         """
+        if self._has_concurrent_stages:
+            raise RuntimeError(
+                "Pipeline.process() only supports pipelines without concurrent stages; "
+                "use run() or process_async()"
+            )
         if not self._executors_ready:
             self.build()
         self._logger.debug("Processing %s on stages: %s", item, self._log_stages())
@@ -651,10 +663,13 @@ class Pipeline(Generic[DataT]):
         :param block: If True wait indefinitely for the next processed item
         :raises ValueError: When there is not output queue set, the pipeline is not running asynchronously
         :raises queue.Empty: When we do not block and the queue is empty
+        :raises BaseException: Whatever exception has made the asynchronous runner fail
         """
         if self._out_queue is not None:
             item = self._out_queue.get(block)
             self._out_queue.task_done()
+            if isinstance(item, _AsyncPipelineError):
+                raise item.error
             return item
         else:
             raise ValueError(
@@ -743,8 +758,8 @@ class Pipeline(Generic[DataT]):
         :param stage: A stage instance
         :param concurrency: Number of concurrent stage executions, if 0 then just create the non-concurrent containers
         :param executor: "threads" for using threads, "processes" for using multiprocessing
-        :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. When the maximum number of retries is hit, a :class:`.error.exceptions.RetryError` is raised
-        :param max_retries: maximum number of retries for the stage before raising a RetryError(SoftError) (default 0)
+        :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. After the final failed attempt, a :class:`.error.exceptions.RetryError` soft error is attached to the item
+        :param max_retries: maximum number of retries for the stage before attaching a RetryError(SoftError) (default 0)
         :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
         """
         retry_manager = RetryManager(
@@ -837,8 +852,8 @@ class Pipeline(Generic[DataT]):
         :param stage: Instance of a stage
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
         :param executor: "threads" for using threads, "processes" for using multiprocessing
-        :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. When the maximum number of retries is hit, a :class:`.error.exceptions.RetryError` is raised
-        :param max_retries: maximum number of retries for the stage before raising a RetryError(SoftError) (default 0)
+        :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. After the final failed attempt, a :class:`.error.exceptions.RetryError` soft error is attached to the item
+        :param max_retries: maximum number of retries for the stage before attaching a RetryError(SoftError) (default 0)
         :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
         """
         self._executors_ready = False
@@ -852,6 +867,7 @@ class Pipeline(Generic[DataT]):
             name, stage, concurrency, executor, retryable_errors, max_retries, backoff
         )
         if concurrency > 0:
+            self._has_concurrent_stages = True
             # if it is concurrent and it is the first stage, make the source work on a output queue
             if not self._containers:
                 self._enqueue_source = True
@@ -883,8 +899,8 @@ class Pipeline(Generic[DataT]):
         :param kwargs: Dictionary of keyed arguments for the stage constructor
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
         :param executor: "threads" for using threads, "processes" for using multiprocessing (also for concurrent construction)
-        :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. When the maximum number of retries is hit, a :class:`.error.exceptions.RetryError` is raised
-        :param max_retries: maximum number of retries for the stage before raising a RetryError(SoftError) (default 0)
+        :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. After the final failed attempt, a :class:`.error.exceptions.RetryError` soft error is attached to the item
+        :param max_retries: maximum number of retries for the stage before attaching a RetryError(SoftError) (default 0)
         :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
         """
         if not isclass(stage_class):
@@ -903,16 +919,17 @@ class Pipeline(Generic[DataT]):
             args = []
         self._check_stage_name(name)
         self._check_retries_params(retryable_errors, max_retries, backoff)
-        # if it is concurrent, and it is the first stage, make the source work on a output queue
-        if concurrency > 0 and not self._containers:
-            self._enqueue_source = True
+        if concurrency > 0:
+            self._has_concurrent_stages = True
+            # if it is concurrent, and it is the first stage, make the source work on a output queue
+            if not self._containers:
+                self._enqueue_source = True
         last_stage_name = self._last_stage_name()
         # set it immediately with an empty stage container so the order of the calls of this method is followed in `_containers`
         self._containers[name] = self._fake_container
-        self._start_logs_receiver()
-        logs_queue = self._get_logs_receiver_queue()
         init_executor = self._get_init_executor(executor_construction)
         if executor_construction == "processes":
+            logs_queue = self._start_logs_receiver().queue
             future = init_executor.submit(
                 _stage_initialization_with_logger, logs_queue, stage_class, args, kwargs
             )
@@ -974,9 +991,22 @@ class Pipeline(Generic[DataT]):
             self._init_out_queue()
 
             def pipeline_runner():
-                for item in self.run():
-                    item.callback()
-                    self._out_queue.put(item)
+                runner = self.run()
+                try:
+                    for item in runner:
+                        try:
+                            item.callback()
+                        except BaseException as e:
+                            # the callback runs in this thread: deliver its error to
+                            # `get_item` instead of dying silently and blocking it
+                            self._out_queue.put(_AsyncPipelineError(e))
+                            return
+                        self._out_queue.put(item)
+                except BaseException as e:
+                    self._out_queue.put(_AsyncPipelineError(e))
+                finally:
+                    # closing also terminates the pipeline when the callback failed
+                    runner.close()
 
             self._pipeline_executor = Thread(target=pipeline_runner)
             self._pipeline_executor.start()

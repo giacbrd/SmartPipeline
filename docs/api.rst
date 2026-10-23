@@ -49,6 +49,14 @@ Exceptions to generate in case of errors and how to handle them
    :inherited-members:
    :members:
 
+.. autoclass:: smartpipeline.error.exceptions.RetryError
+   :inherited-members:
+   :members:
+
+.. autoclass:: smartpipeline.error.exceptions.BatchOutputError
+   :inherited-members:
+   :members:
+
 .. autoclass:: smartpipeline.error.handling.ErrorManager
    :inherited-members:
    :members:

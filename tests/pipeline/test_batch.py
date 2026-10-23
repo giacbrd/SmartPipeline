@@ -1,9 +1,8 @@
-import copy
 import logging
 
 import pytest
 
-from smartpipeline.error.exceptions import RetryError
+from smartpipeline.error.exceptions import BatchOutputError, RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.pipeline import Pipeline
 from tests.utils import (
@@ -18,6 +17,7 @@ from tests.utils import (
     RandomTextSource,
     TextDuplicator,
     TextReverser,
+    TruncatingBatchStage,
     get_pipeline,
     run_with_timeout,
 )
@@ -267,7 +267,25 @@ def test_batch_wide_critical_errors(caplog):
             pass
 
 
-def test_retryable_batch_stages(items_generator_fx):
+def test_batch_output_length_must_match_input():
+    """A batch stage must return exactly one item for every input item."""
+    pipeline = (
+        Pipeline()
+        .set_source(RandomTextSource(3))
+        .append(
+            "short",
+            TruncatingBatchStage(size=3),
+            retryable_errors=(Exception,),
+            max_retries=1,
+            backoff=0,
+        )
+        .build()
+    )
+    with pytest.raises(BatchOutputError, match="exactly one item per input item"):
+        run_with_timeout(pipeline)
+
+
+def test_retryable_batch_stages():
     """Failing batch stages retry into per-item soft RetryErrors."""
     pipeline = (
         Pipeline()
@@ -294,8 +312,6 @@ def test_retryable_batch_stages(items_generator_fx):
         .append("reverser1", TextReverser())
         .build()
     )
-    item = next(items_generator_fx)
-    pipeline.process(copy.deepcopy(item))
     items = run_with_timeout(pipeline)
     for item in items:
         assert not item.has_critical_errors()

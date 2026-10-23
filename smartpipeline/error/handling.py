@@ -137,7 +137,7 @@ class RetryManager:
     ):
         """
         :param retryable_errors: tuple of errors types which the retry strategy is applied for
-        :param max_retries: maximum number of attempts for a which a stage is run in case of one of the `retryable_errors` is raised during its execution
+        :param max_retries: maximum number of retries after the first attempt for a stage in case one of the `retryable_errors` is raised during its execution
         :param backoff: weight for the exponential back-off strategy
         """
         self._backoff = backoff

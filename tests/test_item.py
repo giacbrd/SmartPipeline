@@ -43,6 +43,17 @@ def test_soft_critical_error_attachment():
     with pytest.raises(ValueError):
         item.add_critical_error(stage.name, SoftError())
 
+    class CriticalSubclass(CriticalError):
+        pass
+
+    class SoftSubclass(SoftError):
+        pass
+
+    with pytest.raises(ValueError):
+        item.add_soft_error(stage.name, CriticalSubclass())
+    with pytest.raises(ValueError):
+        item.add_critical_error(stage.name, SoftSubclass())
+
 
 def test_default_dict_payload():
     """A bare Item defaults to an empty dict payload."""

@@ -490,9 +490,9 @@ class BatchStageContainer(
         self.set_retry_manager(retry_manager)
         self.set_stage(name, stage)
         # TODO next two variables should help when container is not concurrent, that is currently never the case
-        self.__result_queue: queue.SimpleQueue[
-            Optional[Item[DataT]]
-        ] = queue.SimpleQueue()
+        self.__result_queue: queue.SimpleQueue[Optional[Item[DataT]]] = (
+            queue.SimpleQueue()
+        )
         self._last_processed: List[Optional[Item[DataT]]] = []
 
     def process(self) -> List[Optional[Item[DataT]]]:
