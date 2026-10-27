@@ -128,6 +128,26 @@ def _raise_on_end_errors(
     raise_collected_errors(result.exceptions, f"{stage} failed on_end")
 
 
+def _call_on_end_after_abort(
+    on_multiprocess: bool,
+    error_manager: ErrorManager,
+    stage: StageType,
+) -> None:
+    """
+    Close a worker copy which is exiting because its output was dropped.
+
+    A worker copy owns its `on_start` resources, so it must still run `on_end`
+    when a put is aborted by termination or by a fatal error elsewhere. Failures
+    are logged: the original termination error must not be masked.
+    """
+    if not on_multiprocess:
+        return
+    for end_error in _call_on_end_best_effort(error_manager, stage).exceptions:
+        stage.logger.exception(
+            "%s failed on_end after an aborted put", stage, exc_info=end_error
+        )
+
+
 def process(
     stage: Stage[DataT],
     item: Item[DataT],
@@ -316,6 +336,7 @@ def stage_runner(
             stopped = put_or_abort(out_queue, item, *guards)
             in_queue.task_done()
             if not stopped:
+                _call_on_end_after_abort(on_multiprocess, error_manager, stage)
                 return
         elif item is not None:
             try:
@@ -343,6 +364,7 @@ def stage_runner(
                     if not aborted and not isinstance(item, Stop):
                         counter += 1
                 if aborted:
+                    _call_on_end_after_abort(on_multiprocess, error_manager, stage)
                     return
             finally:
                 in_queue.task_done()
@@ -430,11 +452,15 @@ def batch_stage_runner(
                 for final_item in processed_items:
                     if final_item is not None:
                         if not put_or_abort(out_queue, final_item, *guards):
+                            _call_on_end_after_abort(
+                                on_multiprocess, error_manager, stage
+                            )
                             return
                         if not isinstance(final_item, Stop):
                             counter += 1
         if got_stop:
             if not put_or_abort(out_queue, Stop(), *guards):
+                _call_on_end_after_abort(on_multiprocess, error_manager, stage)
                 return
 
 

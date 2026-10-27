@@ -7,12 +7,13 @@ from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures._base import Executor, Future
 from concurrent.futures.thread import ThreadPoolExecutor
+from enum import Enum
 from inspect import isclass
 from logging.handlers import QueueHandler
 from multiprocessing import Manager, get_context
 from multiprocessing.managers import SyncManager
 from queue import Queue
-from threading import Event, Thread
+from threading import Event, RLock, Thread, current_thread
 from typing import Any, Callable, Generator, Generic, Mapping, Optional
 from typing import OrderedDict as OrderedDictType
 from typing import Self, Sequence, Tuple, Type, Union
@@ -28,7 +29,12 @@ from smartpipeline.containers import (
     SourceContainer,
     StageContainer,
 )
-from smartpipeline.defaults import CONCURRENCY_WAIT, MAX_QUEUES_SIZE, RUN_LOOP_BACKOFF
+from smartpipeline.defaults import (
+    CONCURRENCY_WAIT,
+    MAX_QUEUES_SIZE,
+    PIPELINE_CLOSE_TIMEOUT,
+    RUN_LOOP_BACKOFF,
+)
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import DataT, Item, Stop
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage
@@ -60,7 +66,7 @@ def _stage_initialization_with_logger(
     return stage_class(*args, **kwargs)
 
 
-class EmptyStage(Stage[Any]):
+class _EmptyStage(Stage[Any]):
     def process(self, item: Item[Any]) -> Item[Any]:
         return item
 
@@ -70,6 +76,25 @@ class _AsyncPipelineError:
 
     def __init__(self, error: BaseException):
         self.error = error
+
+
+class PipelineState(Enum):
+    """
+    Lifecycle state of a :class:`.Pipeline`.
+
+    A pipeline is built once, can process single items synchronously, and can run
+    its source once. After a run (or an explicit :meth:`.Pipeline.close`) it is closed
+    and cannot be reused.
+    """
+
+    INITIAL = "initial"
+    BUILT = "built"
+    RUNNING = "running"
+    CLOSED = "closed"
+
+
+class PipelineStateError(RuntimeError):
+    """Raised when an operation is not allowed in the current pipeline state."""
 
 
 class Pipeline(Generic[DataT]):
@@ -105,7 +130,27 @@ class Pipeline(Generic[DataT]):
         self._sync_manager: Optional[SyncManager] = None
         self._count = 0
         self._executors_ready = False
+        self._state = PipelineState.INITIAL
+        # The build failure is kept and raised again, instead of leaving a closed
+        # pipeline which reports only a generic state error.
+        self._build_error: Optional[BaseException] = None
+        self._stages_started = False
+        # Stages whose `on_start` ran in this process: their `on_end` must run here too.
+        # Process-based stages initialize and close their own copies in the workers.
+        self._started_in_main: list[tuple[str, ContainerType]] = []
+        self._error_manager_started = False
+        self._terminated_all = False
+        self._run_finished = False
+        self._close_requested = False
+        self._resources_released = False
+        self._closing = False
+        # Serializes the start phase with termination/close: a close() which races
+        # with `_start_stages()` must not release the executors of runners which are
+        # still being submitted. Reentrant because `_abort_start()` (called from the
+        # start phase) terminates and releases resources on the same thread.
+        self._lifecycle_lock = RLock()
         self._fatal_event: Optional[Event] = None
+        self._source_thread: Optional[Thread] = None
         self._logs_receiver: Optional[LogsReceiver] = None
         self._name = f"{self.__class__.__name__}-{str(uuid.uuid4())[:8]}"
         self._logger = logging.getLogger(self._name)
@@ -116,7 +161,10 @@ class Pipeline(Generic[DataT]):
         )
         # A fake container for the pipeline to support data structures initialization
         self._fake_container: StageContainer[DataT] = StageContainer(
-            f"FakeContainerOf{self._name}", EmptyStage(), ErrorManager(), RetryManager()
+            f"FakeContainerOf{self._name}",
+            _EmptyStage(),
+            ErrorManager(),
+            RetryManager(),
         )
         # failures of concurrent stage constructions (`append_concurrently`),
         # callbacks run in other threads so errors are stored and raised on `build()`
@@ -148,6 +196,40 @@ class Pipeline(Generic[DataT]):
         Pipeline unique name, equivalent to its logger name
         """
         return self._name
+
+    @property
+    def state(self) -> PipelineState:
+        """
+        Current lifecycle state of the pipeline
+        """
+        return self._state
+
+    def _require_initial(self, action: str) -> None:
+        if self._state is not PipelineState.INITIAL:
+            raise PipelineStateError(
+                f"Cannot {action} a pipeline in state '{self._state.value}'; "
+                "configure the pipeline before calling build()"
+            )
+
+    def _require_not_running(self, action: str) -> None:
+        if self._state in (PipelineState.RUNNING, PipelineState.CLOSED):
+            raise PipelineStateError(
+                f"Cannot {action} a pipeline in state '{self._state.value}'"
+            )
+
+    def _ensure_built(self) -> None:
+        if self._state is PipelineState.INITIAL:
+            self.build()
+        elif self._state is PipelineState.BUILT:
+            return
+        elif self._state is PipelineState.CLOSED:
+            if self._build_error is not None:
+                raise self._build_error
+            raise PipelineStateError(
+                "The pipeline is closed; a Pipeline can be run only once"
+            )
+        else:
+            raise PipelineStateError("The pipeline is already running")
 
     def _new_mp_queue(self) -> ItemsQueue:
         """
@@ -208,11 +290,14 @@ class Pipeline(Generic[DataT]):
 
     def _wait_executors(self, wait_seconds: float = CONCURRENCY_WAIT):
         """
-        Wait for all containers to start
+        Wait for all containers to be constructed and prepare them to run.
+
+        This only validates and wires the pipeline: stages and workers are started
+        later, by :meth:`.Pipeline.run` or :meth:`.Pipeline.process_async`.
 
         :param wait_seconds: Recurrently wait these seconds for all stage initializers to finish
-        :raises Exception: Whatever exception has been raised by a stage construction
-            or by an `on_start` lifecycle hook, instead of hanging without feedback
+        :raises Exception: Whatever exception has been raised by a stage construction,
+            instead of hanging without feedback
         """
         if self._executors_ready:
             return
@@ -245,56 +330,218 @@ class Pipeline(Generic[DataT]):
         self._source_container.set_fatal_event(self._fatal_event)
         for name, container in self._containers.items():
             container.set_fatal_event(self._fatal_event)
+        self._executors_ready = True
+        self._logger.debug("Pipeline prepared to run")
+
+    def _start_stages(self):
+        """
+        Run the start phase: `on_start` hooks and concurrent stage runners.
+
+        Inline and threaded stages initialize once in this process; process-based
+        stages initialize their own copies inside each worker. If the start phase
+        fails, already started stages are terminated and their `on_end` is called.
+
+        The phase holds the lifecycle lock, so a concurrent :meth:`.Pipeline.close`
+        waits for it instead of releasing the executors of runners which are still
+        being submitted; when the close request comes first, the phase does not
+        start anything.
+        """
+        if self._stages_started:
+            return
+        with self._lifecycle_lock:
+            if self._stages_started:
+                return
+            if self._close_requested or self._state is PipelineState.CLOSED:
+                # A close() won the race: it owns the termination of this pipeline.
+                return
+            self._terminated_all = False
+            self._started_in_main.clear()
+            self._error_manager_started = False
+            try:
+                for name, container in self._containers.items():
+                    if self._close_requested:
+                        # close() asked to stop while starting: never submit more
+                        # runners, it terminates the ones already started
+                        return
+                    if isinstance(container, ConcurrentContainerTypes):
+                        if container.executor == "threads":
+                            container.stage.on_start()
+                            self._started_in_main.append((name, container))
+                        container.run()
+                    else:
+                        container.stage.on_start()
+                        self._started_in_main.append((name, container))
+                # The main error manager starts only after the process-based runners
+                # have been submitted: its `on_start` may open non-picklable resources,
+                # and worker copies must be serialized before that.
+                if self._close_requested:
+                    return
+                self._error_manager.on_start()
+                self._error_manager_started = True
+            except BaseException:
+                self._abort_start()
+                raise
+            self._stages_started = True
+            self._logger.debug("Pipeline stages started")
+
+    def _abort_start(self):
+        """Terminate a pipeline whose start phase failed, without masking the original error."""
+        self._logger.exception("Pipeline start failed")
+        self._state = PipelineState.CLOSED
         try:
-            for name, container in self._containers.items():
-                if isinstance(container, ConcurrentContainerTypes):
-                    container.run()
-            # finalize initialization of the error manager shared by this and other stage threads
-            self._error_manager.on_start()
+            self._terminate_all(force=True)
         except BaseException:
-            # runners are already started, stop them instead of leaking executions
-            # which would hang any later wait on queues or termination
+            self._logger.exception(
+                "Problems in terminating the pipeline after a start failure"
+            )
+        finally:
+            self._release_resources()
+
+    def _release_resources(self):
+        """
+        Release executors, the logs receiver and the multiprocessing manager.
+
+        Idempotent: it can be called by both the run loop and :meth:`.Pipeline.close`.
+        It holds the lifecycle lock, so it never releases something which another
+        thread is still starting.
+        """
+        with self._lifecycle_lock:
+            if self._resources_released:
+                return
+            self._resources_released = True
+            if self._init_executor is not None:
+                try:
+                    self._init_executor.shutdown(wait=True)
+                except BaseException:
+                    self._logger.exception(
+                        "Problems in shutting down the init executor"
+                    )
+                self._init_executor = None
+            if self._wait_previous_executor is not None:
+                try:
+                    self._wait_previous_executor.shutdown(wait=True)
+                except BaseException:
+                    self._logger.exception(
+                        "Problems in shutting down the linker executor"
+                    )
+                self._wait_previous_executor = None
             for container in self._containers.values():
                 if isinstance(container, ConcurrentContainerTypes):
                     try:
-                        container.terminate()
+                        container.shutdown()
                     except BaseException:
                         self._logger.exception(
-                            "Problems in terminating %s during build cleanup",
-                            container,
+                            "Problems in shutting down %s", container
                         )
-            try:
-                self.shutdown()
-            except BaseException:
-                pass
-            raise
-        self._executors_ready = True
-        self._logger.debug("Pipeline ready to run")
+            self._stop_logs_receiver()
+            if self._sync_manager is not None:
+                try:
+                    self._sync_manager.shutdown()
+                except BaseException:
+                    self._logger.exception(
+                        "Problems in shutting down the multiprocessing manager"
+                    )
+                self._sync_manager = None
 
-    def shutdown(self):
+    def _join_thread(self, thread: Optional[Thread], description: str, timeout: float):
+        if thread is None or thread is current_thread() or not thread.is_alive():
+            return
+        thread.join(timeout=timeout)
+        if thread.is_alive():
+            self._logger.warning(
+                "The %s did not end in %s seconds", description, timeout
+            )
+
+    def close(self, timeout: float = PIPELINE_CLOSE_TIMEOUT):
         """
-        Execute shutdown of various pool executors and multiprocessing stuff.
-        The developer should not need to call it explicitly.
+        Close the pipeline, idempotently.
+
+        Running workers are terminated, pending queues are drained, and `on_end` hooks
+        run for every stage whose `on_start` completed. Executors and the multiprocessing
+        manager are released. A closed pipeline cannot be built or run again.
+
+        When another thread is starting the pipeline, the close request stops the start
+        phase and this call waits for it, so the runners it submits are terminated too.
+
+        :param timeout: Time to wait for the source thread and the asynchronous runner
         """
-        if self._out_queue is not None:
-            self._out_queue.join()
-        if self._init_executor is not None:
-            self._init_executor.shutdown()
-        for name, container in self._containers.items():
-            if isinstance(container, ConcurrentContainerTypes):
-                container.shutdown()
-        if self._sync_manager is not None:
-            self._sync_manager.shutdown()
+        if self._state is PipelineState.CLOSED:
+            return
+        if self._closing:
+            return
+        self._closing = True
+        self._state = PipelineState.CLOSED
+        termination_error: Optional[BaseException] = None
+        try:
+            self._close_requested = True
+            self._run_finished = True
+            try:
+                self.stop()
+            except BaseException:
+                self._logger.exception("Problems in stopping the pipeline")
+            # Serialized with `_start_stages`: when it is in progress this waits for
+            # it (the close request makes it stop early) and terminates every runner
+            # it has submitted, instead of releasing busy executors underneath it.
+            # `_terminate_all` is idempotent, so it is safe also when nothing started.
+            with self._lifecycle_lock:
+                try:
+                    self._terminate_all(force=True)
+                except BaseException as e:
+                    termination_error = e
+                # consumers are gone: unblock a source thread waiting on a full queue
+                if self._fatal_event is not None:
+                    self._fatal_event.set()
+            self._join_thread(self._source_thread, "source thread", timeout)
+            self._source_container.empty_out_queue()
+            # joined outside the lifecycle lock: the asynchronous runner may still
+            # have to acquire it while it exits
+            self._join_thread(
+                self._pipeline_executor, "asynchronous pipeline runner", timeout
+            )
+            self._release_resources()
+        finally:
+            self._closing = False
+        if termination_error is not None:
+            raise termination_error
 
     def build(self) -> Self:
         """
-        Pipeline builder method
+        Validate and prepare the pipeline.
+
+        Stage construction is completed and containers are wired, but no stage or
+        worker is started: :meth:`.Pipeline.run` and :meth:`.Pipeline.process_async`
+        start them. Calling ``build()`` again on a built pipeline is a no-op.
+
+        :raises ValueError: When no stage has been appended
+        :raises PipelineStateError: When the pipeline is running or closed
         """
-        if not any(self._containers):
-            raise ValueError("Must append at least a stage")
-        self._logger.debug("Building the pipeline on stages: %s", self._log_stages())
-        self._wait_executors()
-        return self
+        # Serialized with close(): a pipeline closed while it is being built must not
+        # be resurrected to BUILT after its resources have been released.
+        with self._lifecycle_lock:
+            if self._state is PipelineState.BUILT:
+                return self
+            if self._state is PipelineState.CLOSED:
+                if self._build_error is not None:
+                    raise self._build_error
+                raise PipelineStateError(
+                    "The pipeline is closed; a Pipeline can be built only once"
+                )
+            if self._state is PipelineState.RUNNING:
+                raise PipelineStateError("The pipeline is already running")
+            if not any(self._containers):
+                raise ValueError("Must append at least a stage")
+            self._logger.debug(
+                "Building the pipeline on stages: %s", self._log_stages()
+            )
+            try:
+                self._wait_executors()
+            except BaseException as e:
+                self._build_error = e
+                self._state = PipelineState.CLOSED
+                self._release_resources()
+                raise
+            self._state = PipelineState.BUILT
+            return self
 
     def _is_fatal(self) -> bool:
         """
@@ -313,6 +560,56 @@ class Pipeline(Generic[DataT]):
             if isinstance(container, ConcurrentContainerTypes):
                 container.check_errors()
 
+    def _finish_run(
+        self,
+        source_thread: Optional[Thread],
+        terminator_thread: Optional[Thread],
+        force: bool = False,
+        suppress_errors: bool = False,
+    ):
+        """
+        Terminate the pipeline, run the closing hooks and release its resources.
+
+        :param force: Do not wait for inline containers to consume their pending items
+        :param suppress_errors: Log termination errors instead of raising them, so an
+            original processing error is never masked
+        """
+        with self._lifecycle_lock:
+            if self._run_finished:
+                return
+            self._run_finished = True
+            self._close_requested = True
+        errors: list[Exception] = []
+        try:
+            try:
+                self.stop()
+            except BaseException:
+                self._logger.exception("Problems in terminating the pipeline")
+            if not self._terminated_all:
+                try:
+                    self._terminate_all(force=force)
+                except Exception as e:
+                    errors.append(e)
+            # On a forced termination the consumers are gone: unblock a source thread
+            # which is waiting on a full queue before joining it.
+            if force and self._fatal_event is not None:
+                self._fatal_event.set()
+            if source_thread is not None and source_thread is not current_thread():
+                source_thread.join()
+            if (
+                terminator_thread is not None
+                and terminator_thread is not current_thread()
+            ):
+                terminator_thread.join()
+        finally:
+            try:
+                self._release_resources()
+            except BaseException:
+                self._logger.exception("Problems in releasing the pipeline resources")
+            self._state = PipelineState.CLOSED
+        if errors and not suppress_errors:
+            raise_collected_errors(errors, "pipeline termination failed")
+
     def _exit_run(
         self, source_thread: Optional[Thread], terminator_thread: Optional[Thread]
     ):
@@ -321,32 +618,10 @@ class Pipeline(Generic[DataT]):
         masking the original exception
         """
         try:
-            self.stop()
             self._source_container.empty_out_queue()
-            if source_thread is not None:
-                source_thread.join()
-            # TODO in case of errors we lose pending items!
-            self._terminate_all(force=True)
-            if terminator_thread is not None:
-                terminator_thread.join()
-            self.shutdown()
-        except BaseException:
-            self._logger.exception("Problems in terminating the pipeline")
-        finally:
-            self._count += 1
-
-    def _terminate_unrunnable(self):
-        """
-        Terminate the executions of an already built pipeline which cannot run: the stage
-        runners would otherwise stay alive and keep the interpreter busy at exit. The
-        terminated pipeline cannot run anymore, a new one is needed to run the stages again.
-        """
-        if not self._executors_ready:
-            # nothing has been started yet, there is nothing to terminate
-            return
-        self._logger.warning("The pipeline cannot run, terminating its executions")
-        try:
-            self._terminate_all(force=True)
+            self._finish_run(
+                source_thread, terminator_thread, force=True, suppress_errors=True
+            )
         except BaseException:
             self._logger.exception("Problems in terminating the pipeline")
 
@@ -358,14 +633,18 @@ class Pipeline(Generic[DataT]):
         :return: Iterator over processed items
         :raises ValueError: When a source has not been set for the pipeline
         """
-        # The source is checked before building the pipeline: a concurrent stage starts its
-        # executions when the pipeline is built, and they would be left running (keeping the
-        # interpreter busy at exit) while the error is raised.
+        # The source is checked before building or starting the pipeline, so no worker
+        # is left running while the error is raised.
         if not self._source_container.is_set():
-            self._terminate_unrunnable()
             raise ValueError("Set the data source for this pipeline")
-        if not self._executors_ready:
-            self.build()
+        if self._state is PipelineState.RUNNING:
+            raise PipelineStateError("The pipeline is already running")
+        self._ensure_built()
+        self._start_stages()
+        # close() may have run while the stages were starting
+        if self._state is PipelineState.CLOSED:
+            return
+        self._state = PipelineState.RUNNING
         self._logger.debug("Running the pipeline on stages: %s", self._log_stages())
         counter = 0
         last_stage_name = self._last_stage_name()
@@ -384,6 +663,7 @@ class Pipeline(Generic[DataT]):
                 target=self._source_container.pop_into_queue,
                 kwargs={"errors_queue": source_errors_queue},
             )
+            self._source_thread = source_thread
             source_thread.start()
         try:
             while True:
@@ -420,11 +700,13 @@ class Pipeline(Generic[DataT]):
                                 break
                             progressed = True
                             if not isinstance(item, Stop):
+                                # count the item as delivered before yielding it, so an
+                                # early `close()` of the generator does not lose it
+                                self._count += 1
                                 try:
                                     yield item
                                 finally:
                                     counter += 1
-                                self._count += 1
                             # if a stop is finally signaled, start termination of all containers
                             elif (
                                 not self._all_terminated() and terminator_thread is None
@@ -447,15 +729,14 @@ class Pipeline(Generic[DataT]):
                 # in this iteration (e.g. while concurrent runners work or termination drains)
                 if not progressed:
                     time.sleep(RUN_LOOP_BACKOFF)
+                # an explicit close() from another thread ends the run loop
+                if self._close_requested:
+                    return
                 # exit the loop only when all items have been returned
                 if self._all_empty() and counter >= self._source_container.count():
-                    if source_thread is not None:
-                        source_thread.join()
-                    if terminator_thread is not None:
-                        terminator_thread.join()
-                        self.shutdown()
-                        if terminator_errors:
-                            _raise_terminator_error()
+                    self._finish_run(source_thread, terminator_thread)
+                    if terminator_errors:
+                        _raise_terminator_error()
                     return
         except BaseException:
             # Includes KeyboardInterrupt and GeneratorExit: never leave runners behind.
@@ -465,9 +746,13 @@ class Pipeline(Generic[DataT]):
     @property
     def count(self) -> int:
         """
-        Get the number of items processed by all executed runs, also for items which have failed
+        Number of items delivered to the caller.
 
-        :return: Count of processed items
+        Counts the items yielded by :meth:`.Pipeline.run` and the items delivered by
+        :meth:`.Pipeline.process_async`, including the items which carry soft errors.
+        Items processed one by one with :meth:`.Pipeline.process` are not counted.
+
+        :return: Count of delivered items
         """
         return self._count
 
@@ -485,8 +770,24 @@ class Pipeline(Generic[DataT]):
         :param force: If True do not wait for a container to process all items produced by the source
         :param wait_seconds: Time to wait before pinging again a container for its termination
         """
+        # Serialized with the start phase: terminate either before it starts or after
+        # it completes, never while it is submitting runners to the executors.
+        with self._lifecycle_lock:
+            self._terminate_all_locked(force=force, wait_seconds=wait_seconds)
+
+    def _terminate_all_locked(
+        self, force: bool = False, wait_seconds: float = CONCURRENCY_WAIT
+    ):
+        if self._terminated_all:
+            return
+        self._terminated_all = True
         self._logger.debug("Terminating the pipeline")
         errors: list[Exception] = []
+        if force and self._fatal_event is not None:
+            # Force termination discards pending items: unblock any producer which
+            # is waiting on a full queue, otherwise the runners never terminate.
+            self._fatal_event.set()
+        started_names = {name for name, _ in self._started_in_main}
         # scroll the pipeline by its order (this is critical for correctness)
         # and terminate stages after the relative queues are empty
         for name, container in self._containers.items():
@@ -501,11 +802,14 @@ class Pipeline(Generic[DataT]):
                     while not container.is_terminated():
                         time.sleep(wait_seconds)
                     if force:
-                        # empty the queues, losing all remaining pending items
+                        # empty the queues, losing all remaining pending items.
+                        # Do not join them: the source thread may still put an item
+                        # after the runners are gone, and nobody would call task_done.
                         container.empty_queues()
-                    container.queues_join()
-                    while not container.queues_empty():
-                        time.sleep(wait_seconds)
+                    else:
+                        container.queues_join()
+                        while not container.queues_empty():
+                            time.sleep(wait_seconds)
                     try:
                         container.check_errors()
                     except Exception as e:
@@ -513,22 +817,22 @@ class Pipeline(Generic[DataT]):
                             "Concurrent stage %s failed on termination", name
                         )
                         errors.append(e)
-                if (
-                    not isinstance(container, ConcurrentContainerTypes)
-                    or container.executor == "threads"
-                ):
-                    try:
-                        container.stage.on_end()
-                    except Exception as e:
-                        self._logger.exception("Stage %s failed on_end", name)
-                        errors.append(e)
             except Exception as e:
                 errors.append(e)
-        try:
-            self._error_manager.on_end()
-        except Exception as e:
-            self._logger.exception("Error manager failed on_end")
-            errors.append(e)
+            # `on_end` is paired with a successful `on_start` in this process.
+            # Process-based stages close their worker copies in the workers themselves.
+            if name in started_names:
+                try:
+                    container.stage.on_end()
+                except Exception as e:
+                    self._logger.exception("Stage %s failed on_end", name)
+                    errors.append(e)
+        if self._error_manager_started:
+            try:
+                self._error_manager.on_end()
+            except Exception as e:
+                self._logger.exception("Error manager failed on_end")
+                errors.append(e)
         self._stop_logs_receiver()
         raise_collected_errors(errors, "pipeline termination failed")
         self._logger.debug("Termination done")
@@ -607,17 +911,23 @@ class Pipeline(Generic[DataT]):
 
     def process(self, item: Item[DataT]) -> Item[DataT]:
         """
-        Process a single item synchronously (no concurrency) through the pipeline
+        Process a single item synchronously (no concurrency) through the pipeline.
 
-        :raises RuntimeError: When the pipeline contains concurrent stages
+        A built pipeline can process several items one by one until it is closed.
+
+        :raises ValueError: When the pipeline contains concurrent stages
+        :raises PipelineStateError: When the pipeline is running or closed
         """
         if self._has_concurrent_stages:
-            raise RuntimeError(
+            raise ValueError(
                 "Pipeline.process() only supports pipelines without concurrent stages; "
                 "use run() or process_async()"
             )
-        if not self._executors_ready:
-            self.build()
+        self._ensure_built()
+        self._start_stages()
+        # close() may have run while the pipeline was starting
+        if self._state is PipelineState.CLOSED:
+            raise PipelineStateError("The pipeline is closed")
         self._logger.debug("Processing %s on stages: %s", item, self._log_stages())
         last_stage_name = last_key(self._containers)
         self._source_container.prepend_item(item)
@@ -638,9 +948,14 @@ class Pipeline(Generic[DataT]):
         The call returns immediately, processed items are retrieved with :meth:`.Pipeline.get_item`
 
         :param callback: A function to call after a successful process of the item
+        :raises PipelineStateError: When the pipeline is closed
         """
-        if not self._executors_ready:
-            self.build()
+        # A running pipeline accepts more items, a closed one cannot.
+        if self._state is not PipelineState.RUNNING:
+            self._ensure_built()
+        self._start_stages()
+        if self._state is PipelineState.CLOSED:
+            raise PipelineStateError("The pipeline is closed")
         self._logger.debug(
             "Processing asynchronously %s on stages: %s", item, self._log_stages()
         )
@@ -679,7 +994,13 @@ class Pipeline(Generic[DataT]):
     def set_source(self, source: Source[DataT]) -> Self:
         """
         Set the source of the pipeline: a subclass of :class:`.stage.Source`
+
+        A built pipeline without a source can still be given one, as long as it has
+        not started running.
+
+        :raises PipelineStateError: When the pipeline is running or closed
         """
+        self._require_not_running("set a source on")
         source.set_name(self._source_name)
         self._source_container.set(source)
         return self
@@ -687,7 +1008,10 @@ class Pipeline(Generic[DataT]):
     def set_error_manager(self, error_manager: ErrorManager) -> Self:
         """
         Set the error manager for handling errors from each stage item processing
+
+        :raises PipelineStateError: When the pipeline has already been built
         """
+        self._require_initial("set an error manager on")
         self._error_manager = error_manager
         for container in self._containers.values():
             container.set_error_manager(self._error_manager)
@@ -766,8 +1090,6 @@ class Pipeline(Generic[DataT]):
             backoff=backoff, max_retries=max_retries, retryable_errors=retryable_errors
         )
         if concurrency <= 0:
-            # if not concurrent we must explicitly finalize initialization of this single stage object
-            stage.on_start()
             if isinstance(stage, BatchStage):
                 # unreachable through the public API (`append` and `append_concurrently`
                 # always force batch stages to `concurrency=1`): guard the private contract
@@ -801,9 +1123,6 @@ class Pipeline(Generic[DataT]):
                 executor,
                 logs_queue,
             )
-        # if the stage is executed on multiple threads we must finalize initialization once,
-        # while on multiprocessing each process executor calls it for its own copy of the stage
-        stage.on_start()
         if isinstance(stage, BatchStage):
             return BatchConcurrentStageContainer(
                 name,
@@ -855,7 +1174,9 @@ class Pipeline(Generic[DataT]):
         :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. After the final failed attempt, a :class:`.error.exceptions.RetryError` soft error is attached to the item
         :param max_retries: maximum number of retries for the stage before attaching a RetryError(SoftError) (default 0)
         :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
+        :raises PipelineStateError: When the pipeline has already been built
         """
+        self._require_initial("append a stage to")
         self._executors_ready = False
         # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
         if concurrency < 1 and isinstance(stage, BatchStage):
@@ -902,7 +1223,9 @@ class Pipeline(Generic[DataT]):
         :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. After the final failed attempt, a :class:`.error.exceptions.RetryError` soft error is attached to the item
         :param max_retries: maximum number of retries for the stage before attaching a RetryError(SoftError) (default 0)
         :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
+        :raises PipelineStateError: When the pipeline has already been built
         """
+        self._require_initial("append a stage to")
         if not isclass(stage_class):
             raise ValueError(
                 "Must pass stage classes, and not stage instances, as argument"
@@ -937,8 +1260,14 @@ class Pipeline(Generic[DataT]):
             future = init_executor.submit(stage_class, *args, **kwargs)
 
         def finish_append(stage_future: Future):
+            # the pipeline may have been built or closed while the stage was under
+            # construction: never create queues or containers after that
+            if self._state is not PipelineState.INITIAL:
+                return
             try:
                 stage = stage_future.result()
+                if self._state is not PipelineState.INITIAL:
+                    return
                 container = self._build_container(
                     name,
                     stage,

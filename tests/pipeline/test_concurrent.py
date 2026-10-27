@@ -226,7 +226,7 @@ def test_concurrent_stage_error_raises_and_logs(caplog):
         .append("error", ExceptionStage(counter=3), concurrency=1)
         .build()
     )
-    _assert_stage_error_raised(pipeline, caplog, 4)
+    _assert_stage_error_raised(pipeline, caplog, 3)
     caplog.clear()
     pipeline = (
         get_pipeline()
@@ -235,7 +235,7 @@ def test_concurrent_stage_error_raises_and_logs(caplog):
         .append("error", ExceptionStage(), concurrency=1, executor="processes")
         .build()
     )
-    _assert_stage_error_raised(pipeline, caplog, 1)
+    _assert_stage_error_raised(pipeline, caplog, 0)
 
 
 def test_concurrent_error_never_sticks_pipeline():
@@ -392,21 +392,22 @@ def test_concurrent_constructions():
 
 
 def test_concurrent_construction_start_failures():
-    """Concurrent on_start failures raise on build and run, closing managers."""
-    pipeline = get_pipeline()
+    """Concurrent on_start failures raise on run, closing managers."""
+    pipeline = (
+        get_pipeline()
+        .set_error_manager(SerializableErrorManager())
+        .set_source(RandomTextSource(10))
+        .append(
+            "stage",
+            ErrorSerializableStage(),
+            concurrency=1,
+            executor="processes",
+        )
+    )
     with cleanup_on_exit(pipeline):
+        pipeline.build()
         with pytest.raises(IOError):
-            (
-                pipeline.set_error_manager(SerializableErrorManager())
-                .set_source(RandomTextSource(10))
-                .append(
-                    "stage",
-                    ErrorSerializableStage(),
-                    concurrency=1,
-                    executor="processes",
-                )
-                .build()
-            )
+            run_with_timeout(pipeline)
     error_manager = SerializableErrorManager().raise_on_critical_error()
     pipeline = (
         get_pipeline()
@@ -513,7 +514,7 @@ def test_concurrent_initialization():
         .build()
     )
     pipeline._terminate_all()
-    pipeline.shutdown()
+    pipeline.close()
     assert pipeline._containers["slow_init"]
 
 

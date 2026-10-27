@@ -212,6 +212,9 @@ This is useful when construction itself is slow,
 for example when it builds large in-memory data structures.
 
 Always finish the concatenation with :meth:`.Pipeline.build`.
+``build()`` only validates and prepares the pipeline: stages are wired and
+constructed, but no worker is started. The start phase happens when the pipeline
+is executed, as shown below.
 
 The example below adds a second stage that truncates the text, then runs the pipeline.
 
@@ -265,8 +268,29 @@ No source is set: items are submitted explicitly, one by one.
     # explicitly stop the pipeline once no more items will arrive
     pipeline.stop()
 
+``process_async()`` can be called again while the pipeline is running to submit
+more items. After ``stop()`` the current run terminates and the pipeline is
+closed.
+
 Use :meth:`.Pipeline.process` only when no stage is concurrent:
 the item is processed synchronously and returned directly by the call.
+``process()`` raises ``ValueError`` as soon as the pipeline contains a stage
+with ``concurrency > 0``, so it can never block on a concurrent queue.
+
+Pipeline lifecycle
+^^^^^^^^^^^^^^^^^^
+
+A pipeline has an explicit lifecycle. ``build()`` prepares it, ``run()`` and
+``process_async()`` start its workers, and :meth:`.Pipeline.close` releases them.
+A pipeline can run only once: after ``run()`` or ``process_async()`` finishes it
+is closed. ``process()`` is the exception, since it can process several items
+one by one while the pipeline is built.
+
+After ``build()`` the configuration is frozen: adding stages or replacing the
+error manager raises :class:`.PipelineStateError`, while a source can still be
+set until the pipeline starts. ``close()`` is idempotent and can release a
+pipeline which was built but never run. A closed pipeline cannot be built or
+run again.
 
 A further example
 -----------------
