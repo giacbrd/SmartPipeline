@@ -7,7 +7,7 @@ import pytest
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import Item
-from smartpipeline.pipeline import EmptyStage, Pipeline
+from smartpipeline.pipeline import Pipeline, _EmptyStage
 from tests.utils import (
     BatchTextReverser,
     CriticalIOErrorStage,
@@ -55,15 +55,15 @@ def test_run():
 
 def test_soft_errors_are_logged_and_flow(caplog):
     """Soft errors attach per item with timings while downstream stages still run."""
+    error_manager = ErrorManager()
     pipeline = (
         get_pipeline()
+        .set_error_manager(error_manager)
         .set_source(RandomTextSource(10))
         .append("reverser", TextReverser())
         .append("error", ErrorStage())
         .build()
     )
-    error_manager = ErrorManager()
-    pipeline.set_error_manager(error_manager)
     assert all(c.error_manager == error_manager for c in pipeline._containers.values())
     for item in run_with_timeout(pipeline):
         assert item.has_soft_errors()
@@ -465,7 +465,7 @@ def test_exponential_backoff_retry_strategy(items_generator_fx):
 def test_empty_stage_returns_item_unchanged():
     """EmptyStage passes the item through untouched."""
     item = Item({"text": "hello"})
-    assert EmptyStage().process(item) is item
+    assert _EmptyStage().process(item) is item
 
 
 def test_implicit_build_on_first_use():
@@ -509,7 +509,7 @@ def test_build_container_rejects_inline_batch_stage():
 def test_process_rejects_concurrent_stages(stage, kwargs):
     """process() fails fast instead of hanging on a concurrent stage."""
     pipeline = get_pipeline().append("stage", stage, **kwargs)
-    with pytest.raises(RuntimeError, match="concurrent"):
+    with pytest.raises(ValueError, match="concurrent"):
         pipeline.process(text_item())
     assert not pipeline._executors_ready
 
@@ -527,13 +527,14 @@ def test_process_async_callback_error_is_delivered():
         get_item_with_timeout(pipeline)
 
 
-def test_shutdown_with_pending_init_executor():
-    """Shutdown tolerates an init executor that is still pending."""
+def test_close_with_pending_init_executor():
+    """close() tolerates a pending init executor."""
     pipeline = get_pipeline().append_concurrently("reverser", TextReverser)
     assert pipeline._init_executor is not None
     assert pipeline._sync_manager is None
     assert pipeline._logs_receiver is None
-    pipeline.shutdown()
+    pipeline.close()
+    assert pipeline._init_executor is None
 
 
 def test_process_async_without_callback():

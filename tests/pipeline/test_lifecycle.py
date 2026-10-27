@@ -9,9 +9,10 @@ import pytest
 
 from smartpipeline.containers import ConcurrentStageContainer, StageContainer
 from smartpipeline.error.handling import ErrorManager, RetryManager
-from smartpipeline.pipeline import Pipeline
+from smartpipeline.pipeline import Pipeline, PipelineState, PipelineStateError
 from smartpipeline.utils import ThreadCounter
 from tests.utils import (
+    PIPELINE_TIMEOUT,
     BrokenInitStage,
     BrokenOnEndBatchStage,
     BrokenOnEndErrorManager,
@@ -20,6 +21,8 @@ from tests.utils import (
     BrokenProcessAndEndStage,
     ErrorSerializableStage,
     ErrorSource,
+    LifecycleErrorManager,
+    LifecycleStage,
     RandomTextSource,
     SlowInitializer,
     SlowOnEndStage,
@@ -27,10 +30,12 @@ from tests.utils import (
     TextReverser,
     build_with_timeout,
     cleanup_on_exit,
+    get_item_with_timeout,
     get_pipeline,
     next_with_timeout,
     run_with_timeout,
     text_item,
+    wait_for_state,
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -85,16 +90,19 @@ def _scripted_container(pipeline, fail_on=()):
     return container
 
 
-def test_on_start_error_manager_raises_on_build():
-    """Error-manager on_start failures abort the build with cleanup."""
-    pipeline = get_pipeline().set_error_manager(BrokenOnStartErrorManager())
+def test_on_start_error_manager_raises_on_run():
+    """Error-manager on_start failures abort the run, not the build."""
+    pipeline = (
+        get_pipeline()
+        .set_error_manager(BrokenOnStartErrorManager())
+        .set_source(RandomTextSource(3))
+        .append("stage", TextReverser(), concurrency=1, executor="processes")
+    )
     with cleanup_on_exit(pipeline):
+        pipeline.build()
         with pytest.raises(RuntimeError, match="on_start"):
-            (
-                pipeline.set_source(RandomTextSource(3))
-                .append("stage", TextReverser(), concurrency=1, executor="processes")
-                .build()
-            )
+            run_with_timeout(pipeline)
+        assert pipeline.state is PipelineState.CLOSED
 
 
 @pytest.mark.parametrize(
@@ -212,16 +220,18 @@ def test_repeated_build_after_init_failure_raises_again():
             run_with_timeout(pipeline, timeout=10)
 
 
-def test_concurrent_on_start_failure_raises_on_build():
-    """Stage on_start failures raise on build with cleanup."""
+def test_concurrent_on_start_failure_raises_on_run():
+    """Stage on_start failures raise on run, while build only prepares."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
         .append_concurrently("broken", ErrorSerializableStage, concurrency=1)
     )
     with cleanup_on_exit(pipeline):
+        pipeline.build()
         with pytest.raises(IOError):
-            pipeline.build()
+            run_with_timeout(pipeline)
+        assert pipeline.state is PipelineState.CLOSED
 
 
 def test_build_waits_for_slow_concurrent_init():
@@ -285,8 +295,8 @@ def test_terminate_all_collects_terminate_error():
         pipeline._terminate_all()
 
 
-def test_build_cleanup_survives_container_failures():
-    """Build cleans up containers when their startup fails."""
+def test_start_cleanup_survives_container_failures():
+    """A start failure cleans up containers even when their cleanup fails."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
@@ -294,7 +304,8 @@ def test_build_cleanup_survives_container_failures():
     )
     _scripted_container(pipeline, fail_on=("run", "terminate", "shutdown"))
     with pytest.raises(RuntimeError, match="test container run failure"):
-        pipeline.build()
+        run_with_timeout(pipeline)
+    assert pipeline.state is PipelineState.CLOSED
 
 
 def test_wait_for_stopped_waits_for_stop():
@@ -464,12 +475,12 @@ def test_process_propagates_runner_error():
 
 
 def test_exit_run_does_not_mask_termination_errors(caplog):
-    """_exit_run counts the run and logs stop failures instead of masking them."""
+    """_exit_run logs stop failures instead of masking them."""
     pipeline = get_pipeline().append("reverser", TextReverser()).build()
     with mock.patch.object(pipeline, "stop", side_effect=RuntimeError("stop boom")):
         with caplog.at_level(logging.ERROR):
             pipeline._exit_run(None, None)
-    assert pipeline.count == 1
+    assert pipeline.count == 0
     assert any(
         "problems in terminating" in record.msg.lower() for record in caplog.records
     )
@@ -524,7 +535,7 @@ def test_exit_run_joins_terminator_thread():
     source_thread.join()
     terminator_thread.join()
     pipeline._exit_run(source_thread, terminator_thread)
-    assert pipeline.count == 1
+    assert pipeline.count == 0
 
 
 def test_wait_for_runner_error_warns_when_no_error_surfaced(caplog):
@@ -533,3 +544,340 @@ def test_wait_for_runner_error_warns_when_no_error_surfaced(caplog):
     with caplog.at_level(logging.WARNING):
         pipeline._wait_for_runner_error(retries=2, wait_seconds=0.01)
     assert any("runner error" in record.msg.lower() for record in caplog.records)
+
+
+def _lifecycle_pipeline(events):
+    return (
+        get_pipeline()
+        .set_source(RandomTextSource(3))
+        .append("tracked", LifecycleStage(events))
+    )
+
+
+def test_build_only_prepares_without_starting_stages():
+    """build() wires the pipeline but does not run on_start or start workers."""
+    events = []
+    pipeline = _lifecycle_pipeline(events).build()
+    assert pipeline.state is PipelineState.BUILT
+    assert events == []
+    pipeline.close()
+    assert pipeline.state is PipelineState.CLOSED
+    # no on_end without a paired on_start
+    assert events == []
+
+
+def test_close_from_initial_does_not_start_stages():
+    """Closing an unbuilt pipeline leaves every lifecycle hook untouched."""
+    events = []
+    pipeline = _lifecycle_pipeline(events)
+    pipeline.close()
+    assert pipeline.state is PipelineState.CLOSED
+    assert events == []
+    with pytest.raises(PipelineStateError):
+        pipeline.build()
+
+
+def test_state_transition_matrix():
+    """A run walks the pipeline through INITIAL, BUILT, RUNNING and CLOSED."""
+    events = []
+    pipeline = _lifecycle_pipeline(events)
+    assert pipeline.state is PipelineState.INITIAL
+    pipeline.build()
+    assert pipeline.state is PipelineState.BUILT
+    run = pipeline.run()
+    try:
+        assert next_with_timeout(run, pipeline=pipeline)
+        assert pipeline.state is PipelineState.RUNNING
+    finally:
+        pipeline.close()
+    assert pipeline.state is PipelineState.CLOSED
+    run.close()
+    assert pipeline.state is PipelineState.CLOSED
+
+
+def test_run_lifecycle_hooks_are_paired():
+    """run() starts the stage once, processes every item and ends the stage once."""
+    events = []
+    pipeline = _lifecycle_pipeline(events)
+    items = run_with_timeout(pipeline)
+    assert len(items) == 3
+    assert pipeline.state is PipelineState.CLOSED
+    assert events[0] == "tracked:start"
+    assert events[-1] == "tracked:end"
+    assert events.count("tracked:start") == 1
+    assert events.count("tracked:end") == 1
+    assert events.count("tracked:process") == 3
+
+
+def test_run_is_one_shot():
+    """A completed run closes the pipeline for every further execution."""
+    pipeline = _lifecycle_pipeline([])
+    run_with_timeout(pipeline)
+    with pytest.raises(PipelineStateError):
+        run_with_timeout(pipeline)
+    with pytest.raises(PipelineStateError):
+        pipeline.process(text_item())
+    with pytest.raises(PipelineStateError):
+        pipeline.process_async(text_item())
+    with pytest.raises(PipelineStateError):
+        pipeline.build()
+
+
+def test_process_can_be_repeated_until_close():
+    """process() runs one item at a time on a built pipeline and counts nothing."""
+    events = []
+    pipeline = get_pipeline().append("tracked", LifecycleStage(events))
+    first = pipeline.process(text_item("a"))
+    second = pipeline.process(text_item("b"))
+    assert first.data["text"] == "a"
+    assert second.data["text"] == "b"
+    assert pipeline.state is PipelineState.BUILT
+    assert pipeline.count == 0
+    assert events.count("tracked:start") == 1
+    assert events.count("tracked:process") == 2
+    pipeline.close()
+    pipeline.close()
+    assert pipeline.state is PipelineState.CLOSED
+    assert events.count("tracked:end") == 1
+
+
+def test_count_counts_delivered_run_items():
+    """count is the number of items delivered by run()."""
+    pipeline = _lifecycle_pipeline([])
+    items = run_with_timeout(pipeline)
+    assert len(items) == 3
+    assert pipeline.count == 3
+
+
+def test_process_async_accepts_items_while_running():
+    """process_async() can enqueue more items while the pipeline is running."""
+    pipeline = get_pipeline().append("reverser", TextReverser())
+    with cleanup_on_exit(pipeline):
+        pipeline.process_async(text_item("a"))
+        wait_for_state(pipeline, PipelineState.RUNNING)
+        pipeline.process_async(text_item("b"))
+        pipeline.stop()
+        texts = {get_item_with_timeout(pipeline).data["text"] for _ in range(2)}
+        assert texts == {"a", "b"}
+        wait_for_state(pipeline, PipelineState.CLOSED)
+        assert pipeline.count == 2
+
+
+def test_process_async_rejected_after_close():
+    """process_async() cannot enqueue items on a closed pipeline."""
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+    pipeline.close()
+    with pytest.raises(PipelineStateError):
+        pipeline.process_async(text_item())
+
+
+def test_builder_methods_rejected_after_build():
+    """Builder methods are rejected once the pipeline is built."""
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+    with pytest.raises(PipelineStateError, match="state 'built'"):
+        pipeline.append("other", TextReverser())
+    with pytest.raises(PipelineStateError, match="state 'built'"):
+        pipeline.append_concurrently("other", TextReverser)
+    with pytest.raises(PipelineStateError, match="state 'built'"):
+        pipeline.set_error_manager(ErrorManager())
+    # a built pipeline without a source is not a dead end
+    pipeline.set_source(RandomTextSource(1))
+    assert pipeline.build() is pipeline
+    pipeline.close()
+
+
+def test_builder_methods_rejected_while_running():
+    """Builder methods and single-item processing are rejected during a run."""
+    events = []
+    pipeline = _lifecycle_pipeline(events)
+    run = pipeline.run()
+    try:
+        assert next_with_timeout(run, pipeline=pipeline)
+        assert pipeline.state is PipelineState.RUNNING
+        actions = (
+            lambda: pipeline.append("other", TextReverser()),
+            lambda: pipeline.append_concurrently("other", TextReverser),
+            lambda: pipeline.set_error_manager(ErrorManager()),
+            lambda: pipeline.set_source(RandomTextSource(1)),
+            pipeline.build,
+            lambda: next(pipeline.run()),
+            lambda: pipeline.process(text_item()),
+        )
+        for action in actions:
+            with pytest.raises(PipelineStateError):
+                action()
+    finally:
+        pipeline.close()
+        run.close()
+    assert pipeline.state is PipelineState.CLOSED
+
+
+def test_builder_methods_rejected_after_close():
+    """A closed pipeline rejects every configuration and execution method."""
+    events = []
+    pipeline = _lifecycle_pipeline(events)
+    pipeline.close()
+    actions = (
+        lambda: pipeline.append("other", TextReverser()),
+        lambda: pipeline.append_concurrently("other", TextReverser),
+        lambda: pipeline.set_error_manager(ErrorManager()),
+        lambda: pipeline.set_source(RandomTextSource(1)),
+        pipeline.build,
+        lambda: next(pipeline.run()),
+        lambda: pipeline.process(text_item()),
+        lambda: pipeline.process_async(text_item()),
+    )
+    for action in actions:
+        with pytest.raises(PipelineStateError):
+            action()
+
+
+def test_close_from_running_terminates_and_counts_delivered():
+    """close() terminates a running pipeline, running on_end once."""
+    events = []
+    pipeline = _lifecycle_pipeline(events)
+    run = pipeline.run()
+    try:
+        assert next_with_timeout(run, pipeline=pipeline)
+        assert pipeline.state is PipelineState.RUNNING
+        pipeline.close()
+        assert pipeline.state is PipelineState.CLOSED
+        assert pipeline.count == 1
+        assert events.count("tracked:start") == 1
+        assert events.count("tracked:end") == 1
+    finally:
+        run.close()
+    pipeline.close()
+    assert events.count("tracked:end") == 1
+
+
+def test_start_failure_pairs_on_end_with_started_stages():
+    """A stage which failed on_start has no on_end, while earlier stages do."""
+    events = []
+    pipeline = (
+        get_pipeline()
+        .set_error_manager(LifecycleErrorManager(events))
+        .set_source(RandomTextSource(1))
+        .append("ok", LifecycleStage(events))
+        .append("broken", LifecycleStage(events, fail_on_start=True))
+        .build()
+    )
+    with cleanup_on_exit(pipeline):
+        with pytest.raises(RuntimeError, match="broken failed on_start"):
+            run_with_timeout(pipeline)
+    assert pipeline.state is PipelineState.CLOSED
+    assert "ok:start" in events
+    assert "ok:end" in events
+    assert "broken:start" in events
+    assert "broken:end" not in events
+    # the error manager on_start never completed, so it has no on_end either
+    assert "error-manager:start" not in events
+    assert "error-manager:end" not in events
+
+
+def test_error_manager_start_failure_pairs_stage_on_end():
+    """A failed error-manager on_start still closes the stages already started."""
+    events = []
+    pipeline = (
+        get_pipeline()
+        .set_error_manager(LifecycleErrorManager(events, fail_on_start=True))
+        .set_source(RandomTextSource(1))
+        .append("ok", LifecycleStage(events))
+        .build()
+    )
+    with cleanup_on_exit(pipeline):
+        with pytest.raises(RuntimeError, match="error manager on_start"):
+            run_with_timeout(pipeline)
+    assert pipeline.state is PipelineState.CLOSED
+    assert "ok:start" in events
+    assert "ok:end" in events
+    assert "error-manager:start" in events
+    assert "error-manager:end" not in events
+
+
+def test_close_releases_multiprocessing_resources():
+    """close() releases the logs receiver and the multiprocessing manager."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(1))
+        .append("reverser", TextReverser(), concurrency=1, executor="processes")
+        .build()
+    )
+    assert pipeline._sync_manager is not None
+    assert pipeline._logs_receiver is not None
+    pipeline.close()
+    assert pipeline.state is PipelineState.CLOSED
+    assert pipeline._sync_manager is None
+    assert pipeline._logs_receiver is None
+
+
+def test_source_can_be_set_after_build():
+    """A source can be attached to a built pipeline before it starts."""
+    events = []
+    pipeline = get_pipeline().append("tracked", LifecycleStage(events)).build()
+    pipeline.set_source(RandomTextSource(2))
+    items = run_with_timeout(pipeline)
+    assert len(items) == 2
+    assert pipeline.count == 2
+
+
+def test_close_from_running_stops_a_concurrent_source_thread():
+    """close() unblocks and joins the source thread of a concurrent pipeline."""
+    pipeline = (
+        get_pipeline(max_queues_size=1)
+        .set_source(RandomTextSource(1000))
+        .append("reverser", TextReverser(), concurrency=1)
+    )
+    run = pipeline.run()
+    try:
+        assert next_with_timeout(run, pipeline=pipeline)
+        assert pipeline.state is PipelineState.RUNNING
+        assert pipeline._source_thread is not None
+        pipeline.close()
+        assert pipeline.state is PipelineState.CLOSED
+        assert pipeline.count == 1
+        assert not pipeline._source_thread.is_alive()
+    finally:
+        run.close()
+
+
+def test_close_during_start_waits_for_the_start_phase():
+    """close() racing with the start phase terminates the runners it submits."""
+    start_entered = Event()
+    start_release = Event()
+    ended = Event()
+
+    class BlockingStartReverser(TextReverser):
+        def on_start(self):
+            start_entered.set()
+            start_release.wait(timeout=10)
+
+        def on_end(self):
+            ended.set()
+
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(3))
+        .append("reverser", BlockingStartReverser(), concurrency=1, executor="threads")
+        .build()
+    )
+    runner = Thread(target=lambda: list(pipeline.run()), daemon=True)
+    runner.start()
+    try:
+        assert start_entered.wait(PIPELINE_TIMEOUT)
+        closer = Thread(target=pipeline.close, daemon=True)
+        closer.start()
+        # close() must wait for the in-progress start phase instead of releasing
+        # the executor of a runner which is still being submitted
+        wait_for_state(pipeline, PipelineState.CLOSED)
+        start_release.set()
+        closer.join(PIPELINE_TIMEOUT)
+        assert not closer.is_alive()
+        container = pipeline._containers["reverser"]
+        assert all(future.done() or future.cancelled() for future in container._futures)
+        assert ended.is_set()
+        runner.join(PIPELINE_TIMEOUT)
+        assert not runner.is_alive()
+    finally:
+        start_release.set()
+        cleanup_on_exit(pipeline)

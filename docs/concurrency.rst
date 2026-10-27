@@ -71,19 +71,23 @@ so shared attributes need thread-safe access.
 Making stages process-safe with ``on_start`` and ``on_end``
 ------------------------------------------------------------
 
-:meth:`.Stage.on_start` initializes a stage *after* it has been copied
-into its worker process.
-It is called once per process, on that process's copy,
+:meth:`.Stage.on_start` runs in the pipeline start phase, when ``run()`` or
+``process_async()`` is called, not during ``build()``.
+With multiprocessing it initializes each stage *after* the stage has been copied
+into its worker process: it is called once per process, on that process's copy,
 before the copy processes its first item.
-Without multiprocessing it is simply called once after ``__init__``.
+Without multiprocessing it is simply called once per stage, before the stage
+processes its first item.
 :meth:`.Stage.on_end` is the mirror hook: it runs when the worker terminates,
 including when the pipeline terminates because of a failure, and is the right
 place to close files or connections opened in ``on_start``.
-A stage whose construction or ``on_start`` fails before the pipeline starts may
-not reach ``on_end``.
+If the start phase fails, ``on_end`` runs only for the stages whose ``on_start``
+completed; a stage whose construction or ``on_start`` failed does not receive it.
 The same pair of hooks exists on :class:`.ErrorManager`
 as :meth:`.ErrorManager.on_start` and :meth:`.ErrorManager.on_end`,
 because the error manager is copied into worker processes together with the stage.
+The main-process error manager starts after the process-based runners have been
+submitted, so its ``on_start`` may open non-picklable resources too.
 
 Take the Elasticsearch example from the :doc:`usage` guide.
 ``Elasticsearch(...)`` clients are not picklable

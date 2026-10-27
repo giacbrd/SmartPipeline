@@ -33,7 +33,8 @@ Execution flows `pipeline.py -> containers.py -> runners.py`; read in that order
 
 - `pipeline.py` — `Pipeline`: `set_source()`, `append()` (stage **instance**),
   `append_concurrently()` (stage **class** + `args`/`kwargs`, rejects instances),
-  `build()`, `run()`, `process()`/`process_async()`/`get_item()`/`stop()`.
+  `build()`, `run()`, `process()`/`process_async()`/`get_item()`/`stop()`, `close()`.
+  `PipelineState` (`INITIAL → BUILT → RUNNING → CLOSED`) is the lifecycle contract.
 - `containers.py` — per-stage wiring (`SourceContainer`, `StageContainer`,
   `BatchStageContainer`, concurrent variants).
 - `runners.py` — worker loops; fatal errors surface via `raise_collected_errors`
@@ -57,20 +58,32 @@ attempt one `RetryError` soft error is attached to the item.
 
 ## Invariants agents get wrong
 
-- `run()`/`process()`/`process_async()` auto-call `build()` if skipped — but call
-  `build()` explicitly after appending anyway; it raises `ValueError` with no stages,
-  and `run()` raises `ValueError` with no source. Stage names must be unique.
+- `build()` only validates/prepares: it raises `ValueError` with no stages, but never
+  starts workers or calls `on_start`. `run()`/`process_async()` start stages; `run()`
+  raises `ValueError` with no source. Stage names must be unique.
+- `run()`/`process()`/`process_async()` auto-call `build()` if skipped, but call it
+  explicitly after appending anyway. A pipeline is one-shot: after `run()` or
+  `process_async()` it is `CLOSED`; `process()` may be called repeatedly while
+  `BUILT`. `close()` is idempotent and runs termination/`on_end`/resource release.
+- `append()`/`append_concurrently()`/`set_error_manager()` raise
+  `PipelineStateError` after `build()`; `set_source()` is still allowed on `BUILT`.
+  `process()` raises `ValueError` with any concurrent stage (use
+  `run()`/`process_async()`).
 - `concurrency=0` means inline (no threads/processes). `BatchStage` with
   `concurrency < 1` is silently forced to `concurrency=1, executor="threads"`.
-  `process()` rejects any pipeline with concurrent stages; use `run()`/`process_async()`.
   `BatchStage.process_batch()` must return exactly one item per input item; a mismatch
   raises a fatal `BatchOutputError`.
 - `executor="processes"` uses `spawn`; stage instances are pickled into workers.
   Non-picklable resources (files, sockets, models) go in `on_start()`, not `__init__`
-  (see `SerializableStage`/`SerializableErrorManager` in `tests/utils.py`).
+  (see `SerializableStage`/`SerializableErrorManager` in `tests/utils.py`). The main
+  error manager starts after process runners are submitted, so its `on_start` may
+  also open non-picklable resources.
 - `on_start`/`on_end` failures are fatal and bypass `ErrorManager` (no `Item` to attach
-  to): single failure re-raised as-is, several as `ExceptionGroup`. Never swallow
+  to): single failure re-raised as-is, several as `ExceptionGroup`. `on_end` runs only
+  for stages whose `on_start` completed, including on start failures. Never swallow
   termination errors or the pipeline hangs silently.
+- `count` is the number of items delivered by `run()`/`process_async()`, including
+  items with soft errors; `process()` items are not counted.
 - All cross-process state via one `multiprocessing.Manager()` (`_new_mp_queue` etc.) —
   don't swap in raw mp primitives. Cross-process logging needs the `LogsReceiver` wiring.
 
