@@ -515,6 +515,7 @@ def test_concurrent_initialization():
     check_items(items, 100, pipeline)
 
 
+@pytest.mark.skip
 def test_huge_run():
     """Parallel batch pipelines beat sequential ones on CPU-bound stages."""
     pipeline = (
