@@ -121,7 +121,10 @@ The actual processing happens in :meth:`.Stage.process` for single items,
 or in :meth:`.BatchStage.process_batch` for lists of items.
 
 A stage receives one item and returns the same item, enriched by its computation.
-A batch stage processes several items at once.
+A batch stage processes several items at once and must return exactly one item
+for each item it receives; filtering a batch belongs upstream or in a normal stage.
+Returning a different number of items raises :class:`.BatchOutputError`
+and stops the pipeline.
 Batching pays off when the underlying operation is cheaper in bulk,
 for example an HTTP API that accepts lists of values (fewer calls),
 or a machine learning model optimized for predicting on multiple samples.
@@ -165,10 +168,11 @@ It skips processing only for the stage that raised it, not for the whole pipelin
 Note the batch-stage caveat: if you raise while iterating over a batch,
 the remaining items of that batch are skipped as well.
 
-A :class:`.CriticalError` is raised for any uncaught exception,
-or explicitly by the stage code.
-It stops the processing of the current item,
+Any uncaught exception is wrapped in a :class:`.CriticalError`,
+or the stage can raise one explicitly.
+By default the error manager records it and skips the current item,
 and the pipeline moves on to the next one.
+Call :meth:`.ErrorManager.raise_on_critical_error` to stop the pipeline instead.
 
 When raising :class:`.SoftError` or :class:`.CriticalError` explicitly,
 use `explicit exception chaining <https://www.python.org/dev/peps/pep-3134/#explicit-exception-chaining>`_
@@ -197,6 +201,9 @@ a stage may hold and how it must be initialized.
 
 :meth:`.Pipeline.append` also accepts a retry policy for selected errors
 (see the method documentation for details).
+Retries re-run the stage on the same item objects, so a failed attempt that mutates
+an item is visible to the next attempt: retried stages should be idempotent or only
+mutate after the operations that may fail.
 
 :meth:`.Pipeline.append_concurrently` accepts a stage *class* (plus ``args``/``kwargs``)
 instead of an instance, so stage construction runs in the background
@@ -205,6 +212,9 @@ This is useful when construction itself is slow,
 for example when it builds large in-memory data structures.
 
 Always finish the concatenation with :meth:`.Pipeline.build`.
+``build()`` only validates and prepares the pipeline: stages are wired and
+constructed, but no worker is started. The start phase happens when the pipeline
+is executed, as shown below.
 
 The example below adds a second stage that truncates the text, then runs the pipeline.
 
@@ -258,8 +268,29 @@ No source is set: items are submitted explicitly, one by one.
     # explicitly stop the pipeline once no more items will arrive
     pipeline.stop()
 
+``process_async()`` can be called again while the pipeline is running to submit
+more items. After ``stop()`` the current run terminates and the pipeline is
+closed.
+
 Use :meth:`.Pipeline.process` only when no stage is concurrent:
 the item is processed synchronously and returned directly by the call.
+``process()`` raises ``ValueError`` as soon as the pipeline contains a stage
+with ``concurrency > 0``, so it can never block on a concurrent queue.
+
+Pipeline lifecycle
+^^^^^^^^^^^^^^^^^^
+
+A pipeline has an explicit lifecycle. ``build()`` prepares it, ``run()`` and
+``process_async()`` start its workers, and :meth:`.Pipeline.close` releases them.
+A pipeline can run only once: after ``run()`` or ``process_async()`` finishes it
+is closed. ``process()`` is the exception, since it can process several items
+one by one while the pipeline is built.
+
+After ``build()`` the configuration is frozen: adding stages or replacing the
+error manager raises :class:`.PipelineStateError`, while a source can still be
+set until the pipeline starts. ``close()`` is idempotent and can release a
+pipeline which was built but never run. A closed pipeline cannot be built or
+run again.
 
 A further example
 -----------------
@@ -293,20 +324,23 @@ Further runnable examples live in the ``examples`` directory at the repository r
         def __init__(self, es_host: str, es_index: str):
             self.es_host = es_host
             self.es_index = es_index
+            self.es_client = None
+
+        def on_start(self):
             self.es_client = Elasticsearch(self.es_host)
 
         def handle(
             self, error: Exception, stage: AliveMixin, item: Item
         ) -> Optional[CriticalError]:
-            if isinstance(error, SoftError):
-                error = error.get_exception()
+            cause = error.get_exception() if isinstance(error, SoftError) else None
+            logged_error = cause if cause is not None else error
             self.es_client.index(
                 index=self.es_index,
                 body={
                     "stage": str(stage),
                     "item": str(item),
-                    "exception": type(error),
-                    "message": str(error),
+                    "exception": type(logged_error),
+                    "message": str(logged_error),
                 },
             )
             return super().handle(error, stage, item)

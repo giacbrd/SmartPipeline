@@ -37,15 +37,17 @@ class AliveMixin:
 class ConstructorMixin:
     def on_start(self) -> Any:
         """
-        Called after concurrent stage executor initialization in a process (only on multiprocessing concurrency)
-        or after construction in all other cases, by the pipeline.
-        The stage in the executor is a copy of the original,
-        by overriding this method one can initialize variables specifically for the copies, that is mandatory
-        when they are not serializable.
+        Called in the pipeline start phase, when :meth:`.Pipeline.run` or
+        :meth:`.Pipeline.process_async` starts the stage, never by
+        :meth:`.Pipeline.build`.
+        With multiprocessing concurrency the stage in the executor is a copy of the
+        original, so by overriding this method one can initialize variables
+        specifically for the copies; that is mandatory when they are not serializable.
 
         Any exception raised here is fatal for the whole pipeline and is
-        reported to the pipeline caller (on `build()`/`run()`) instead of
-        hanging the execution without feedback.
+        reported to the pipeline caller (on `run()`/`process_async()`) instead of
+        hanging the execution without feedback. `on_end` runs only for stages
+        whose `on_start` completed.
         """
         pass
 
@@ -53,6 +55,8 @@ class ConstructorMixin:
         """
         Called when the stage terminates, useful for executing closing operations (e.g. on files)
 
+        It is paired with a successful :meth:`.on_start`, also when the start phase
+        fails after this stage has started.
         Any exception raised here is fatal for the whole pipeline and is
         reported to the pipeline caller on termination instead of hanging
         the execution without feedback.
@@ -79,7 +83,7 @@ class BatchProcessor(ABC, Generic[DataT]):
         Process a batch of items received by the stage.
         Must be overridden for properly defining a batch stage
 
-        :return: The same batch with items processed and enriched by the stage
+        :return: The same batch with items processed and enriched by the stage; it must contain exactly one item for each input item
         """
         return items
 

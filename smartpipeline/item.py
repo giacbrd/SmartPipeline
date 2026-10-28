@@ -42,12 +42,10 @@ class Item(Generic[DataT]):
     """
 
     @overload
-    def __init__(self: Item[Dict[str, Any]]) -> None:
-        ...
+    def __init__(self: Item[Dict[str, Any]]) -> None: ...
 
     @overload
-    def __init__(self, data: DataT) -> None:
-        ...
+    def __init__(self, data: DataT) -> None: ...
 
     def __init__(self, data: Any = _MISSING) -> None:
         self._soft_errors: list[SoftError] = []
@@ -185,7 +183,7 @@ class Item(Generic[DataT]):
 
         :param exception: It can be an :class:`.error.exceptions.SoftError` instance or any exception, which will be encapsulated in an :class:`.error.exceptions.SoftError`
         """
-        if type(exception) is not CriticalError:
+        if not isinstance(exception, CriticalError):
             if isinstance(exception, SoftError):
                 # preserve explicit chaining (`raise SoftError(...) from e`)
                 # across pickling, where __cause__ is lost but _exception_cause survives
@@ -215,7 +213,7 @@ class Item(Generic[DataT]):
 
         :param exception: It can be a :class:`.error.exceptions.CriticalError` instance or any exception, which will be encapsulated in a :class:`.error.exceptions.CriticalError`
         """
-        if type(exception) is not SoftError:
+        if not isinstance(exception, SoftError):
             if isinstance(exception, CriticalError):
                 # preserve explicit chaining (`raise CriticalError(...) from e`)
                 # across pickling, where __cause__ is lost but _exception_cause survives

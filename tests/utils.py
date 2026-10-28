@@ -23,7 +23,7 @@ from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.helpers import FilePathItem
 from smartpipeline.item import DataT, Item
-from smartpipeline.pipeline import Pipeline
+from smartpipeline.pipeline import Pipeline, PipelineState
 from smartpipeline.stage import BatchStage, Source, Stage
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -208,10 +208,17 @@ class BatchTextDuplicator(BatchStage):
                 )
         for item in items:
             for c in range(self._cycles):
-                item.data[
-                    "text_b_{}_{}".format(c, random.randint(1, 1000))
-                ] = item.data["text"]
+                item.data["text_b_{}_{}".format(c, random.randint(1, 1000))] = (
+                    item.data["text"]
+                )
         return items
+
+
+class TruncatingBatchStage(BatchStage):
+    """Return fewer items than the input batch, violating the batch contract."""
+
+    def process_batch(self, items):
+        return list(items)[:1]
 
 
 class CustomizableBrokenBatchStage(BatchStage):
@@ -371,6 +378,42 @@ class BrokenOnStartErrorManager(ErrorManager):
         raise RuntimeError("test error manager on_start failure")
 
 
+class LifecycleStage(Stage):
+    """Stage which records lifecycle hooks and processed items in a shared list."""
+
+    def __init__(self, events: List[str], fail_on_start: bool = False):
+        self._events = events
+        self._fail_on_start = fail_on_start
+
+    def on_start(self):
+        self._events.append(f"{self.name}:start")
+        if self._fail_on_start:
+            raise RuntimeError(f"{self.name} failed on_start")
+
+    def on_end(self):
+        self._events.append(f"{self.name}:end")
+
+    def process(self, item: Item):
+        self._events.append(f"{self.name}:process")
+        return item
+
+
+class LifecycleErrorManager(ErrorManager):
+    """Error manager which records lifecycle hooks in a shared list."""
+
+    def __init__(self, events: List[str], fail_on_start: bool = False):
+        self._events = events
+        self._fail_on_start = fail_on_start
+
+    def on_start(self):
+        self._events.append("error-manager:start")
+        if self._fail_on_start:
+            raise RuntimeError("test error manager on_start failure")
+
+    def on_end(self):
+        self._events.append("error-manager:end")
+
+
 class BrokenOnEndErrorManager(ErrorManager):
     def on_end(self):
         raise RuntimeError("test error manager on_end failure")
@@ -436,23 +479,23 @@ def _stop_pipeline_forced(pipeline: Pipeline):
             pass
 
 
-def _shutdown_with_timeout(pipeline: Pipeline, timeout: float = CLEANUP_TIMEOUT):
+def _close_with_timeout(pipeline: Pipeline, timeout: float = CLEANUP_TIMEOUT):
     """
-    Run ``pipeline.shutdown()`` in a daemon thread, never blocking the test suite on a
+    Run ``pipeline.close()`` in a daemon thread, never blocking the test suite on a
     stuck executor or queue join.
     """
 
-    def _shutdown():
+    def _close():
         try:
-            pipeline.shutdown()
+            pipeline.close()
         except BaseException:
             pass
 
-    thread = Thread(target=_shutdown, daemon=True)
+    thread = Thread(target=_close, daemon=True)
     thread.start()
     thread.join(timeout)
     if thread.is_alive():
-        logging.warning("The pipeline shutdown did not end in %s seconds", timeout)
+        logging.warning("The pipeline close did not end in %s seconds", timeout)
 
 
 def next_with_timeout(
@@ -484,7 +527,7 @@ def next_with_timeout(
     if thread.is_alive():
         if pipeline is not None:
             _stop_pipeline_forced(pipeline)
-            _shutdown_with_timeout(pipeline)
+            _close_with_timeout(pipeline)
         pytest.fail("next() did not return in {} seconds".format(int(timeout)))
     if "error" in outcome:
         raise outcome["error"]
@@ -516,7 +559,7 @@ def get_item_with_timeout(
     thread.join(timeout)
     if thread.is_alive():
         _stop_pipeline_forced(pipeline)
-        _shutdown_with_timeout(pipeline)
+        _close_with_timeout(pipeline)
         pytest.fail("get_item() did not return in {} seconds".format(int(timeout)))
     if "error" in outcome:
         raise outcome["error"]
@@ -550,7 +593,7 @@ def run_with_timeout(
         # a stuck pipeline leaves its executions behind: abort it as a whole, so that
         # non-daemon runner/terminator threads cannot keep the interpreter alive either
         _stop_pipeline_forced(pipeline)
-        _shutdown_with_timeout(pipeline)
+        _close_with_timeout(pipeline)
         # `pytest.fail` is not an `Exception`, so it is never captured by `pytest.raises`
         pytest.fail("The pipeline did not terminate in {} seconds".format(int(timeout)))
     if "error" in outcome:
@@ -583,11 +626,34 @@ def build_with_timeout(
     thread.join(timeout)
     if thread.is_alive():
         _stop_pipeline_forced(pipeline)
-        _shutdown_with_timeout(pipeline)
+        _close_with_timeout(pipeline)
         pytest.fail("The pipeline build did not end in {} seconds".format(int(timeout)))
     if "error" in outcome:
         raise outcome["error"]
     return pipeline
+
+
+def wait_for_state(
+    pipeline: Pipeline,
+    state: PipelineState,
+    timeout: float = PIPELINE_TIMEOUT,
+) -> None:
+    """
+    Wait until a pipeline reaches a lifecycle state, failing the test on timeout.
+
+    :param pipeline: The pipeline to observe
+    :param state: The expected lifecycle state
+    :param timeout: Maximum time to wait
+    """
+    deadline = time.monotonic() + timeout
+    while pipeline.state is not state:
+        if time.monotonic() > deadline:
+            pytest.fail(
+                "The pipeline did not reach state '{}' in {} seconds (current '{}')".format(
+                    state.value, int(timeout), pipeline.state.value
+                )
+            )
+        time.sleep(0.01)
 
 
 def get_pipeline(*args, **kwargs) -> Pipeline[Dict[str, Any]]:
@@ -607,7 +673,7 @@ def cleanup_on_exit(pipeline: Pipeline) -> Iterator[Pipeline]:
         except Exception:
             pass
         _stop_pipeline_forced(pipeline)
-        _shutdown_with_timeout(pipeline)
+        _close_with_timeout(pipeline)
 
 
 class TypedRow(TypedDict):

@@ -36,6 +36,12 @@ Main class for designing the sequence of stages and execute them
    :inherited-members:
    :members:
 
+.. autoclass:: smartpipeline.pipeline.PipelineState
+   :members:
+
+.. autoclass:: smartpipeline.pipeline.PipelineStateError
+   :members:
+
 Error Handling
 -----------------
 
@@ -46,6 +52,14 @@ Exceptions to generate in case of errors and how to handle them
    :members:
 
 .. autoclass:: smartpipeline.error.exceptions.CriticalError
+   :inherited-members:
+   :members:
+
+.. autoclass:: smartpipeline.error.exceptions.RetryError
+   :inherited-members:
+   :members:
+
+.. autoclass:: smartpipeline.error.exceptions.BatchOutputError
    :inherited-members:
    :members:
 

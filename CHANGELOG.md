@@ -1,6 +1,40 @@
 # SmartPipeline changelog
 
-## Version 1.0.0 [2026-10-21]
+## Version 1.0.0 [Unreleased]
+
+- BREAKING CHANGE: the pipeline has an explicit lifecycle
+  `INITIAL -> BUILT -> RUNNING -> CLOSED`, exposed publicly by the `Pipeline.state`
+  property and the `PipelineState` enum. `build()` only validates and prepares:
+  stage `on_start` hooks and workers start in `run()` / `process_async()`.
+  `append()`, `append_concurrently()` and `set_error_manager()` raise
+  `PipelineStateError` after `build()`; `set_source()` is still accepted on a built
+  pipeline which has not started. A pipeline is one-shot: after `run()` or
+  `process_async()` it is closed and cannot run again, while `process()` can be
+  called repeatedly on a built pipeline
+- Added idempotent `Pipeline.close()`, which terminates workers, drains queues,
+  runs the paired `on_end` hooks and releases the multiprocessing manager; it can
+  be called while the pipeline is starting and waits for the start phase, so the
+  runners submitted by it are terminated too. `Pipeline.shutdown()` has been
+  removed, use `close()` instead. A failed start runs `on_end` only for the stages
+  whose `on_start` completed
+- BREAKING CHANGE: the internal `EmptyStage` helper is now the private
+  `_EmptyStage`, it is no longer part of the public module surface
+- `Pipeline.count` is defined as the number of items delivered by `run()` or
+  `process_async()`, including items with soft errors; items processed one by one
+  with `process()` are not counted
+- `Pipeline.process()` now raises `ValueError` for pipelines with concurrent stages
+  instead of hanging; use `run()` or `process_async()` for concurrency
+- Retry backoff no longer sleeps after the final failed attempt; after all attempts a
+  single `RetryError` soft error is attached to the item, carrying the attempt details
+- `BatchStage.process_batch()` output length is validated: it must return exactly one
+  item for every input item, and a mismatch raises the public `BatchOutputError`
+  and stops the pipeline
+- `append_concurrently()` with thread initialization no longer starts a
+  `multiprocessing.Manager` or logs receiver
+- Exceptions raised by a `process_async()` callback are delivered by `get_item()`
+  instead of silently killing the runner; `run()` also cleans up on `KeyboardInterrupt`
+- `Item.add_soft_error()` and `add_critical_error()` now handle subclasses of
+  `SoftError` and `CriticalError` correctly
 
 - BREAKING CHANGE: the item payload is now generic. Use `Item[MyData]`,
   `Stage[MyData]` / `BatchStage[MyData]`, `Source[MyData]` and `Pipeline[MyData]`

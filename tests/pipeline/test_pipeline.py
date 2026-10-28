@@ -7,7 +7,7 @@ import pytest
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import Item
-from smartpipeline.pipeline import EmptyStage, Pipeline
+from smartpipeline.pipeline import Pipeline, _EmptyStage
 from tests.utils import (
     BatchTextReverser,
     CriticalIOErrorStage,
@@ -55,15 +55,15 @@ def test_run():
 
 def test_soft_errors_are_logged_and_flow(caplog):
     """Soft errors attach per item with timings while downstream stages still run."""
+    error_manager = ErrorManager()
     pipeline = (
         get_pipeline()
+        .set_error_manager(error_manager)
         .set_source(RandomTextSource(10))
         .append("reverser", TextReverser())
         .append("error", ErrorStage())
         .build()
     )
-    error_manager = ErrorManager()
-    pipeline.set_error_manager(error_manager)
     assert all(c.error_manager == error_manager for c in pipeline._containers.values())
     for item in run_with_timeout(pipeline):
         assert item.has_soft_errors()
@@ -306,7 +306,7 @@ def test_retryable_stage(items_generator_fx):
     item = pipeline.process(item)
     assert not item.has_critical_errors()
     soft_errors = list(item.soft_errors())
-    assert len(soft_errors) == 2 and all(
+    assert len(soft_errors) == 1 and all(
         isinstance(err, RetryError) and isinstance(err.get_exception(), ValueError)
         for err in soft_errors
     )
@@ -364,7 +364,7 @@ def test_retryable_stage(items_generator_fx):
         CustomException,
     )
     soft_errors = list(item.soft_errors())
-    assert len(soft_errors) == 2 and all(
+    assert len(soft_errors) == 1 and all(
         isinstance(err, RetryError) and isinstance(err.get_exception(), CustomException)
         for err in soft_errors
     )
@@ -395,7 +395,7 @@ def test_retryable_stage(items_generator_fx):
 
 
 def test_retry_on_different_errors(items_generator_fx):
-    """Retries collect one soft error per attempt across mixed exception types."""
+    """Retries report one soft error carrying all the failed attempts."""
     item = next(items_generator_fx)
     pipeline = (
         Pipeline()
@@ -412,15 +412,12 @@ def test_retry_on_different_errors(items_generator_fx):
     )
     item = pipeline.process(item)
     soft_errors = list(item.soft_errors())
-    assert len(soft_errors) == 3
-    assert all(
-        isinstance(err, RetryError) and err.get_stage() == "broken_stage"
-        for err in soft_errors
-    )
-    assert isinstance(soft_errors[0].get_exception(), CustomException) and isinstance(
-        soft_errors[2].get_exception(), CustomException
-    )
-    assert isinstance(soft_errors[1].get_exception(), ValueError)
+    assert len(soft_errors) == 1
+    error = soft_errors[0]
+    assert isinstance(error, RetryError) and error.get_stage() == "broken_stage"
+    assert isinstance(error.get_exception(), CustomException)
+    assert "failed after 3 attempts" in str(error)
+    assert "CustomException" in str(error) and "ValueError" in str(error)
 
 
 def test_exponential_backoff_retry_strategy(items_generator_fx):
@@ -456,9 +453,9 @@ def test_exponential_backoff_retry_strategy(items_generator_fx):
         .build()
     )
     item = pipeline.process(item)
-    assert 15 <= item.get_timing("broken_stage") <= 16
+    assert 7 <= item.get_timing("broken_stage") <= 8
     soft_errors = list(item.soft_errors())
-    assert len(soft_errors) == 4
+    assert len(soft_errors) == 1
     assert all(
         isinstance(err, RetryError) and isinstance(err.get_exception(), CustomException)
         for err in soft_errors
@@ -468,7 +465,7 @@ def test_exponential_backoff_retry_strategy(items_generator_fx):
 def test_empty_stage_returns_item_unchanged():
     """EmptyStage passes the item through untouched."""
     item = Item({"text": "hello"})
-    assert EmptyStage().process(item) is item
+    assert _EmptyStage().process(item) is item
 
 
 def test_implicit_build_on_first_use():
@@ -501,12 +498,43 @@ def test_build_container_rejects_inline_batch_stage():
         )
 
 
-def test_shutdown_with_pending_init_executor():
-    """Shutdown tolerates an init executor that is still pending."""
+@pytest.mark.parametrize(
+    "stage, kwargs",
+    [
+        (TextReverser(), {"concurrency": 1}),
+        (BatchTextReverser(size=2), {}),
+    ],
+    ids=["thread", "batch"],
+)
+def test_process_rejects_concurrent_stages(stage, kwargs):
+    """process() fails fast instead of hanging on a concurrent stage."""
+    pipeline = get_pipeline().append("stage", stage, **kwargs)
+    with pytest.raises(ValueError, match="concurrent"):
+        pipeline.process(text_item())
+    assert not pipeline._executors_ready
+
+
+def test_process_async_callback_error_is_delivered():
+    """Callback failures surface through get_item instead of killing the runner."""
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+
+    def failing_callback(item):
+        raise RuntimeError("callback failed")
+
+    pipeline.process_async(text_item("hello"), callback=failing_callback)
+    pipeline.stop()
+    with pytest.raises(RuntimeError, match="callback failed"):
+        get_item_with_timeout(pipeline)
+
+
+def test_close_with_pending_init_executor():
+    """close() tolerates a pending init executor."""
     pipeline = get_pipeline().append_concurrently("reverser", TextReverser)
     assert pipeline._init_executor is not None
-    pipeline._stop_logs_receiver()
-    pipeline.shutdown()
+    assert pipeline._sync_manager is None
+    assert pipeline._logs_receiver is None
+    pipeline.close()
+    assert pipeline._init_executor is None
 
 
 def test_process_async_without_callback():

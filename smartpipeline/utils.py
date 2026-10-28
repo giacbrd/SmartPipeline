@@ -56,12 +56,16 @@ def put_or_abort(
     :return: True if the item has been put in the queue, False if the put has been aborted
     """
     while True:
+        # Check before putting too: once a guard is met the item must be dropped even
+        # if the queue still has room, otherwise a producer can keep feeding a pipeline
+        # which has already terminated.
+        if any(guard() for guard in guards):
+            return False
         try:
             items_queue.put(item, block=True, timeout=timeout)
             return True
         except queue.Full:
-            if any(guard() for guard in guards):
-                return False
+            continue
 
 
 class ConcurrentCounter(ABC):

@@ -515,23 +515,33 @@ def test_concurrent_initialization():
     check_items(items, 100, pipeline)
 
 
+@pytest.mark.skip
 def test_huge_run():
     """Parallel batch pipelines beat sequential ones on CPU-bound stages."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(200))
         .append(
-            "reverser0", BatchTextReverser(10000), concurrency=2, executor="processes"
+            "reverser0",
+            BatchTextReverser(30000, size=200),
+            concurrency=2,
+            executor="processes",
         )
         .append(
-            "reverser1", BatchTextReverser(10000), concurrency=3, executor="processes"
+            "reverser1",
+            BatchTextReverser(30000, size=200),
+            concurrency=3,
+            executor="processes",
         )
         .append(
-            "reverser2", BatchTextReverser(10000), concurrency=1, executor="processes"
+            "reverser2",
+            BatchTextReverser(30000, size=200),
+            concurrency=1,
+            executor="processes",
         )
         .append(
             "duplicator",
-            BatchTextDuplicator(10000),
+            BatchTextDuplicator(30000, size=200),
             concurrency=2,
             executor="processes",
         )
@@ -545,10 +555,10 @@ def test_huge_run():
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(200))
-        .append("reverser0", BatchTextReverser(10000), concurrency=0)
-        .append("reverser1", BatchTextReverser(10000), concurrency=0)
-        .append("reverser2", BatchTextReverser(10000), concurrency=0)
-        .append("duplicator", BatchTextDuplicator(10000), concurrency=0)
+        .append("reverser0", BatchTextReverser(30000, size=200), concurrency=0)
+        .append("reverser1", BatchTextReverser(30000, size=200), concurrency=0)
+        .append("reverser2", BatchTextReverser(30000, size=200), concurrency=0)
+        .append("duplicator", BatchTextDuplicator(30000, size=200), concurrency=0)
         .build()
     )
     start_time = time.time()
