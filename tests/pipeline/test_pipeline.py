@@ -7,7 +7,8 @@ import pytest
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import Item
-from smartpipeline.pipeline import Pipeline, _EmptyStage
+from smartpipeline.pipeline import Pipeline, PipelineState
+from smartpipeline.stage import Stage
 from tests.utils import (
     BatchTextReverser,
     CriticalIOErrorStage,
@@ -462,12 +463,6 @@ def test_exponential_backoff_retry_strategy(items_generator_fx):
     )
 
 
-def test_empty_stage_returns_item_unchanged():
-    """EmptyStage passes the item through untouched."""
-    item = Item({"text": "hello"})
-    assert _EmptyStage().process(item) is item
-
-
 def test_implicit_build_on_first_use():
     """run() and process_async() build the pipeline implicitly on first use."""
     pipeline: Pipeline[Dict[str, Any]] = (
@@ -475,13 +470,13 @@ def test_implicit_build_on_first_use():
         .set_source(RandomTextSource(3))
         .append("reverser", TextReverser())
     )
-    assert not pipeline._executors_ready
+    assert pipeline.state is PipelineState.INITIAL
     items = run_with_timeout(pipeline)
-    assert pipeline._executors_ready
+    assert pipeline.state is PipelineState.CLOSED
     assert len(items) == 3
 
     pipeline = get_pipeline().append("reverser", TextReverser())
-    assert not pipeline._executors_ready
+    assert pipeline.state is PipelineState.INITIAL
     item = Item()
     item.data["text"] = "hello"
     pipeline.process_async(item)
@@ -498,6 +493,52 @@ def test_build_container_rejects_inline_batch_stage():
         )
 
 
+def test_append_names_a_stage_instance_immediately():
+    """An instance-based stage knows its pipeline name before build()."""
+    stage = TextReverser()
+    get_pipeline().append("reverser", stage)
+    assert stage.name == "reverser"
+
+
+def test_append_stage_class_is_constructed_at_build():
+    """append() accepts a stage class and defers its construction to build()."""
+    events = []
+
+    class TrackingStage(Stage):
+        def __init__(self):
+            events.append("init")
+
+        def process(self, item):
+            return item
+
+    pipeline = get_pipeline().append("tracked", TrackingStage)
+    assert events == []
+    assert pipeline.get_stage("tracked") is None
+    pipeline.build()
+    assert events == ["init"]
+    assert isinstance(pipeline.get_stage("tracked"), TrackingStage)
+    pipeline.close()
+
+
+def test_append_stage_class_with_args_and_kwargs():
+    """append() forwards constructor arguments to a class-based stage."""
+    pipeline = get_pipeline().append("reverser", TextReverser, args=[1])
+    assert pipeline.process(text_item("hello")).data["text"] == "olleh"
+    pipeline = get_pipeline().append("reverser", TextReverser, kwargs={"cycles": 1})
+    assert pipeline.process(text_item("hello")).data["text"] == "olleh"
+
+
+def test_append_rejects_constructor_args_for_an_instance():
+    """Constructor arguments are only valid together with a stage class."""
+    with pytest.raises(ValueError, match="stage class"):
+        get_pipeline().append("reverser", TextReverser(), args=[1])
+
+
+def test_append_concurrently_is_removed():
+    """The old append_concurrently() alias is gone: use append() with a class."""
+    assert not hasattr(Pipeline(), "append_concurrently")
+
+
 @pytest.mark.parametrize(
     "stage, kwargs",
     [
@@ -511,7 +552,8 @@ def test_process_rejects_concurrent_stages(stage, kwargs):
     pipeline = get_pipeline().append("stage", stage, **kwargs)
     with pytest.raises(ValueError, match="concurrent"):
         pipeline.process(text_item())
-    assert not pipeline._executors_ready
+    # the guard runs before build, so no stage has been constructed or started
+    assert pipeline.state is PipelineState.INITIAL
 
 
 def test_process_async_callback_error_is_delivered():
@@ -527,14 +569,14 @@ def test_process_async_callback_error_is_delivered():
         get_item_with_timeout(pipeline)
 
 
-def test_close_with_pending_init_executor():
-    """close() tolerates a pending init executor."""
-    pipeline = get_pipeline().append_concurrently("reverser", TextReverser)
-    assert pipeline._init_executor is not None
+def test_close_before_build_with_class_stage():
+    """close() releases a pipeline whose class-based stage was never constructed."""
+    pipeline = get_pipeline().append("reverser", TextReverser)
     assert pipeline._sync_manager is None
     assert pipeline._logs_receiver is None
     pipeline.close()
-    assert pipeline._init_executor is None
+    assert pipeline.state is PipelineState.CLOSED
+    assert pipeline._containers == {}
 
 
 def test_process_async_without_callback():

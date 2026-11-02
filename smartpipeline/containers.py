@@ -19,13 +19,7 @@ from typing import Any, Callable, Generic, List, Literal, Optional, TypeVar, Uni
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import DataT, Item, Stop
-from smartpipeline.runners import (
-    StageRunner,
-    batch_stage_runner,
-    process,
-    process_batch,
-    stage_runner,
-)
+from smartpipeline.runners import StageRunner, batch_stage_runner, process, stage_runner
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage, StageType
 from smartpipeline.utils import ConcurrentCounter, put_or_abort
 
@@ -489,85 +483,32 @@ class BatchStageContainer(
         self.set_error_manager(error_manager)
         self.set_retry_manager(retry_manager)
         self.set_stage(name, stage)
-        # TODO next two variables should help when container is not concurrent, that is currently never the case
+        # Buffer for draining a whole output batch at a time while the stage keeps working.
         self.__result_queue: queue.SimpleQueue[Optional[Item[DataT]]] = (
             queue.SimpleQueue()
         )
-        self._last_processed: List[Optional[Item[DataT]]] = []
-
-    def process(self) -> List[Optional[Item[DataT]]]:
-        """
-        Get items from the previous container, process them with stage, put them in the output queue
-        :return: The same processed items put in the output queue
-        """
-        items = []
-        # items that we want to put as last in a batch, ergo in output
-        extra_items: List[Optional[Item[DataT]]] = []
-        for _ in range(self.stage.size):
-            item = self.previous.get_processed(timeout=self.stage.timeout)
-            if isinstance(item, Stop):
-                self.stop()
-                self._put_item([item])
-                extra_items.append(item)
-            elif item is not None:
-                items.append(item)
-        processed_items = []
-        if any(items):
-            processed_items = process_batch(
-                self.stage, items, self.error_manager, self.retry_manager
-            )
-            self._put_item(processed_items)
-        return processed_items + extra_items
 
     def get_processed(
         self, block: bool = False, timeout: Optional[float] = None
     ) -> Optional[Item[DataT]]:
-        item: Optional[Item[DataT]]
         if (
             self.out_queue is not None
             and self.__result_queue.qsize() < self.out_queue.qsize()
         ):
             try:
-                # let's free the output queue (so this stage con continue processing) and keep the items internally
+                # Free the output queue (so this stage can continue processing) and
+                # keep the items internally, one batch at a time.
                 for _ in range(self.stage.size):
                     item = self.out_queue.get(block=block, timeout=timeout)
                     if item is not None:
                         self.__result_queue.put_nowait(item)
                     self.out_queue.task_done()
             except queue.Empty:
-                try:
-                    return self.__result_queue.get(block=block, timeout=timeout)
-                except queue.Empty:
-                    return None
-        elif self._last_processed:
-            for item in self._last_processed:
-                self.__result_queue.put_nowait(item)
-            self._last_processed = []
+                pass
         try:
             return self.__result_queue.get(block=block, timeout=timeout)
         except queue.Empty:
             return None
-
-    def _put_item(self, items: List[Optional[Item[DataT]]]):
-        """
-        A batch of processed items is set as next output.
-        If we are processing asynchronously (e.g. concurrent stage) they are put in the output queue,
-        otherwise a list of last processed items is extended
-        """
-        # Always keep the sync copy: `get_processed` falls back to `_last_processed`
-        # when the output queue is empty (e.g. a concurrent runner stole its items
-        # while `Pipeline.process` consumes synchronously). Only the new batch is
-        # queued and counted, otherwise repeated `process` calls would re-queue and
-        # re-count the whole history.
-        self._last_processed.extend(items)
-        if self.out_queue is not None and not self.is_terminated():
-            for item in items:
-                if not self._put_or_abort(self.out_queue, item):
-                    # the pipeline is going down, drop the remaining items
-                    break
-        for item in items:
-            if item is not None and not isinstance(item, Stop):
-                self.increase_count()
 
     @property
     def size(self) -> int:

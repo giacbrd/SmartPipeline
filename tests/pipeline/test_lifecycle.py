@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 
-from smartpipeline.containers import ConcurrentStageContainer, StageContainer
+from smartpipeline.containers import ConcurrentStageContainer
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.pipeline import Pipeline, PipelineState, PipelineStateError
 from smartpipeline.utils import ThreadCounter
@@ -192,21 +192,33 @@ def test_process_error_preserved_when_on_end_fails(concurrency):
 def test_concurrent_init_failure_raises_on_build():
     """Stage __init__ failures raise on build with cleanup."""
     pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(2))
-        .append_concurrently("broken", BrokenInitStage)
+        get_pipeline().set_source(RandomTextSource(2)).append("broken", BrokenInitStage)
     )
     with cleanup_on_exit(pipeline):
         with pytest.raises(RuntimeError, match="test init failure"):
             pipeline.build()
 
 
-def test_repeated_build_after_init_failure_raises_again():
-    """A second build after a failed initialization raises again instead of hanging."""
+def test_build_groups_stage_construction_errors():
+    """Every stage construction failure is reported, not only the first one."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
-        .append_concurrently("broken", BrokenInitStage)
+        .append("broken0", BrokenInitStage)
+        .append("broken1", BrokenInitStage)
+    )
+    with cleanup_on_exit(pipeline):
+        with pytest.raises(
+            ExceptionGroup, match="stage construction failed"
+        ) as exc_info:
+            pipeline.build()
+        assert len(exc_info.value.exceptions) == 2
+
+
+def test_repeated_build_after_init_failure_raises_again():
+    """A second build after a failed initialization raises again instead of hanging."""
+    pipeline = (
+        get_pipeline().set_source(RandomTextSource(2)).append("broken", BrokenInitStage)
     )
     with cleanup_on_exit(pipeline):
         # the first build fails on the broken stage initialization
@@ -225,7 +237,7 @@ def test_concurrent_on_start_failure_raises_on_run():
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
-        .append_concurrently("broken", ErrorSerializableStage, concurrency=1)
+        .append("broken", ErrorSerializableStage, concurrency=1)
     )
     with cleanup_on_exit(pipeline):
         pipeline.build()
@@ -239,20 +251,21 @@ def test_build_waits_for_slow_concurrent_init():
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
-        .append_concurrently("slow", SlowInitializer, args=[1])
+        .append("slow", SlowInitializer, args=[1])
     )
     with cleanup_on_exit(pipeline):
         pipeline.build()
-        assert pipeline._executors_ready
+        assert pipeline.state is PipelineState.BUILT
+        assert pipeline.get_stage("slow") is not None
 
 
-def test_concurrent_linker_returns_on_init_errors():
+def test_build_surfaces_stage_construction_errors():
     """Init failures surface even when more stages are appended after the broken one."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
-        .append_concurrently("broken", BrokenInitStage)
-        .append_concurrently("second", TextReverser)
+        .append("broken", BrokenInitStage)
+        .append("second", TextReverser)
     )
     with cleanup_on_exit(pipeline):
         with pytest.raises(RuntimeError, match="test init failure"):
@@ -301,6 +314,7 @@ def test_start_cleanup_survives_container_failures():
         get_pipeline()
         .set_source(RandomTextSource(2))
         .append("reverser", TextReverser(), concurrency=1)
+        .build()
     )
     _scripted_container(pipeline, fail_on=("run", "terminate", "shutdown"))
     with pytest.raises(RuntimeError, match="test container run failure"):
@@ -331,31 +345,6 @@ def test_wait_for_stopped_waits_for_stop():
     container.stop()
     waiter.join(timeout=5)
     assert stopped.is_set()
-
-
-def test_build_waits_for_pending_container_init():
-    """Build waits for containers that are still under construction."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(2))
-        .append("reverser", TextReverser())
-    )
-    # simulate a stage which is still under concurrent construction
-    pipeline._containers["pending"] = pipeline._fake_container
-
-    def _finish_init():
-        time.sleep(0.3)
-        pipeline._containers["pending"] = StageContainer(
-            "pending", TextReverser(), ErrorManager(), RetryManager()
-        )
-
-    finisher = Thread(target=_finish_init)
-    finisher.start()
-    try:
-        pipeline.build()
-    finally:
-        finisher.join(timeout=5)
-    assert pipeline._executors_ready
 
 
 def test_source_errors():
@@ -677,7 +666,7 @@ def test_builder_methods_rejected_after_build():
     with pytest.raises(PipelineStateError, match="state 'built'"):
         pipeline.append("other", TextReverser())
     with pytest.raises(PipelineStateError, match="state 'built'"):
-        pipeline.append_concurrently("other", TextReverser)
+        pipeline.append("other", TextReverser)
     with pytest.raises(PipelineStateError, match="state 'built'"):
         pipeline.set_error_manager(ErrorManager())
     # a built pipeline without a source is not a dead end
@@ -696,7 +685,7 @@ def test_builder_methods_rejected_while_running():
         assert pipeline.state is PipelineState.RUNNING
         actions = (
             lambda: pipeline.append("other", TextReverser()),
-            lambda: pipeline.append_concurrently("other", TextReverser),
+            lambda: pipeline.append("other", TextReverser),
             lambda: pipeline.set_error_manager(ErrorManager()),
             lambda: pipeline.set_source(RandomTextSource(1)),
             pipeline.build,
@@ -719,7 +708,7 @@ def test_builder_methods_rejected_after_close():
     pipeline.close()
     actions = (
         lambda: pipeline.append("other", TextReverser()),
-        lambda: pipeline.append_concurrently("other", TextReverser),
+        lambda: pipeline.append("other", TextReverser),
         lambda: pipeline.set_error_manager(ErrorManager()),
         lambda: pipeline.set_source(RandomTextSource(1)),
         pipeline.build,

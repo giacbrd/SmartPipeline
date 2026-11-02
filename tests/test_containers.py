@@ -7,7 +7,6 @@ from threading import Event
 
 from smartpipeline.containers import (
     BatchConcurrentStageContainer,
-    BatchStageContainer,
     ConcurrentStageContainer,
     SourceContainer,
     StageContainer,
@@ -231,77 +230,12 @@ def test_stage_container_inline_and_concurrent():
     del container
 
 
-def test_batch_stage_container_sequential_batches():
-    """BatchStageContainer processes sequential batches and serves queued items."""
-    manager = Manager()
-    simple_item = Item()
-    simple_item.data["text"] = "hello world"
-    source = SourceContainer()
-    source.set(ListSource([Item() for _ in range(200)]))
-    previous = BatchStageContainer(
-        "test0", BatchTextGenerator(), ErrorManager(), RetryManager()
-    )
-    previous.set_previous(source)
-    container = BatchStageContainer(
-        "test1", BatchTextReverser(), ErrorManager(), RetryManager()
-    )
-    container.set_previous(previous)
-    previous.process()
-    items1 = container.process()
-    assert len(items1) == container.count()
-    items2 = list(_get_items(container))
-    assert all(items1) and all(items2)
-    assert all(item.data.get("text") for item in items1)
-    assert all(list(item.timed_stages) for item in items1)
-    assert all(item.data.get("text") for item in items2)
-    assert items1 == items2
-    previous.process()
-    items3 = container.process()
-    items4 = list(_get_items(container))
-    assert all(items3) and all(items4)
-    assert all(item.data.get("text") for item in items3)
-    assert all(item.data.get("text") for item in items4)
-    assert items1 != items3
-    assert items3 == items4
-    assert not container.is_stopped() and not container.is_terminated()
-    container.init_queue(manager.Queue)
-    queue = container.out_queue
-    for item in items4:
-        queue.put(item)
-    result = list(_get_items(container))
-    for i, item in enumerate(items4):
-        assert item.data == result[i].data
-    assert container.get_processed() is None
-
-
-def test_batch_stage_container_stop_propagation():
-    """BatchStageContainer forwards Stop once the source is exhausted."""
-    source = SourceContainer()
-    container = BatchStageContainer(
-        "test1", BatchTextReverser(), ErrorManager(), RetryManager()
-    )
-    items = [Item() for _ in range(10)]
-    for item in items:
-        item.data["text"] = "something"
-    source.set(ListSource(items))
-    container.set_previous(source)
-    processed = container.process()
-    assert len(processed) == 10 and not any(
-        isinstance(item, Stop) for item in processed
-    )
-    reprocessed = container.process()
-    assert any(isinstance(item, Stop) for item in reprocessed)
-    assert container.is_stopped() and not container.is_terminated()
-
-
 def test_batch_concurrent_stage_container_throughput():
     """BatchConcurrentStageContainer processes 200 items with async counting."""
     manager = Manager()
     source = SourceContainer()
     source.set(ListSource([Item() for _ in range(200)]))
-    previous = BatchStageContainer(
-        "test0", BatchTextGenerator(), ErrorManager(), RetryManager()
-    )
+    previous = StageContainer("test0", TextGenerator(), ErrorManager(), RetryManager())
     previous.set_previous(source)
     container = BatchConcurrentStageContainer(
         "test2",
@@ -314,14 +248,14 @@ def test_batch_concurrent_stage_container_throughput():
     )
     container.set_previous(previous)
     container.run()
-    for _ in range(10):
+    for _ in range(100):
         previous.process()
     assert _wait_for_count(container, 100) == 100
     items5 = list(_get_items(container))
     assert items5 and all(items5)
     assert all(list(item.timed_stages) for item in items5)
     assert container.count() == len(items5) == 100
-    for _ in range(11):
+    for _ in range(100):
         previous.process()
     assert _wait_for_count(container, 200) == 200
     items6 = list(_get_items(container))
@@ -415,22 +349,6 @@ def test_stage_container_put_abort():
     container.set_fatal_event(fatal)
     container._put_item(text_item())
     assert container.has_aborted_put()
-
-
-def test_batch_container_put_abort_breaks():
-    """BatchStageContainer aborts a batch put on fatal, dropping the tail."""
-    container = BatchStageContainer(
-        "batch-put-abort", BatchTextGenerator(size=2), ErrorManager(), RetryManager()
-    )
-    container.init_queue(lambda: Queue(maxsize=1))
-    container.out_queue.put(text_item())
-    fatal = Event()
-    fatal.set()
-    container.set_fatal_event(fatal)
-    container._put_item([text_item(), text_item()])
-    assert container.has_aborted_put()
-    # the second item of the batch is dropped with the abort
-    assert container.out_queue.qsize() == 1
 
 
 def test_empty_out_queue():

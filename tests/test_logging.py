@@ -1,12 +1,10 @@
 import logging
-from logging.handlers import QueueHandler
 from queue import Queue
 from threading import Event, Thread
 
 import pytest
 
 from smartpipeline.defaults import LOGS_STOP_TIMEOUT
-from smartpipeline.pipeline import _stage_initialization_with_logger
 from smartpipeline.utils import LogsReceiver
 from tests.utils import (
     Logger,
@@ -49,7 +47,7 @@ def test_logging_processes_forwards_records(caplog):
         pipeline = (
             get_pipeline()
             .set_source(RandomTextSource(10))
-            .append_concurrently("logger1", Logger, concurrency=1, executor="processes")
+            .append("logger1", Logger, concurrency=1, executor="processes")
             .append("reverser0", TextReverser(), concurrency=1)
             .build()
         )
@@ -80,18 +78,25 @@ def test_logging_processes_forwards_records(caplog):
         assert all("logging item " in record.msg.lower() for record in messages)
 
 
-def test_concurrent_logging_wiring():
-    """Concurrent stage init attaches a queue handler and needs a logs queue."""
-    assert isinstance(
-        _stage_initialization_with_logger(Queue(), TextReverser, [], {}),
-        TextReverser,
+def test_process_logging_wiring():
+    """Process-based stages start a logs receiver at build time."""
+    pipeline = (
+        get_pipeline()
+        .append("reverser", TextReverser(), concurrency=1, executor="processes")
+        .build()
     )
-    assert any(isinstance(h, QueueHandler) for h in logging.getLogger().handlers)
+    try:
+        assert pipeline._logs_receiver is not None
+        assert pipeline._get_logs_receiver_queue() is pipeline._logs_receiver.queue
+    finally:
+        pipeline.close()
 
-    with pytest.raises(AttributeError):
-        get_pipeline().append(
-            "reverser", TextReverser()
-        ).build()._get_logs_receiver_queue()
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+    try:
+        with pytest.raises(AttributeError):
+            pipeline._get_logs_receiver_queue()
+    finally:
+        pipeline.close()
 
 
 def test_logs_receiver_stop(caplog):
