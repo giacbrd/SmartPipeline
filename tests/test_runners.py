@@ -1,3 +1,4 @@
+import logging
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from multiprocessing import Manager, get_context
 from queue import Queue
@@ -7,13 +8,26 @@ import pytest
 
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import Item, Stop
-from smartpipeline.runners import OnEndErrors, batch_stage_runner, stage_runner
+from smartpipeline.runners import (
+    OnEndErrors,
+    _call_on_end_after_abort,
+    _call_on_end_best_effort,
+    _call_on_start,
+    _raise_on_end_errors,
+    batch_stage_runner,
+    stage_runner,
+)
 from smartpipeline.utils import ProcessCounter, ThreadCounter
 from tests.utils import (
     QUEUE_TIMEOUT,
     BatchTextGenerator,
+    BrokenOnEndErrorManager,
+    BrokenOnEndStage,
+    BrokenProcessAndEndBatchStage,
+    BrokenProcessAndEndStage,
     CustomizableBrokenBatchStage,
     CustomizableBrokenStage,
+    ErrorSerializableStage,
     SerializableBatchStage,
     SerializableErrorManager,
     SerializableStage,
@@ -273,3 +287,73 @@ def test_batch_runner_aborts_output_on_fatal():
         fatal_event=fatal,
     )
     assert out_queue.qsize() == 1
+
+
+def test_on_start_failure_sets_fatal_and_raises():
+    """A worker on_start failure raises and unblocks the shared fatal event."""
+    fatal = Event()
+    with pytest.raises(IOError):
+        _call_on_start(ErrorManager(), ErrorSerializableStage(), fatal)
+    assert fatal.is_set()
+
+
+def test_on_end_helpers_report_both_failures(caplog):
+    """Both on_end hooks are attempted, their errors reported, the abort path only logs."""
+    fatal = Event()
+    result = _call_on_end_best_effort(BrokenOnEndErrorManager(), BrokenOnEndStage())
+    assert len(result.exceptions) == 2
+    with pytest.raises(ExceptionGroup, match="failed on_end"):
+        _raise_on_end_errors(result, BrokenOnEndStage(), fatal)
+    assert fatal.is_set()
+    with caplog.at_level(logging.ERROR):
+        _call_on_end_after_abort(True, BrokenOnEndErrorManager(), BrokenOnEndStage())
+    assert any(
+        "aborted put" in record.getMessage().lower() for record in caplog.records
+    )
+
+
+def test_stage_runner_logs_on_end_failure_after_process_error(caplog):
+    """A process worker logs its on_end failure without masking the process error."""
+    manager = Manager()
+    in_queue: Queue = Queue()
+    in_queue.put(Item())
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(ValueError, match="test process failure"):
+            stage_runner(
+                BrokenProcessAndEndStage(),
+                in_queue,
+                Queue(),
+                ErrorManager().raise_on_critical_error(),
+                RetryManager(),
+                Event(),
+                ProcessCounter(manager),
+                ProcessCounter(manager),
+                None,
+            )
+    assert any(
+        "processing error" in record.getMessage().lower() for record in caplog.records
+    )
+
+
+def test_batch_runner_logs_on_end_failure_after_process_error(caplog):
+    """A batch process worker logs its on_end failure without masking the process error."""
+    manager = Manager()
+    in_queue: Queue = Queue()
+    in_queue.put(Item())
+    in_queue.put(Item())
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(ValueError, match="test batch process failure"):
+            batch_stage_runner(
+                BrokenProcessAndEndBatchStage(),
+                in_queue,
+                Queue(),
+                ErrorManager().raise_on_critical_error(),
+                RetryManager(),
+                Event(),
+                ProcessCounter(manager),
+                ProcessCounter(manager),
+                None,
+            )
+    assert any(
+        "processing error" in record.getMessage().lower() for record in caplog.records
+    )

@@ -870,3 +870,217 @@ def test_close_during_start_waits_for_the_start_phase():
     finally:
         start_release.set()
         cleanup_on_exit(pipeline)
+
+
+def test_start_stages_starts_once_with_concurrent_callers():
+    """A second caller entering the start phase after the first returns does nothing."""
+    start_entered = Event()
+    start_release = Event()
+    events = []
+
+    class BlockingStartStage(TextReverser):
+        def on_start(self):
+            events.append("start")
+            start_entered.set()
+            start_release.wait(timeout=PIPELINE_TIMEOUT)
+
+        def on_end(self):
+            events.append("end")
+
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(1))
+        .append("blocking", BlockingStartStage())
+        .build()
+    )
+    first = Thread(target=pipeline._start_stages)
+    second = Thread(target=pipeline._start_stages)
+    with cleanup_on_exit(pipeline):
+        first.start()
+        assert start_entered.wait(PIPELINE_TIMEOUT)
+        second.start()
+        # let the second caller block on the lifecycle lock held by the first
+        time.sleep(0.1)
+        start_release.set()
+        first.join(PIPELINE_TIMEOUT)
+        second.join(PIPELINE_TIMEOUT)
+        assert not first.is_alive() and not second.is_alive()
+        assert events == ["start"]
+    assert events == ["start", "end"]
+
+
+def test_start_stages_skips_everything_when_close_won_the_race():
+    """A close request set before the start phase prevents any stage from starting."""
+    events = []
+    pipeline = _lifecycle_pipeline(events).build()
+    pipeline._close_requested = True
+    pipeline._start_stages()
+    assert pipeline._started_in_main == []
+    assert events == []
+    pipeline.close()
+    assert pipeline.state is PipelineState.CLOSED
+
+
+def test_start_stages_stops_submitting_after_a_close_request():
+    """A close request raised while starting one stage does not start the following ones."""
+    events = []
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(1))
+        .append("first", LifecycleStage(events))
+        .append("second", LifecycleStage(events))
+        .build()
+    )
+    first_stage = pipeline.get_stage("first")
+    assert first_stage is not None
+    original_on_start = first_stage.on_start
+
+    def close_on_start():
+        original_on_start()
+        pipeline._close_requested = True
+
+    first_stage.on_start = close_on_start
+    pipeline._start_stages()
+    assert events == ["first:start"]
+    assert [name for name, _ in pipeline._started_in_main] == ["first"]
+    pipeline.close()
+    assert events == ["first:start", "first:end"]
+
+
+def test_release_resources_is_idempotent_and_logs_manager_errors(caplog):
+    """Resource release runs once and a failing manager shutdown is only logged."""
+    pipeline = Pipeline()
+    pipeline._sync_manager = mock.Mock()
+    pipeline._sync_manager.shutdown.side_effect = RuntimeError("manager boom")
+    with caplog.at_level(logging.ERROR):
+        pipeline._release_resources()
+    assert pipeline._sync_manager is None
+    assert any(
+        "multiprocessing manager" in record.getMessage().lower()
+        for record in caplog.records
+    )
+    # a second release is a no-op
+    pipeline._release_resources()
+
+
+def test_join_thread_warns_when_it_does_not_end(caplog):
+    """A thread which outlives the join timeout produces a warning instead of blocking."""
+    pipeline = Pipeline()
+    release = Event()
+    thread = Thread(target=release.wait, args=(PIPELINE_TIMEOUT,))
+    thread.start()
+    try:
+        with caplog.at_level(logging.WARNING):
+            pipeline._join_thread(thread, "test thread", 0.01)
+        assert any(
+            "test thread did not end" in record.getMessage().lower()
+            for record in caplog.records
+        )
+    finally:
+        release.set()
+        thread.join(PIPELINE_TIMEOUT)
+
+
+def test_close_ignores_a_concurrent_close():
+    """A close() which races with another one leaves the pipeline to the first caller."""
+    pipeline = Pipeline()
+    pipeline._closing = True
+    try:
+        pipeline.close()
+        assert pipeline.state is PipelineState.INITIAL
+    finally:
+        pipeline._closing = False
+    pipeline.close()
+    assert pipeline.state is PipelineState.CLOSED
+
+
+def test_close_logs_a_stop_failure(caplog):
+    """A source stop failure is logged and does not prevent the pipeline cleanup."""
+    pipeline = Pipeline()
+    with mock.patch.object(pipeline, "stop", side_effect=RuntimeError("stop boom")):
+        with caplog.at_level(logging.ERROR):
+            pipeline.close()
+    assert pipeline.state is PipelineState.CLOSED
+    assert any(
+        "problems in stopping" in record.getMessage().lower()
+        for record in caplog.records
+    )
+
+
+def test_close_raises_termination_failures():
+    """A termination failure aborts close() after the resources have been released."""
+    pipeline = Pipeline()
+    with mock.patch.object(
+        pipeline, "_terminate_all", side_effect=RuntimeError("termination boom")
+    ):
+        with pytest.raises(RuntimeError, match="termination boom"):
+            pipeline.close()
+    assert pipeline.state is PipelineState.CLOSED
+    assert pipeline._resources_released
+
+
+def test_build_respects_a_close_request_during_construction():
+    """A close requested while building leaves the pipeline closed, without starting it."""
+    pipeline = get_pipeline().append("reverser", TextReverser)
+    pipeline._close_requested = True
+    assert pipeline.build() is pipeline
+    assert pipeline.state is PipelineState.CLOSED
+    pipeline._release_resources()
+
+
+def test_finish_run_logs_a_release_failure(caplog):
+    """_finish_run reports release problems without masking the run outcome."""
+    pipeline = Pipeline()
+    with mock.patch.object(
+        pipeline, "_release_resources", side_effect=RuntimeError("release boom")
+    ):
+        with caplog.at_level(logging.ERROR):
+            pipeline._finish_run(None, None)
+    assert pipeline.state is PipelineState.CLOSED
+    assert any(
+        "releasing the pipeline resources" in record.getMessage().lower()
+        for record in caplog.records
+    )
+
+
+def test_finish_run_raises_termination_errors():
+    """_finish_run raises the errors collected while terminating the pipeline."""
+    pipeline = Pipeline()
+    with mock.patch.object(
+        pipeline, "_terminate_all", side_effect=RuntimeError("termination boom")
+    ):
+        with pytest.raises(RuntimeError, match="termination boom"):
+            pipeline._finish_run(None, None)
+    assert pipeline.state is PipelineState.CLOSED
+
+
+def test_run_returns_when_close_is_requested():
+    """A run generator resumed after close() ends without delivering more items."""
+    events = []
+    pipeline = _lifecycle_pipeline(events)
+    run = pipeline.run()
+    try:
+        assert next_with_timeout(run, pipeline=pipeline)
+        pipeline.close()
+        assert list(run) == []
+    finally:
+        run.close()
+    assert pipeline.state is PipelineState.CLOSED
+
+
+def test_process_aborts_when_closed_during_start():
+    """process() fails if the pipeline is closed while it is starting."""
+    pipeline = get_pipeline().append("reverser", TextReverser())
+    with mock.patch.object(pipeline, "_start_stages", side_effect=pipeline.close):
+        with pytest.raises(PipelineStateError, match="closed"):
+            pipeline.process(text_item())
+    assert pipeline.state is PipelineState.CLOSED
+
+
+def test_process_async_aborts_when_closed_during_start():
+    """process_async() fails if the pipeline is closed while it is starting."""
+    pipeline = get_pipeline().append("reverser", TextReverser())
+    with mock.patch.object(pipeline, "_start_stages", side_effect=pipeline.close):
+        with pytest.raises(PipelineStateError, match="closed"):
+            pipeline.process_async(text_item())
+    assert pipeline.state is PipelineState.CLOSED

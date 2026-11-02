@@ -55,6 +55,17 @@ def test_soft_critical_error_attachment():
         item.add_critical_error(stage.name, SoftSubclass())
 
 
+def test_soft_error_preserves_an_explicit_cause():
+    """A SoftError keeps the cause set with ``raise ... from`` when it is attached."""
+    item = Item()
+    error = SoftError("wrapped error")
+    cause = ValueError("original cause")
+    error.__cause__ = cause
+    attached = item.add_soft_error("stage", error)
+    assert attached is error
+    assert attached.get_exception() is cause
+
+
 def test_default_dict_payload():
     """A bare Item defaults to an empty dict payload."""
     item = Item()
