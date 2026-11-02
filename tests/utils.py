@@ -365,6 +365,17 @@ class BrokenProcessAndEndStage(Stage):
         raise RuntimeError("test on_end failure")
 
 
+class BrokenProcessAndEndBatchStage(BatchStage):
+    def __init__(self, size: int = 2, timeout: float = 0.1):
+        super().__init__(size, timeout)
+
+    def process_batch(self, items):
+        raise ValueError("test batch process failure")
+
+    def on_end(self):
+        raise RuntimeError("test batch on_end failure")
+
+
 class BrokenInitStage(Stage):
     def __init__(self):
         raise RuntimeError("test init failure")

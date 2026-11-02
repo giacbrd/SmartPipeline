@@ -7,7 +7,7 @@ import pytest
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import Item
-from smartpipeline.pipeline import Pipeline, PipelineState
+from smartpipeline.pipeline import Pipeline, PipelineState, StageSpec
 from smartpipeline.stage import Stage
 from tests.utils import (
     BatchTextReverser,
@@ -586,3 +586,48 @@ def test_process_async_without_callback():
     pipeline.stop()
     result = get_item_with_timeout(pipeline)
     assert result.data["text"] == "olleh"
+
+
+def test_stage_spec_requires_exactly_one_stage():
+    """A stage spec holds either an instance or a class, never both or neither."""
+    with pytest.raises(ValueError, match="exactly one"):
+        StageSpec(name="empty")
+    with pytest.raises(ValueError, match="exactly one"):
+        StageSpec(name="both", stage=TextReverser(), stage_class=TextReverser)
+
+
+def test_last_stage_name_uses_the_specs_before_build():
+    """Before build() the last stage name comes from the collected specs."""
+    pipeline = get_pipeline().append("reverser", TextReverser)
+    assert pipeline._last_stage_name() == "reverser"
+    assert Pipeline()._last_stage_name() is None
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"concurrency": -1}, "concurrency"),
+        ({"concurrency": "1"}, "concurrency"),
+        ({"executor": "invalid"}, "executor"),
+    ],
+)
+def test_append_rejects_invalid_execution_options(kwargs, match):
+    """append() validates concurrency and executor values."""
+    with pytest.raises(ValueError, match=match):
+        get_pipeline().append("stage", TextReverser(), **kwargs)
+
+
+def test_append_rejects_non_stage_types():
+    """append() rejects classes and instances which are not stages."""
+    with pytest.raises(ValueError, match="extend Stage"):
+        get_pipeline().append("stage", int)
+    with pytest.raises(ValueError, match="instance of Stage"):
+        get_pipeline().append("stage", object())
+
+
+def test_async_run_error_is_delivered_by_get_item():
+    """An error raised by the asynchronous run loop reaches get_item()."""
+    pipeline = get_pipeline().append("broken", CustomizableBrokenStage([ValueError]))
+    pipeline.process_async(text_item())
+    with pytest.raises(ValueError, match="exception"):
+        get_item_with_timeout(pipeline)
