@@ -205,16 +205,32 @@ Retries re-run the stage on the same item objects, so a failed attempt that muta
 an item is visible to the next attempt: retried stages should be idempotent or only
 mutate after the operations that may fail.
 
-:meth:`.Pipeline.append_concurrently` accepts a stage *class* (plus ``args``/``kwargs``)
-instead of an instance, so stage construction runs in the background
-while you keep appending other stages.
-This is useful when construction itself is slow,
-for example when it builds large in-memory data structures.
+:meth:`.Pipeline.append` accepts two forms of stage argument, with different
+construction timing:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Stage argument
+     - When it is constructed
+     - Before ``build()``
+   * - An instance, e.g. ``TextReplacer()``
+     - Immediately, by the caller
+     - The instance exists and :meth:`.Pipeline.get_stage` returns it
+   * - A class, optionally with ``args``/``kwargs``
+     - By :meth:`.Pipeline.build`
+     - :meth:`.Pipeline.get_stage` returns ``None``
+
+**A class-based stage does not exist until ``build()``.** Class constructors run
+concurrently when several classes are appended, so slow constructors overlap;
+``build()`` waits for all of them before wiring the containers. This is useful when
+construction itself is slow, for example when it builds large in-memory data
+structures. ``args`` and ``kwargs`` are only valid with a class.
 
 Always finish the concatenation with :meth:`.Pipeline.build`.
-``build()`` only validates and prepares the pipeline: stages are wired and
-constructed, but no worker is started. The start phase happens when the pipeline
-is executed, as shown below.
+``build()`` validates and prepares the pipeline: instance stages already exist,
+class-based stages are constructed, and all containers are wired, but no worker is
+started. The start phase happens when the pipeline is executed, as shown below.
 
 The example below adds a second stage that truncates the text, then runs the pipeline.
 

@@ -4,21 +4,34 @@
 
 - BREAKING CHANGE: the pipeline has an explicit lifecycle
   `INITIAL -> BUILT -> RUNNING -> CLOSED`, exposed publicly by the `Pipeline.state`
-  property and the `PipelineState` enum. `build()` only validates and prepares:
-  stage `on_start` hooks and workers start in `run()` / `process_async()`.
-  `append()`, `append_concurrently()` and `set_error_manager()` raise
-  `PipelineStateError` after `build()`; `set_source()` is still accepted on a built
-  pipeline which has not started. A pipeline is one-shot: after `run()` or
-  `process_async()` it is closed and cannot run again, while `process()` can be
-  called repeatedly on a built pipeline
+  property and the `PipelineState` enum. `build()` validates, constructs stages and
+  prepares containers: stage `on_start` hooks and workers start in
+  `run()` / `process_async()`.
+  `append()` and `set_error_manager()` raise `PipelineStateError` after `build()`;
+  `set_source()` is still accepted on a built pipeline which has not started. A
+  pipeline is one-shot: after `run()` or `process_async()` it is closed and cannot
+  run again, while `process()` can be called repeatedly on a built pipeline
 - Added idempotent `Pipeline.close()`, which terminates workers, drains queues,
   runs the paired `on_end` hooks and releases the multiprocessing manager; it can
   be called while the pipeline is starting and waits for the start phase, so the
   runners submitted by it are terminated too. `Pipeline.shutdown()` has been
   removed, use `close()` instead. A failed start runs `on_end` only for the stages
   whose `on_start` completed
-- BREAKING CHANGE: the internal `EmptyStage` helper is now the private
-  `_EmptyStage`, it is no longer part of the public module surface
+- BREAKING CHANGE: `Pipeline.append()` accepts either a stage instance or a stage
+  class, with keyword-only `args`/`kwargs` for classes. An instance exists immediately,
+  while a class-based stage does not exist before `build()`: `build()` constructs the
+  classes concurrently in a thread pool and then wires every container in one
+  deterministic pass. The method is overloaded so type checkers reject
+  `args`/`kwargs` on an instance. `Pipeline.append_concurrently()` has been removed;
+  pass the stage class to `append()` instead
+- Added the public `StageSpec` dataclass, describing a stage instance or class and
+  its pipeline configuration
+- Removed the placeholder/linker machinery used for background stage construction:
+  `_fake_container`, `_wait_for_previous()`, the init/linker executors,
+  `_wait_executors()` and `_init_errors`
+- Removed the dead synchronous `BatchStageContainer.process()` path: batch stages
+  always run with `concurrency=1` on a thread and use the concurrent queue path
+- Removed the internal `EmptyStage` helper
 - `Pipeline.count` is defined as the number of items delivered by `run()` or
   `process_async()`, including items with soft errors; items processed one by one
   with `process()` are not counted
@@ -29,8 +42,8 @@
 - `BatchStage.process_batch()` output length is validated: it must return exactly one
   item for every input item, and a mismatch raises the public `BatchOutputError`
   and stops the pipeline
-- `append_concurrently()` with thread initialization no longer starts a
-  `multiprocessing.Manager` or logs receiver
+- `append()` never starts a `multiprocessing.Manager` or logs receiver; process-based
+  containers set them up during `build()`
 - Exceptions raised by a `process_async()` callback are delivered by `get_item()`
   instead of silently killing the runner; `run()` also cleans up on `KeyboardInterrupt`
 - `Item.add_soft_error()` and `add_critical_error()` now handle subclasses of
@@ -48,8 +61,8 @@
   Removed deprecated aliases: `Item.payload`, `Item.set_metadata`/`get_metadata`,
   `DataItem`, `Pipeline.append_stage`/`append_stage_concurrently`
 
-- BREAKING CHANGE: the `parallel: bool` parameter of `Pipeline.append`,
-  `Pipeline.append_concurrently` (and of the stage containers) has been replaced by
+- BREAKING CHANGE: the `parallel: bool` parameter of `Pipeline.append` (and of the
+  stage containers) has been replaced by
   `executor: Literal["threads", "processes"]` (`"threads"` by default, `"processes"`
   for multiprocessing). Update `parallel=True` to `executor="processes"` and
   `parallel=False` to `executor="threads"`. The `ConcurrentContainer.parallel`

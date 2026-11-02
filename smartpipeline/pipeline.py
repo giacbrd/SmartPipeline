@@ -4,26 +4,24 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
-from concurrent.futures import ProcessPoolExecutor
-from concurrent.futures._base import Executor, Future
 from concurrent.futures.thread import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from enum import Enum
 from inspect import isclass
-from logging.handlers import QueueHandler
-from multiprocessing import Manager, get_context
+from multiprocessing import Manager
 from multiprocessing.managers import SyncManager
 from queue import Queue
 from threading import Event, RLock, Thread, current_thread
 from typing import Any, Callable, Generator, Generic, Mapping, Optional
 from typing import OrderedDict as OrderedDictType
-from typing import Self, Sequence, Tuple, Type, Union
+from typing import Self, Sequence, Tuple, Type, Union, cast, get_args, overload
 
 from smartpipeline.containers import (
+    BaseContainer,
     BatchConcurrentStageContainer,
     BatchStageContainer,
     ConcurrentContainerTypes,
     ConcurrentStageContainer,
-    ConnectedStageMixin,
     ContainerType,
     ExecutorType,
     SourceContainer,
@@ -49,26 +47,41 @@ from smartpipeline.utils import (
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
-def _stage_initialization_with_logger(
-    logs_queue: Queue,
-    stage_class: Type[Stage[DataT]] | Type[BatchStage[DataT]],
-    args: Sequence,
-    kwargs: Mapping,
-) -> Stage[DataT] | BatchStage[DataT]:
-    root_logger = logging.getLogger()
-    # only by comparing string of queues we obtain their "original" address
-    if not any(
-        isinstance(handler, QueueHandler) and str(handler.queue) == str(logs_queue)
-        for handler in root_logger.handlers
-    ):
-        handler = QueueHandler(logs_queue)
-        root_logger.addHandler(handler)
-    return stage_class(*args, **kwargs)
+@dataclass(frozen=True)
+class StageSpec(Generic[DataT]):
+    """
+    Declarative description of a stage collected by :meth:`.Pipeline.append`.
 
+    A spec holds either an already constructed stage instance or the stage class and
+    the arguments needed to construct it. The pipeline turns specs into stages and
+    containers in :meth:`.Pipeline.build`, in a single deterministic pass.
+    """
 
-class _EmptyStage(Stage[Any]):
-    def process(self, item: Item[Any]) -> Item[Any]:
-        return item
+    name: str
+    stage: Optional[Stage[DataT] | BatchStage[DataT]] = None
+    stage_class: Optional[Type[Stage[DataT]] | Type[BatchStage[DataT]]] = None
+    args: Tuple[Any, ...] = ()
+    kwargs: Mapping[str, Any] = field(default_factory=dict)
+    concurrency: int = 0
+    executor: ExecutorType = "threads"
+    retryable_errors: Tuple[Type[Exception], ...] = ()
+    max_retries: int = 0
+    backoff: Union[float, int] = 0.0
+
+    def __post_init__(self):
+        if (self.stage is None) == (self.stage_class is None):
+            raise ValueError(
+                "A stage spec requires exactly one of a stage instance or a stage class"
+            )
+
+    def construct(self) -> Stage[DataT] | BatchStage[DataT]:
+        """
+        Return the stage instance, constructing it when the spec holds a class.
+        """
+        if self.stage is not None:
+            return self.stage
+        assert self.stage_class is not None
+        return self.stage_class(*self.args, **self.kwargs)
 
 
 class _AsyncPipelineError:
@@ -110,16 +123,15 @@ class Pipeline(Generic[DataT]):
         max_queues_size: int = MAX_QUEUES_SIZE,
     ):
         """
-        :param max_init_workers: Number of workers to use for concurrent initialization of stages, default the number of CPUs
+        :param max_init_workers: Number of workers to use for concurrent stage construction at build time, default the `ThreadPoolExecutor` default
         :param max_queues_size: Maximum size of any queue instanced for the pipeline (stage input and output queues)
         """
+        self._stage_specs: OrderedDictType[str, StageSpec[DataT]] = OrderedDict()
         self._containers: OrderedDictType[
             str, StageContainer[DataT] | BatchStageContainer[DataT]
         ] = OrderedDict()
         self._error_manager = ErrorManager()
         self._max_init_workers = max_init_workers
-        self._init_executor: Optional[Executor] = None
-        self._wait_previous_executor: Optional[Executor] = None
         self._pipeline_executor: Optional[Thread] = None
         self._max_queues_size = max_queues_size
         self._out_queue: Optional[Queue[Any]] = None
@@ -129,7 +141,6 @@ class Pipeline(Generic[DataT]):
         # we approach sharing memory between processes exclusively through a `multiprocessing.Manager`
         self._sync_manager: Optional[SyncManager] = None
         self._count = 0
-        self._executors_ready = False
         self._state = PipelineState.INITIAL
         # The build failure is kept and raised again, instead of leaving a closed
         # pipeline which reports only a generic state error.
@@ -159,16 +170,6 @@ class Pipeline(Generic[DataT]):
         self._source_container: SourceContainer[DataT] = SourceContainer(
             self._source_name
         )
-        # A fake container for the pipeline to support data structures initialization
-        self._fake_container: StageContainer[DataT] = StageContainer(
-            f"FakeContainerOf{self._name}",
-            _EmptyStage(),
-            ErrorManager(),
-            RetryManager(),
-        )
-        # failures of concurrent stage constructions (`append_concurrently`),
-        # callbacks run in other threads so errors are stored and raised on `build()`
-        self._init_errors: list[Exception] = []
 
     def _start_logs_receiver(self) -> LogsReceiver:
         if self._logs_receiver is None:
@@ -288,49 +289,75 @@ class Pipeline(Generic[DataT]):
         """
         return ThreadCounter()
 
-    def _wait_executors(self, wait_seconds: float = CONCURRENCY_WAIT):
+    def _construct_stages(
+        self, specs: Sequence[StageSpec[DataT]]
+    ) -> list[Stage[DataT] | BatchStage[DataT]]:
         """
-        Wait for all containers to be constructed and prepare them to run.
+        Construct every stage from its spec, joining all constructors before returning.
 
-        This only validates and wires the pipeline: stages and workers are started
-        later, by :meth:`.Pipeline.run` or :meth:`.Pipeline.process_async`.
-
-        :param wait_seconds: Recurrently wait these seconds for all stage initializers to finish
-        :raises Exception: Whatever exception has been raised by a stage construction,
-            instead of hanging without feedback
+        Instances passed to :meth:`.Pipeline.append` are used as they are. Stage classes
+        are constructed concurrently in a thread pool bounded by `max_init_workers`, so
+        slow constructors overlap without any placeholder or polling machinery.
         """
-        if self._executors_ready:
-            return
-        if self._init_executor is not None:
-            self._init_executor.shutdown(wait=True)
-            self._init_executor = None
-        # A stage container which is still a placeholder is under construction: stage
-        # constructions (and their done-callbacks, which run synchronously when the
-        # relative future completes) are already joined by the shutdown above, so normally
-        # no placeholder is left at this point. This loop only covers the narrow window in
-        # which a `ProcessPoolExecutor` result delivery (and its callback replacing the
-        # placeholder) lags behind, and it gives up on a construction error instead of
-        # hanging without feedback.
-        while not self._init_errors and any(
-            container is self._fake_container for container in self._containers.values()
-        ):
-            time.sleep(wait_seconds)
-        if self._wait_previous_executor is not None:
-            self._wait_previous_executor.shutdown(wait=True)
-            self._wait_previous_executor = None
-        if self._init_errors:
-            # The errors are kept, not cleared: the pipeline cannot be built, so any further
-            # build()/run() must report the failure again instead of hanging on a stage
-            # container which will never be ready.
-            raise_collected_errors(
-                list(self._init_errors), "pipeline stage initialization failed"
+        if not any(spec.stage_class is not None for spec in specs):
+            return [spec.construct() for spec in specs]
+        executor = ThreadPoolExecutor(max_workers=self._max_init_workers)
+        try:
+            futures = {
+                spec.name: executor.submit(spec.construct)
+                for spec in specs
+                if spec.stage_class is not None
+            }
+            stages: list[Stage[DataT] | BatchStage[DataT]] = []
+            errors: list[Exception] = []
+            for spec in specs:
+                if spec.stage_class is None:
+                    stages.append(spec.construct())
+                    continue
+                try:
+                    stages.append(futures[spec.name].result())
+                except Exception as e:
+                    # Collect every construction failure before raising, so a broken
+                    # stage does not hide the failures of the stages after it.
+                    errors.append(e)
+            raise_collected_errors(errors, "pipeline stage construction failed")
+            return stages
+        finally:
+            executor.shutdown(wait=True)
+
+    def _wire_containers(
+        self,
+        specs: Sequence[StageSpec[DataT]],
+        stages: Sequence[Stage[DataT] | BatchStage[DataT]],
+    ) -> None:
+        """
+        Build every container and link it to the previous one in a single pass.
+
+        Containers are stored progressively, so a failure while wiring can still release
+        the resources of the containers already created.
+        """
+        self._containers = OrderedDict()
+        previous: BaseContainer = self._source_container
+        for spec, stage in zip(specs, stages):
+            container = self._build_container(
+                spec.name,
+                stage,
+                spec.concurrency,
+                spec.executor,
+                spec.retryable_errors,
+                spec.max_retries,
+                spec.backoff,
             )
-        # all the containers are now ready, we can share the event which alerts a stage runner error
+            container.set_previous(previous)
+            self._containers[spec.name] = container
+            previous = container
+        # all the containers are ready, share the event which alerts a stage runner error
         self._fatal_event = self._new_shared_event()
         self._source_container.set_fatal_event(self._fatal_event)
-        for name, container in self._containers.items():
+        for container in self._containers.values():
             container.set_fatal_event(self._fatal_event)
-        self._executors_ready = True
+        self._has_concurrent_stages = any(spec.concurrency > 0 for spec in specs)
+        self._enqueue_source = bool(specs and specs[0].concurrency > 0)
         self._logger.debug("Pipeline prepared to run")
 
     def _start_stages(self):
@@ -409,22 +436,6 @@ class Pipeline(Generic[DataT]):
             if self._resources_released:
                 return
             self._resources_released = True
-            if self._init_executor is not None:
-                try:
-                    self._init_executor.shutdown(wait=True)
-                except BaseException:
-                    self._logger.exception(
-                        "Problems in shutting down the init executor"
-                    )
-                self._init_executor = None
-            if self._wait_previous_executor is not None:
-                try:
-                    self._wait_previous_executor.shutdown(wait=True)
-                except BaseException:
-                    self._logger.exception(
-                        "Problems in shutting down the linker executor"
-                    )
-                self._wait_previous_executor = None
             for container in self._containers.values():
                 if isinstance(container, ConcurrentContainerTypes):
                     try:
@@ -508,9 +519,9 @@ class Pipeline(Generic[DataT]):
         """
         Validate and prepare the pipeline.
 
-        Stage construction is completed and containers are wired, but no stage or
-        worker is started: :meth:`.Pipeline.run` and :meth:`.Pipeline.process_async`
-        start them. Calling ``build()`` again on a built pipeline is a no-op.
+        Stage classes are constructed and containers are wired, but no stage or worker
+        is started: :meth:`.Pipeline.run` and :meth:`.Pipeline.process_async` start
+        them. Calling ``build()`` again on a built pipeline is a no-op.
 
         :raises ValueError: When no stage has been appended
         :raises PipelineStateError: When the pipeline is running or closed
@@ -528,18 +539,25 @@ class Pipeline(Generic[DataT]):
                 )
             if self._state is PipelineState.RUNNING:
                 raise PipelineStateError("The pipeline is already running")
-            if not any(self._containers):
+            if not any(self._stage_specs):
                 raise ValueError("Must append at least a stage")
             self._logger.debug(
                 "Building the pipeline on stages: %s", self._log_stages()
             )
+            specs = list(self._stage_specs.values())
             try:
-                self._wait_executors()
+                stages = self._construct_stages(specs)
+                self._wire_containers(specs, stages)
             except BaseException as e:
                 self._build_error = e
                 self._state = PipelineState.CLOSED
                 self._release_resources()
                 raise
+            if self._close_requested:
+                # close() won the race while stages were being constructed: it owns
+                # termination and resource release from here.
+                self._state = PipelineState.CLOSED
+                return self
             self._state = PipelineState.BUILT
             return self
 
@@ -679,6 +697,9 @@ class Pipeline(Generic[DataT]):
                             raise source_error
                     # concurrent stages run by themselves in threads/processes
                     if not isinstance(container, ConcurrentContainerTypes):
+                        # non-concurrent batch stages do not exist: append() always
+                        # turns a BatchStage into a concurrent (thread) one
+                        assert isinstance(container, StageContainer)
                         progressed |= bool(container.process())
                         # a put is aborted only when terminated or when a stage runner
                         # failed, in the latter case we raise its exception
@@ -933,6 +954,8 @@ class Pipeline(Generic[DataT]):
         self._source_container.prepend_item(item)
         ret = None
         for name, container in self._containers.items():
+            # process() rejects concurrent pipelines, so every container is inline
+            assert isinstance(container, StageContainer)
             container.process()
             if name == last_stage_name:
                 ret = self._get_processed_or_abort(container)
@@ -1013,57 +1036,14 @@ class Pipeline(Generic[DataT]):
         """
         self._require_initial("set an error manager on")
         self._error_manager = error_manager
-        for container in self._containers.values():
-            container.set_error_manager(self._error_manager)
         return self
 
     def _last_stage_name(self) -> Optional[str]:
         if self._containers:
             return last_key(self._containers)
+        if self._stage_specs:
+            return last_key(self._stage_specs)
         return None
-
-    def _wait_for_previous(
-        self,
-        container: ConnectedStageMixin,
-        last_stage_name: Optional[str],
-        wait_seconds: float = CONCURRENCY_WAIT,
-    ):
-        """
-        Given a container we want to append to the pipeline, wait for the last one (added to the pipeline) to be created
-
-        :param container: A container to add to the pipeline
-        :param last_stage_name: Name of the last stage currently in the pipeline
-        :param wait_seconds: Time to recurrently wait the construction of the container relative to the last stage in the pipeline
-        """
-        # Fast path: when the previous container is already constructed we can link
-        # synchronously, without delegating to a background thread. The async waiter
-        # below is only needed when the previous stage is still under concurrent
-        # construction (i.e. a placeholder fake container). Linking synchronously
-        # avoids a race where `process()`/`run()` is called before the linker runs,
-        # which surfaced as `AttributeError: ... has no attribute '_previous'`.
-        if last_stage_name is None:
-            container.set_previous(self._source_container)
-            return
-        previous = self._containers.get(last_stage_name)
-        if previous is not None and previous is not self._fake_container:
-            container.set_previous(previous)
-            return
-
-        def _waiter():
-            # `last_stage_name` is never None here: the fast path above already
-            # links synchronously when the pipeline is still empty
-            if last_stage_name is not None:
-                while (
-                    self._containers[last_stage_name] is self._fake_container
-                    and not self._init_errors
-                ):
-                    time.sleep(wait_seconds)
-                if self._init_errors:
-                    return
-                container.set_previous(self._containers[last_stage_name])
-
-        executor = self._get_wait_previous_executor()
-        executor.submit(_waiter)
 
     def _build_container(
         self,
@@ -1091,8 +1071,8 @@ class Pipeline(Generic[DataT]):
         )
         if concurrency <= 0:
             if isinstance(stage, BatchStage):
-                # unreachable through the public API (`append` and `append_concurrently`
-                # always force batch stages to `concurrency=1`): guard the private contract
+                # unreachable through the public API (`append` always forces batch
+                # stages to `concurrency=1`): guard the private contract
                 raise ValueError("Batch stages require concurrency >= 1")
             return StageContainer(name, stage, self._error_manager, retry_manager)
         if executor == "processes":
@@ -1149,11 +1129,19 @@ class Pipeline(Generic[DataT]):
 
     def get_stage(self, name: str) -> Optional[Stage[DataT] | BatchStage[DataT]]:
         """
-        Get a stage instance by its name
-        """
-        ret = self._containers.get(name)
-        return ret.stage if ret else None
+        Get a stage instance by its name.
 
+        A class-based stage exists only after :meth:`.Pipeline.build`, so before that
+        this returns None for it; an instance passed to :meth:`.Pipeline.append` is
+        available immediately.
+        """
+        container = self._containers.get(name)
+        if container is not None:
+            return container.stage
+        spec = self._stage_specs.get(name)
+        return spec.stage if spec is not None else None
+
+    @overload
     def append(
         self,
         name: str,
@@ -1163,154 +1151,134 @@ class Pipeline(Generic[DataT]):
         retryable_errors: Tuple[Type[Exception], ...] = tuple(),
         max_retries: int = 0,
         backoff: Union[float, int] = 0.0,
-    ) -> Self:
-        """
-        Append a stage to the pipeline just after the last one appended, or after the source if it is the first stage
+    ) -> Self: ...
 
-        :param name: Name for identify the stage in the pipeline, it is also set in the stage and it must be unique in the pipeline
-        :param stage: Instance of a stage
-        :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
-        :param executor: "threads" for using threads, "processes" for using multiprocessing
-        :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. After the final failed attempt, a :class:`.error.exceptions.RetryError` soft error is attached to the item
-        :param max_retries: maximum number of retries for the stage before attaching a RetryError(SoftError) (default 0)
-        :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
-        :raises PipelineStateError: When the pipeline has already been built
-        """
-        self._require_initial("append a stage to")
-        self._executors_ready = False
-        # FIXME here we force a BatchStage to run on a thread, but we would leave it on the main thread
-        if concurrency < 1 and isinstance(stage, BatchStage):
-            executor = "threads"
-            concurrency = 1
-        self._check_stage_name(name)
-        self._check_retries_params(retryable_errors, max_retries, backoff)
-        container = self._build_container(
-            name, stage, concurrency, executor, retryable_errors, max_retries, backoff
-        )
-        if concurrency > 0:
-            self._has_concurrent_stages = True
-            # if it is concurrent and it is the first stage, make the source work on a output queue
-            if not self._containers:
-                self._enqueue_source = True
-        self._wait_for_previous(
-            container, self._last_stage_name()
-        )  # wait that previous stage is initialized
-        self._containers[name] = container
-        return self
-
-    def append_concurrently(
+    @overload
+    def append(
         self,
         name: str,
-        stage_class: Type[Stage[DataT]] | Type[BatchStage[DataT]],
-        args: Optional[Sequence] = None,
-        kwargs: Optional[Mapping] = None,
+        stage: Type[Stage[DataT]] | Type[BatchStage[DataT]],
         concurrency: int = 0,
         executor: ExecutorType = "threads",
         retryable_errors: Tuple[Type[Exception], ...] = tuple(),
         max_retries: int = 0,
         backoff: Union[float, int] = 0.0,
+        *,
+        args: Optional[Sequence[Any]] = None,
+        kwargs: Optional[Mapping[str, Any]] = None,
+    ) -> Self: ...
+
+    def append(
+        self,
+        name: str,
+        stage: (
+            Stage[DataT]
+            | BatchStage[DataT]
+            | Type[Stage[DataT]]
+            | Type[BatchStage[DataT]]
+        ),
+        concurrency: int = 0,
+        executor: ExecutorType = "threads",
+        retryable_errors: Tuple[Type[Exception], ...] = tuple(),
+        max_retries: int = 0,
+        backoff: Union[float, int] = 0.0,
+        *,
+        args: Optional[Sequence[Any]] = None,
+        kwargs: Optional[Mapping[str, Any]] = None,
     ) -> Self:
         """
-        Append a stage class to the pipeline just after the last one appended, or after the source if it is the first stage.
-        The stage construction will be executed concurrently respect to the general pipeline construction
+        Append a stage to the pipeline just after the last one appended, or after the source if it is the first stage.
+
+        ``stage`` can be an instance or a class, with different construction timing:
+
+        * An **instance** is used as it is. It exists immediately, its name is set by
+          this call, and :meth:`.Pipeline.get_stage` returns it before ``build()``.
+          ``args`` and ``kwargs`` are not accepted with an instance.
+        * A **class** is stored and constructed by :meth:`.Pipeline.build`,
+          concurrently with the other class-based stages; its constructor receives
+          ``args`` and ``kwargs``. **A class-based stage does not exist until
+          ``build()`` runs**: before that, :meth:`.Pipeline.get_stage` returns ``None``
+          for it.
+
+        ``build()`` waits for every constructor before wiring the containers. No stage
+        worker starts until :meth:`.Pipeline.run` or :meth:`.Pipeline.process_async`.
 
         :param name: Name for identify the stage in the pipeline, it is also set in the stage and it must be unique in the pipeline
-        :param stage_class: Class of a stage
-        :param args: List of arguments for the stage constructor
-        :param kwargs: Dictionary of keyed arguments for the stage constructor
+        :param stage: Instance of a stage, or a stage class to construct at build time
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
-        :param executor: "threads" for using threads, "processes" for using multiprocessing (also for concurrent construction)
+        :param executor: "threads" for using threads, "processes" for using multiprocessing
         :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. After the final failed attempt, a :class:`.error.exceptions.RetryError` soft error is attached to the item
         :param max_retries: maximum number of retries for the stage before attaching a RetryError(SoftError) (default 0)
         :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
+        :param args: Positional arguments for the stage constructor, only valid with a stage class
+        :param kwargs: Keyword arguments for the stage constructor, only valid with a stage class
         :raises PipelineStateError: When the pipeline has already been built
+        :raises ValueError: When the stage or its configuration is not valid
         """
         self._require_initial("append a stage to")
-        if not isclass(stage_class):
-            raise ValueError(
-                "Must pass stage classes, and not stage instances, as argument"
-            )
-        self._executors_ready = False
-        executor_construction = executor
-        # FIXME here we force a BatchStage to run on a thread, but we would like to leave it on the main thread
-        if concurrency < 1 and issubclass(stage_class, BatchStage):
-            executor = "threads"
-            concurrency = 1
-        if kwargs is None:
-            kwargs = {}
-        if args is None:
-            args = []
         self._check_stage_name(name)
         self._check_retries_params(retryable_errors, max_retries, backoff)
+        if not (isinstance(concurrency, int) and concurrency >= 0):
+            raise ValueError(
+                "The `concurrency` parameter must be an int and its value must be >= 0"
+            )
+        accepted_executors = get_args(ExecutorType)
+        if executor not in accepted_executors:
+            raise ValueError(
+                "The `executor` parameter must be "
+                + " or ".join(repr(value) for value in accepted_executors)
+            )
+
+        if isclass(stage):
+            stage_cls = cast(Type[Stage[DataT]] | Type[BatchStage[DataT]], stage)
+            if not issubclass(stage_cls, (Stage, BatchStage)):
+                raise ValueError("A stage class must extend Stage or BatchStage")
+            stage_instance = None
+            constructor_args = tuple(args or ())
+            constructor_kwargs = dict(kwargs or {})
+            is_batch = issubclass(stage_cls, BatchStage)
+        else:
+            if args is not None or kwargs is not None:
+                raise ValueError(
+                    "`args` and `kwargs` are only valid when appending a stage class"
+                )
+            stage_instance = cast(Stage[DataT] | BatchStage[DataT], stage)
+            if not isinstance(stage_instance, (Stage, BatchStage)):
+                raise ValueError(
+                    "A stage must be an instance of Stage or BatchStage, or a stage class"
+                )
+            stage_cls = None
+            constructor_args = ()
+            constructor_kwargs = {}
+            is_batch = isinstance(stage_instance, BatchStage)
+            # Keep the old append() behavior: an instance knows its pipeline name
+            # immediately, even before build() wires its container.
+            stage_instance.set_name(name)
+
+        # Batch stages always run on a thread: the synchronous batch path has been removed.
+        if is_batch and concurrency < 1:
+            executor = "threads"
+            concurrency = 1
+
+        is_first = not self._stage_specs
+        self._stage_specs[name] = StageSpec(
+            name=name,
+            stage=stage_instance,
+            stage_class=stage_cls,
+            args=constructor_args,
+            kwargs=constructor_kwargs,
+            concurrency=concurrency,
+            executor=executor,
+            retryable_errors=retryable_errors,
+            max_retries=max_retries,
+            backoff=backoff,
+        )
         if concurrency > 0:
             self._has_concurrent_stages = True
-            # if it is concurrent, and it is the first stage, make the source work on a output queue
-            if not self._containers:
+            # if it is concurrent and it is the first stage, make the source work on an output queue
+            if is_first:
                 self._enqueue_source = True
-        last_stage_name = self._last_stage_name()
-        # set it immediately with an empty stage container so the order of the calls of this method is followed in `_containers`
-        self._containers[name] = self._fake_container
-        init_executor = self._get_init_executor(executor_construction)
-        if executor_construction == "processes":
-            logs_queue = self._start_logs_receiver().queue
-            future = init_executor.submit(
-                _stage_initialization_with_logger, logs_queue, stage_class, args, kwargs
-            )
-        else:
-            future = init_executor.submit(stage_class, *args, **kwargs)
-
-        def finish_append(stage_future: Future):
-            # the pipeline may have been built or closed while the stage was under
-            # construction: never create queues or containers after that
-            if self._state is not PipelineState.INITIAL:
-                return
-            try:
-                stage = stage_future.result()
-                if self._state is not PipelineState.INITIAL:
-                    return
-                container = self._build_container(
-                    name,
-                    stage,
-                    concurrency,
-                    executor,
-                    retryable_errors,
-                    max_retries,
-                    backoff,
-                )
-                self._wait_for_previous(container, last_stage_name)
-                self._containers[name] = container
-            except Exception as e:
-                # done callbacks swallow exceptions, store it so `build()`
-                # raises it instead of running a fake stage without feedback
-                self._init_errors.append(e)
-
-        future.add_done_callback(finish_append)
         return self
-
-    def _get_init_executor(self, executor: ExecutorType = "threads") -> Executor:
-        """
-        Get a pool executor for concurrent stage initialization
-
-        :param executor: "processes" if the executor uses multiprocessing, "threads" otherwise
-        """
-        if self._init_executor is None:
-            if executor == "threads":
-                self._init_executor = ThreadPoolExecutor(
-                    max_workers=self._max_init_workers
-                )
-            else:
-                self._init_executor = ProcessPoolExecutor(
-                    max_workers=self._max_init_workers, mp_context=get_context("spawn")
-                )
-        return self._init_executor
-
-    def _get_wait_previous_executor(self) -> Executor:
-        """
-        Get a pool executor for the function that will recurrently wait for a container to be ready
-        """
-        if self._wait_previous_executor is None:
-            self._wait_previous_executor = ThreadPoolExecutor()
-        return self._wait_previous_executor
 
     def _start_pipeline_executor(self) -> Thread:
         """
@@ -1346,7 +1314,7 @@ class Pipeline(Generic[DataT]):
         Check if a stage name is not already defined in the pipeline
         :raises ValueError: Stage name is already defined in the pipeline
         """
-        if name in self._containers:
+        if name in self._stage_specs or name in self._containers:
             raise ValueError(f"The stage name {name} is already used in this pipeline")
 
     @staticmethod
@@ -1381,4 +1349,7 @@ class Pipeline(Generic[DataT]):
         self._out_queue = self._new_queue()
 
     def _log_stages(self):
-        return ", ".join(self._containers.keys())
+        names = (
+            self._containers.keys() if self._containers else self._stage_specs.keys()
+        )
+        return ", ".join(names)

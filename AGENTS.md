@@ -31,9 +31,13 @@ tests, run the full suite before finishing.
 
 Execution flows `pipeline.py -> containers.py -> runners.py`; read in that order.
 
-- `pipeline.py` — `Pipeline`: `set_source()`, `append()` (stage **instance**),
-  `append_concurrently()` (stage **class** + `args`/`kwargs`, rejects instances),
-  `build()`, `run()`, `process()`/`process_async()`/`get_item()`/`stop()`, `close()`.
+- `pipeline.py` — `Pipeline`: `set_source()`, `append()` (stage **instance or class**,
+  plus keyword-only `args`/`kwargs` for classes), `build()`,
+  `run()`, `process()`/`process_async()`/`get_item()`/`stop()`, `close()`.
+  `append()` only records a `StageSpec`: an instance stage exists and is named
+  immediately, while `build()` constructs class-based stages concurrently in a thread
+  pool and then wires every container in one deterministic pass. `_containers` is empty
+  until `build()`; `get_stage()` returns a class-based stage only after it.
   `PipelineState` (`INITIAL → BUILT → RUNNING → CLOSED`) is the lifecycle contract.
 - `containers.py` — per-stage wiring (`SourceContainer`, `StageContainer`,
   `BatchStageContainer`, concurrent variants).
@@ -58,15 +62,17 @@ attempt one `RetryError` soft error is attached to the item.
 
 ## Invariants agents get wrong
 
-- `build()` only validates/prepares: it raises `ValueError` with no stages, but never
-  starts workers or calls `on_start`. `run()`/`process_async()` start stages; `run()`
-  raises `ValueError` with no source. Stage names must be unique.
+- `build()` only validates/prepares: it raises `ValueError` with no stages, constructs
+  class-based stages and wires containers, but never starts workers or calls `on_start`.
+  `run()`/`process_async()` start stages; `run()` raises `ValueError` with no source.
+  Stage names must be unique.
 - `run()`/`process()`/`process_async()` auto-call `build()` if skipped, but call it
   explicitly after appending anyway. A pipeline is one-shot: after `run()` or
   `process_async()` it is `CLOSED`; `process()` may be called repeatedly while
   `BUILT`. `close()` is idempotent and runs termination/`on_end`/resource release.
-- `append()`/`append_concurrently()`/`set_error_manager()` raise
-  `PipelineStateError` after `build()`; `set_source()` is still allowed on `BUILT`.
+- `append()`/`set_error_manager()` raise `PipelineStateError` after `build()`;
+  `set_source()` is still allowed on `BUILT`. `append(..., args, kwargs)` is only valid
+  with a stage class.
   `process()` raises `ValueError` with any concurrent stage (use
   `run()`/`process_async()`).
 - `concurrency=0` means inline (no threads/processes). `BatchStage` with
