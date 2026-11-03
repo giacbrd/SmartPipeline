@@ -9,6 +9,9 @@ from smartpipeline.item import DataT, Item
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
+__all__ = ["Source", "Stage", "BatchStage", "ItemsQueue"]
+
+
 class AliveMixin:
     """
     Simple mixin for defining an object that can "exist and communicate"

@@ -5,6 +5,9 @@ from typing import Optional
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
+__all__ = ["Error", "SoftError", "CriticalError", "RetryError", "BatchOutputError"]
+
+
 class Error(Exception):
     """
     Base exception type for stages

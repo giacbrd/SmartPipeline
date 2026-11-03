@@ -398,6 +398,9 @@ Further runnable examples live in the ``examples`` directory at the repository r
         def __init__(self, es_host: str, es_index: str):
             self.es_host = es_host
             self.es_index = es_index
+            self.es_client = None
+
+        def on_start(self):
             self.es_client = Elasticsearch(self.es_host)
 
         def process(self, item: Item) -> Item:

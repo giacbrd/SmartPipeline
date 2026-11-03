@@ -11,6 +11,9 @@ from smartpipeline.stage import AliveMixin
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
+__all__ = ["ErrorManager", "RetryManager"]
+
+
 class ErrorManager:
     """
     Basic error handling of a pipeline, principally manages :class:`.exceptions.SoftError` and :class:`.exceptions.CriticalError` types
