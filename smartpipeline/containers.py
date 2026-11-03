@@ -34,6 +34,7 @@ __all__ = [
     "BatchConcurrentStageContainer",
     "ConcurrentContainer",
     "ConcurrentContainerTypes",
+    "ExecutorType",
 ]
 
 
