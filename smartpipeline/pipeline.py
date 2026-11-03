@@ -47,6 +47,9 @@ from smartpipeline.utils import (
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
+__all__ = ["Pipeline", "StageSpec", "PipelineState", "PipelineStateError"]
+
+
 @dataclass(frozen=True)
 class StageSpec(Generic[DataT]):
     """

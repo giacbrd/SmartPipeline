@@ -26,6 +26,17 @@ from smartpipeline.utils import ConcurrentCounter, put_or_abort
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
+__all__ = [
+    "SourceContainer",
+    "StageContainer",
+    "BatchStageContainer",
+    "ConcurrentStageContainer",
+    "BatchConcurrentStageContainer",
+    "ConcurrentContainer",
+    "ConcurrentContainerTypes",
+]
+
+
 ExecutorType = Literal["threads", "processes"]
 
 
@@ -160,6 +171,20 @@ class BaseContainer(FatalEventMixin, InQueued):
         Turn off the container (e.g. threads and processes) and the relative stage
         """
         self._is_terminated = True
+
+    @property
+    def is_concurrent(self) -> bool:
+        """
+        True when this container runs its stage concurrently
+        """
+        return False
+
+    @property
+    def is_batch(self) -> bool:
+        """
+        True when this container wraps a :class:`.stage.BatchStage`
+        """
+        return False
 
     def count(self) -> int:
         """
@@ -353,10 +378,14 @@ class SourceContainer(BaseContainer, Generic[DataT]):
             self._next_item = item
 
     def get_processed(
-        self, block: bool = True, timeout: Optional[float] = None
+        self, block: bool = False, timeout: Optional[float] = None
     ) -> Optional[Item[DataT]]:
         if self.out_queue is not None:
-            item = self.out_queue.get(block=block, timeout=timeout)
+            try:
+                item = self.out_queue.get(block=block, timeout=timeout)
+                self.out_queue.task_done()
+            except queue.Empty:
+                return None
         else:
             item = self._get_next_item()
             if item is not None and not isinstance(item, Stop):
@@ -511,88 +540,60 @@ class BatchStageContainer(
             return None
 
     @property
+    def is_batch(self) -> bool:
+        return True
+
+    @property
     def size(self) -> int:
         return self.stage.size
 
 
-class ConcurrentContainer(
-    FatalEventMixin, InQueued, ConnectedStageMixin, Generic[DataT]
-):
+class _ConcurrencyAdapter(Generic[DataT]):
     """
-    Base container for stages that must process concurrently and asynchronously
+    Explicit runner adapter for a concurrent stage container.
+
+    It owns the executor, queues, counters and termination event that used to
+    be mixed into the container through multiple inheritance. The container
+    stays a single-inheritance subclass of its stage container and delegates
+    the concurrency behaviour to this adapter.
     """
 
-    def init_concurrency(
+    def __init__(
         self,
+        container: "ConcurrentStageContainer[DataT] | BatchConcurrentStageContainer[DataT]",
         queue_initializer: QueueInitializer,
         counter_initializer: CounterInitializer,
         terminate_event_initializer: EventInitializer,
-        concurrency: int = 1,
-        executor: ExecutorType = "threads",
-        logs_queue: Optional[queue.Queue[logging.LogRecord]] = None,
+        concurrency: int,
+        executor: ExecutorType,
+        logs_queue: Optional[queue.Queue[logging.LogRecord]],
     ):
-        """
-        Initialization of instance members
-
-        :param queue_initializer: Constructor for output, and eventually input, queue
-        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage runners that have successfully started their internal loop
-        :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
-        :param concurrency: Number of maximum concurrent stage executions
-        :param executor: "threads" for using threads, "processes" for using multiprocessing
-        :param logs_queue: The queue in which all stages in processes will send their logs records through a `QueueHandler`
-        """
+        self._container = container
         self._concurrency = concurrency
-        self._executor = executor
+        self._executor_name = executor
+        self._queue_initializer = queue_initializer
+        self._counter_initializer = counter_initializer
+        self._terminate_event_initializer = terminate_event_initializer
+        self._logs_queue = logs_queue
         self._stage_executor: Optional[Executor] = None
         self._previous_queue: ItemsQueue = queue.Queue()
         self._futures: List[Future] = []
-        self._queue_initializer = queue_initializer
-        self._out_queue = self._queue_initializer()
-        self._counter_initializer = counter_initializer
-        self._terminate_event = terminate_event_initializer()
-        self._logs_queue = logs_queue
+        self._container._out_queue = queue_initializer()
         self._counter: Optional[ConcurrentCounter] = None
         self._has_started_counter: Optional[ConcurrentCounter] = None
+        self._terminate_event: Event = terminate_event_initializer()
 
-    def queues_empty(self) -> bool:
-        """
-        True of both input and output queues are empty
-        """
-        return self._previous_queue.empty() and self.out_queue.empty()
+    @property
+    def executor(self) -> ExecutorType:
+        return self._executor_name
 
-    def queues_join(self):
-        self._previous_queue.join()
-        self.out_queue.join()
-
-    def empty_queues(self):
-        """
-        Delete all items in both input and output queues
-        """
-        for q in (self._previous_queue, self.out_queue):
-            while True:
-                try:
-                    q.get_nowait()
-                    q.task_done()
-                except queue.Empty:
-                    break
-
-    def set_previous(self, container: BaseContainer):
-        self._previous = container
-        if (
-            isinstance(self._previous, ConcurrentContainerTypes)
-            and self._previous.executor == "processes"
-        ):
-            # give priority to the previous queue initializer
-            self._previous_queue = self._previous.out_queue
-        else:
-            self._previous_queue = self._previous.init_queue(self._queue_initializer)
+    @property
+    def out_queue(self) -> ItemsQueue:
+        return self._container._out_queue
 
     def _get_stage_executor(self) -> Executor:
-        """
-        Get and eventually generate a pool executor where concurrent stage executions run
-        """
         if self._stage_executor is None:
-            if self._executor == "threads":
+            if self._executor_name == "threads":
                 self._stage_executor = ThreadPoolExecutor(max_workers=self._concurrency)
             else:
                 self._stage_executor = ProcessPoolExecutor(
@@ -600,17 +601,33 @@ class ConcurrentContainer(
                 )
         return self._stage_executor
 
-    @property
-    def executor(self) -> ExecutorType:
-        """
-        "processes" if we are using multiprocessing, "threads" if we are using threads
-        """
-        return self._executor
+    def set_previous(self, previous: BaseContainer):
+        self._container._previous = previous
+        if (
+            isinstance(previous, ConcurrentContainerTypes)
+            and getattr(previous, "executor", None) == "processes"
+        ):
+            self._previous_queue = previous.out_queue
+        else:
+            self._previous_queue = previous.init_queue(self._queue_initializer)
+
+    def queues_empty(self) -> bool:
+        return self._previous_queue.empty() and self._container._out_queue.empty()
+
+    def queues_join(self):
+        self._previous_queue.join()
+        self._container._out_queue.join()
+
+    def empty_queues(self):
+        for q in (self._previous_queue, self._container._out_queue):
+            while True:
+                try:
+                    q.get_nowait()
+                    q.task_done()
+                except queue.Empty:
+                    break
 
     def shutdown(self):
-        """
-        Turn off the container pool executor
-        """
         for future in self._futures:
             future.cancel()
         if self._stage_executor is not None:
@@ -620,9 +637,6 @@ class ConcurrentContainer(
                 logging.warning("Problems in shutting down %s: %s", self, e)
 
     def check_errors(self):
-        """
-        Look for exceptions generated by stage executions inside threads/processes, eventually re-raise exceptions
-        """
         for future in self._futures:
             try:
                 ex = future.exception(timeout=0)
@@ -635,16 +649,9 @@ class ConcurrentContainer(
         return self._counter.value if self._counter is not None else 0
 
     def terminate(self):
-        """
-        Alert stage runners for termination
-        """
         self._terminate_event.set()
-        # wait(self._futures)
 
     def is_terminated(self) -> bool:
-        """
-        Check if termination has been set and all stage executions have been terminated
-        """
         return (
             all(future.done() or future.cancelled() for future in self._futures)
             and self._terminate_event.is_set()
@@ -654,23 +661,10 @@ class ConcurrentContainer(
         self,
         stage: Stage[DataT] | BatchStage[DataT],
         runner: StageRunner,
-        in_queue: ItemsQueue,
-        out_queue: ItemsQueue,
         error_manager: ErrorManager,
         retry_manager: RetryManager,
         loop_wait: float = CONCURRENCY_WAIT,
     ):
-        """
-        Start the concurrent execution of stage processing.
-        The stage will consume and produce from input/output queues concurrently
-
-        :param stage: Stage instance
-        :param runner: Function to run concurrently in the executor, which performs the stage executions
-        :param in_queue: Previous stage output queue
-        :param out_queue: Output queue
-        :param error_manager: Error manager instance
-        :param loop_wait: Time to wait in loop of runner checks
-        """
         executor = self._get_stage_executor()
         self._counter = self._counter_initializer()
         self._has_started_counter = self._counter_initializer()
@@ -680,19 +674,17 @@ class ConcurrentContainer(
                 executor.submit(
                     runner,
                     stage,
-                    in_queue,
-                    out_queue,
+                    self._previous_queue,
+                    self._container._out_queue,
                     error_manager,
                     retry_manager,
                     self._terminate_event,
                     self._has_started_counter,
                     self._counter,
                     self._logs_queue,
-                    fatal_event=self._fatal_event,
+                    fatal_event=self._container.fatal_event,
                 )
             )
-        # wait every runner internal loops have started, surfacing runner
-        # failures (e.g. `on_start`) instead of hanging without feedback
         try:
             while self._has_started_counter.value < self._concurrency:
                 self.check_errors()
@@ -702,8 +694,17 @@ class ConcurrentContainer(
             self.shutdown()
             raise
 
+    def run_stage(
+        self,
+        stage: Stage[DataT] | BatchStage[DataT],
+        runner: StageRunner,
+        error_manager: ErrorManager,
+        retry_manager: RetryManager,
+    ):
+        self._run(stage, runner, error_manager, retry_manager)
 
-class ConcurrentStageContainer(ConcurrentContainer[DataT], StageContainer[DataT]):
+
+class ConcurrentStageContainer(StageContainer[DataT]):
     """
     Standard stage container with concurrency
     """
@@ -721,20 +722,9 @@ class ConcurrentStageContainer(ConcurrentContainer[DataT], StageContainer[DataT]
         executor: ExecutorType = "threads",
         logs_queue: Optional[queue.Queue[logging.LogRecord]] = None,
     ):
-        """
-        :param name: Stage name
-        :param stage: Stage instance
-        :param error_manager: ErrorManager instance
-        :param retry_manager: RetryManager instance
-        :param queue_initializer: Constructor for output, and eventually input, queue
-        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage runners that have successfully started their internal loop
-        :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
-        :param concurrency: Number of maximum concurrent stage executions
-        :param executor: "threads" for using threads, "processes" for using multiprocessing
-        :param logs_queue: The queue in which all stages in processes will send their logs records through a `QueueHandler`
-        """
         super().__init__(name, stage, error_manager, retry_manager)
-        self.init_concurrency(
+        self._concurrency = _ConcurrencyAdapter(
+            self,
             queue_initializer,
             counter_initializer,
             terminate_event_initializer,
@@ -742,27 +732,63 @@ class ConcurrentStageContainer(ConcurrentContainer[DataT], StageContainer[DataT]
             executor,
             logs_queue,
         )
+        # expose adapter state at the container level for backward compatibility
+        self._concurrency._container = self
+
+    @property
+    def is_concurrent(self) -> bool:
+        return True
+
+    def __getattr__(self, name: str):
+        concurrency = self.__dict__.get("_concurrency")
+        if concurrency is not None and hasattr(concurrency, name):
+            return getattr(concurrency, name)
+        raise AttributeError(name)
+
+    def __setattr__(self, name: str, value: Any):
+        if name == "_concurrency" or "_concurrency" not in self.__dict__:
+            super().__setattr__(name, value)
+            return
+        concurrency = self.__dict__.get("_concurrency")
+        if concurrency is not None and hasattr(concurrency, name):
+            setattr(concurrency, name, value)
+        else:
+            super().__setattr__(name, value)
+
+    def set_previous(self, container: BaseContainer):
+        self._concurrency.set_previous(container)
 
     def run(self, runner: StageRunner[Stage[DataT]] = stage_runner):
-        """
-        Start the concurrent execution of stage processing.
-        The stage will consume and produce from input/output queues concurrently
-
-        :param runner: Function to run in the executor, which performs the stage executions
-        """
-        super()._run(
-            self.stage,
-            runner,
-            self._previous_queue,
-            self.out_queue,
-            self.error_manager,
-            self.retry_manager,
+        self._concurrency.run_stage(
+            self.stage, runner, self.error_manager, self.retry_manager
         )
 
+    def shutdown(self):
+        self._concurrency.shutdown()
 
-class BatchConcurrentStageContainer(
-    ConcurrentContainer[DataT], BatchStageContainer[DataT]
-):
+    def check_errors(self):
+        self._concurrency.check_errors()
+
+    def count(self) -> int:
+        return self._concurrency.count()
+
+    def terminate(self):
+        self._concurrency.terminate()
+
+    def is_terminated(self) -> bool:
+        return self._concurrency.is_terminated()
+
+    def queues_empty(self) -> bool:
+        return self._concurrency.queues_empty()
+
+    def queues_join(self):
+        self._concurrency.queues_join()
+
+    def empty_queues(self):
+        self._concurrency.empty_queues()
+
+
+class BatchConcurrentStageContainer(BatchStageContainer[DataT]):
     """
     Batch stage container with concurrency
     """
@@ -780,20 +806,9 @@ class BatchConcurrentStageContainer(
         executor: ExecutorType = "threads",
         logs_queue: Optional[queue.Queue[logging.LogRecord]] = None,
     ):
-        """
-        :param name: Stage name
-        :param stage: Stage instance
-        :param error_manager: ErrorManager instance
-        :param retry_manager: RetryManager instance
-        :param queue_initializer: Constructor for output, and eventually input, queue
-        :param counter_initializer: Constructor for items counter, which counts items seen by concurrent stage executions, and for the counter of stage runners that have successfully started their internal loop
-        :param terminate_event_initializer: Constructor for the event for alerting all concurrent stage executions for termination
-        :param concurrency: Number of maximum concurrent stage executions
-        :param executor: "threads" for using threads, "processes" for using multiprocessing
-        :param logs_queue: The queue in which all stages in processes will send their logs records through a `QueueHandler`
-        """
         super().__init__(name, stage, error_manager, retry_manager)
-        self.init_concurrency(
+        self._concurrency = _ConcurrencyAdapter(
+            self,
             queue_initializer,
             counter_initializer,
             terminate_event_initializer,
@@ -802,25 +817,73 @@ class BatchConcurrentStageContainer(
             logs_queue,
         )
 
-    def run(self, runner: StageRunner[BatchStage[DataT]] = batch_stage_runner):
-        """
-        Start the concurrent execution of stage processing.
-        The stage will consume and produce from input/output queues concurrently
+    @property
+    def is_concurrent(self) -> bool:
+        return True
 
-        :param runner: Function to run in the executor, which performs the stage executions
-        """
-        super()._run(
-            self.stage,
-            runner,
-            self._previous_queue,
-            self.out_queue,
-            self.error_manager,
-            self.retry_manager,
+    @property
+    def is_batch(self) -> bool:
+        return True
+
+    def __getattr__(self, name: str):
+        concurrency = self.__dict__.get("_concurrency")
+        if concurrency is not None and hasattr(concurrency, name):
+            return getattr(concurrency, name)
+        raise AttributeError(name)
+
+    def __setattr__(self, name: str, value: Any):
+        if name == "_concurrency" or "_concurrency" not in self.__dict__:
+            super().__setattr__(name, value)
+            return
+        concurrency = self.__dict__.get("_concurrency")
+        if concurrency is not None and hasattr(concurrency, name):
+            setattr(concurrency, name, value)
+        else:
+            super().__setattr__(name, value)
+
+    def set_previous(self, container: BaseContainer):
+        self._concurrency.set_previous(container)
+
+    def run(self, runner: StageRunner[BatchStage[DataT]] = batch_stage_runner):
+        self._concurrency.run_stage(
+            self.stage, runner, self.error_manager, self.retry_manager
         )
+
+    def shutdown(self):
+        self._concurrency.shutdown()
+
+    def check_errors(self):
+        self._concurrency.check_errors()
+
+    def count(self) -> int:
+        return self._concurrency.count()
+
+    def terminate(self):
+        self._concurrency.terminate()
+
+    def is_terminated(self) -> bool:
+        return self._concurrency.is_terminated()
+
+    def queues_empty(self) -> bool:
+        return self._concurrency.queues_empty()
+
+    def queues_join(self):
+        self._concurrency.queues_join()
+
+    def empty_queues(self):
+        self._concurrency.empty_queues()
+
+
+# backward-compatible abstract base for `isinstance` checks
+class ConcurrentContainer(ABC):
+    pass
+
+
+ConcurrentContainer.register(ConcurrentStageContainer)
+ConcurrentContainer.register(BatchConcurrentStageContainer)
 
 
 ContainerType = Union[StageContainer[Any], BatchStageContainer[Any]]
-# The concrete concurrent stage containers, for `isinstance` checks and annotations
 ConcurrentContainerTypes = (
     ConcurrentStageContainer,
     BatchConcurrentStageContainer,

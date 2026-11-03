@@ -7,6 +7,9 @@ from smartpipeline.stage import Source
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
+__all__ = ["LocalFilesSource", "FilePathItem"]
+
+
 class LocalFilesSource(Source[Dict[str, Any]]):
     """
     Generate a special file item for any file found in a directory

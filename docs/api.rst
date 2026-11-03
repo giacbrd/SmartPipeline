@@ -69,3 +69,27 @@ Exceptions to generate in case of errors and how to handle them
 .. autoclass:: smartpipeline.error.handling.ErrorManager
    :inherited-members:
    :members:
+
+Helpers
+-------
+
+Helper sources and items shipped with the library
+
+.. autoclass:: smartpipeline.helpers.LocalFilesSource
+   :inherited-members:
+   :members:
+
+.. autoclass:: smartpipeline.helpers.FilePathItem
+   :inherited-members:
+   :members:
+
+Error Management
+----------------
+
+.. autoclass:: smartpipeline.error.handling.RetryManager
+   :inherited-members:
+   :members:
+
+.. autoclass:: smartpipeline.error.exceptions.Error
+   :inherited-members:
+   :members:
