@@ -154,6 +154,8 @@ class Pipeline(Generic[DataT]):
         self._started_in_main: list[tuple[str, ContainerType]] = []
         self._error_manager_started = False
         self._terminated_all = False
+        # Set when the termination which has claimed `_terminated_all` has ended
+        self._termination_done = Event()
         self._run_finished = False
         self._close_requested = False
         self._resources_released = False
@@ -385,6 +387,7 @@ class Pipeline(Generic[DataT]):
                 # A close() won the race: it owns the termination of this pipeline.
                 return
             self._terminated_all = False
+            self._termination_done.clear()
             self._started_in_main.clear()
             self._error_manager_started = False
             try:
@@ -493,18 +496,20 @@ class Pipeline(Generic[DataT]):
                 self.stop()
             except BaseException:
                 self._logger.exception("Problems in stopping the pipeline")
-            # Serialized with `_start_stages`: when it is in progress this waits for
-            # it (the close request makes it stop early) and terminates every runner
-            # it has submitted, instead of releasing busy executors underneath it.
-            # `_terminate_all` is idempotent, so it is safe also when nothing started.
-            with self._lifecycle_lock:
-                try:
-                    self._terminate_all(force=True)
-                except BaseException as e:
-                    termination_error = e
-                # consumers are gone: unblock a source thread waiting on a full queue
-                if self._fatal_event is not None:
-                    self._fatal_event.set()
+            # Serialized with `_start_stages` by the claim inside `_terminate_all`: when
+            # the start phase is in progress this waits for it (the close request makes
+            # it stop early) and terminates every runner it has submitted, instead of
+            # releasing busy executors underneath it. `_terminate_all` is idempotent, so
+            # it is safe also when nothing started, and when a graceful termination is
+            # already running in another thread it aborts it instead of waiting for
+            # queues which nobody consumes anymore.
+            try:
+                self._terminate_all(force=True)
+            except BaseException as e:
+                termination_error = e
+            # consumers are gone: unblock a source thread waiting on a full queue
+            if self._fatal_event is not None:
+                self._fatal_event.set()
             self._join_thread(self._source_thread, "source thread", timeout)
             self._source_container.empty_out_queue()
             # joined outside the lifecycle lock: the asynchronous runner may still
@@ -606,11 +611,10 @@ class Pipeline(Generic[DataT]):
                 self.stop()
             except BaseException:
                 self._logger.exception("Problems in terminating the pipeline")
-            if not self._terminated_all:
-                try:
-                    self._terminate_all(force=force)
-                except Exception as e:
-                    errors.append(e)
+            try:
+                self._terminate_all(force=force)
+            except Exception as e:
+                errors.append(e)
             # On a forced termination the consumers are gone: unblock a source thread
             # which is waiting on a full queue before joining it.
             if force and self._fatal_event is not None:
@@ -794,17 +798,46 @@ class Pipeline(Generic[DataT]):
         :param force: If True do not wait for a container to process all items produced by the source
         :param wait_seconds: Time to wait before pinging again a container for its termination
         """
-        # Serialized with the start phase: terminate either before it starts or after
-        # it completes, never while it is submitting runners to the executors.
+        # The lifecycle lock is held only to serialize with the start phase (terminate
+        # either before it starts or after it completes, never while it is submitting
+        # runners to the executors) and to claim the termination. It is released before
+        # waiting on queues or runners: a graceful termination waits for the consumer of
+        # the last output queue, and whoever stops that consumer (`close()`, a run loop
+        # exit) must still be able to force the termination.
         with self._lifecycle_lock:
-            self._terminate_all_locked(force=force, wait_seconds=wait_seconds)
+            in_progress = self._terminated_all
+            if not in_progress:
+                self._terminated_all = True
+                self._termination_done.clear()
+        if in_progress:
+            if force:
+                self._abort_pending_termination(wait_seconds)
+            return
+        try:
+            self._terminate_containers(force=force, wait_seconds=wait_seconds)
+        finally:
+            self._termination_done.set()
 
-    def _terminate_all_locked(
+    def _abort_pending_termination(self, wait_seconds: float = CONCURRENCY_WAIT):
+        """
+        Unblock a graceful termination which is running in another thread, discarding the
+        pending items, and wait for it to end.
+
+        A graceful termination waits for the queues to be consumed, but a forced one
+        means that nobody consumes them anymore. Queues are emptied repeatedly, because a
+        runner can still put an item right after a previous emptying.
+        """
+        if self._fatal_event is not None:
+            self._fatal_event.set()
+        while not self._termination_done.is_set():
+            for container in self._containers.values():
+                if isinstance(container, ConcurrentContainerTypes):
+                    container.empty_queues()
+            self._termination_done.wait(wait_seconds)
+
+    def _terminate_containers(
         self, force: bool = False, wait_seconds: float = CONCURRENCY_WAIT
     ):
-        if self._terminated_all:
-            return
-        self._terminated_all = True
         self._logger.debug("Terminating the pipeline")
         errors: list[Exception] = []
         if force and self._fatal_event is not None:

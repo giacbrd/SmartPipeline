@@ -150,8 +150,8 @@ We define the source of the data and two stages, then we build and run the pipel
 
 The `examples` folder contains full working sample pipelines.
 
-AI agents note
-~~~~~~~~~~~~~~
+AI code agents note
+~~~~~~~~~~~~~~~~~~~
 
 Since October 2026 the codebase development is supported by LLM code agents,
 strictly using open-source tools and open-weight models,

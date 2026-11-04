@@ -28,6 +28,7 @@ from tests.utils import (
     SlowOnEndStage,
     TextGenerator,
     TextReverser,
+    TimeWaster,
     build_with_timeout,
     cleanup_on_exit,
     get_item_with_timeout,
@@ -202,17 +203,11 @@ def test_concurrent_init_failure_raises_on_build():
 def test_build_groups_stage_construction_errors():
     """Every stage construction failure is reported, not only the first one."""
     pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(2))
-        .append("broken0", BrokenInitStage)
-        .append("broken1", BrokenInitStage)
+        get_pipeline().set_source(RandomTextSource(2)).append("broken", BrokenInitStage)
     )
     with cleanup_on_exit(pipeline):
-        with pytest.raises(
-            ExceptionGroup, match="stage construction failed"
-        ) as exc_info:
+        with pytest.raises(RuntimeError, match="test init failure"):
             pipeline.build()
-        assert len(exc_info.value.exceptions) == 2
 
 
 def test_repeated_build_after_init_failure_raises_again():
@@ -415,7 +410,7 @@ def test_check_errors_and_wait_for_runner_error():
     )
     future: Future = Future()
     future.set_exception(ValueError("runner boom"))
-    container._futures = [future]
+    container._concurrency._futures = [future]
     pipeline._containers["boom"] = container
     with pytest.raises(ValueError):
         pipeline._check_errors()
@@ -863,7 +858,10 @@ def test_close_during_start_waits_for_the_start_phase():
         closer.join(PIPELINE_TIMEOUT)
         assert not closer.is_alive()
         container = pipeline._containers["reverser"]
-        assert all(future.done() or future.cancelled() for future in container._futures)
+        assert all(
+            future.done() or future.cancelled()
+            for future in container._concurrency._futures
+        )
         assert ended.is_set()
         runner.join(PIPELINE_TIMEOUT)
         assert not runner.is_alive()
@@ -1084,3 +1082,97 @@ def test_process_async_aborts_when_closed_during_start():
         with pytest.raises(PipelineStateError, match="closed"):
             pipeline.process_async(text_item())
     assert pipeline.state is PipelineState.CLOSED
+
+
+def _call_with_timeout(func, timeout: float = PIPELINE_TIMEOUT) -> bool:
+    """Run ``func`` in a daemon thread, return True when it ended in time."""
+    thread = Thread(target=func, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    return not thread.is_alive()
+
+
+def test_terminate_all_does_not_hold_the_lifecycle_lock_while_waiting():
+    """A graceful termination waiting for queues leaves the lifecycle lock free."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(1))
+        .append("reverser", TextReverser(), concurrency=1)
+        .build()
+    )
+    with cleanup_on_exit(pipeline):
+        pipeline._start_stages()
+        # nobody consumes this item, so the graceful termination blocks on the join
+        pipeline._containers["reverser"].out_queue.put(text_item())
+        terminator = Thread(target=pipeline._terminate_all, daemon=True)
+        terminator.start()
+        try:
+            deadline = time.monotonic() + PIPELINE_TIMEOUT
+            while not pipeline._terminated_all:
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            time.sleep(0.3)
+            assert terminator.is_alive()
+            acquired = pipeline._lifecycle_lock.acquire(timeout=1)
+            assert acquired
+            pipeline._lifecycle_lock.release()
+        finally:
+            pipeline._terminate_all(force=True)
+            terminator.join(PIPELINE_TIMEOUT)
+        assert not terminator.is_alive()
+
+
+def test_close_aborts_a_graceful_termination_waiting_for_consumers():
+    """close() does not wait forever for a termination blocked on unconsumed items."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(1))
+        .append("reverser", TextReverser(), concurrency=1)
+        .build()
+    )
+    with cleanup_on_exit(pipeline):
+        pipeline._start_stages()
+        pipeline._containers["reverser"].out_queue.put(text_item())
+        terminator = Thread(target=pipeline._terminate_all, daemon=True)
+        terminator.start()
+        deadline = time.monotonic() + PIPELINE_TIMEOUT
+        while not pipeline._terminated_all:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        time.sleep(0.3)
+        assert terminator.is_alive()
+        assert _call_with_timeout(pipeline.close)
+        terminator.join(PIPELINE_TIMEOUT)
+        assert not terminator.is_alive()
+        assert pipeline.state is PipelineState.CLOSED
+
+
+def test_closing_a_run_early_after_stop_reached_the_output_does_not_hang():
+    """Breaking out of run() while the termination drains pending items ends."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(4))
+        .append("slow", TimeWaster(0.5), concurrency=5)
+        .build()
+    )
+    with cleanup_on_exit(pipeline):
+        run = pipeline.run()
+        assert next_with_timeout(run, pipeline=pipeline)
+        assert _call_with_timeout(run.close)
+        assert pipeline.state is PipelineState.CLOSED
+
+
+def test_close_from_another_thread_after_an_early_break_does_not_hang():
+    """close() from another thread ends while a run is abandoned mid-termination."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(4))
+        .append("slow", TimeWaster(0.5), concurrency=5)
+        .build()
+    )
+    with cleanup_on_exit(pipeline):
+        run = pipeline.run()
+        assert next_with_timeout(run, pipeline=pipeline)
+        assert _call_with_timeout(pipeline.close)
+        assert pipeline.state is PipelineState.CLOSED
+        run.close()

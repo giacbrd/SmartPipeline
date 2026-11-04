@@ -740,21 +740,12 @@ class ConcurrentStageContainer(StageContainer[DataT]):
     def is_concurrent(self) -> bool:
         return True
 
-    def __getattr__(self, name: str):
-        concurrency = self.__dict__.get("_concurrency")
-        if concurrency is not None and hasattr(concurrency, name):
-            return getattr(concurrency, name)
-        raise AttributeError(name)
-
-    def __setattr__(self, name: str, value: Any):
-        if name == "_concurrency" or "_concurrency" not in self.__dict__:
-            super().__setattr__(name, value)
-            return
-        concurrency = self.__dict__.get("_concurrency")
-        if concurrency is not None and hasattr(concurrency, name):
-            setattr(concurrency, name, value)
-        else:
-            super().__setattr__(name, value)
+    @property
+    def executor(self) -> ExecutorType:
+        """
+        "processes" if we are using multiprocessing, "threads" if we are using threads
+        """
+        return self._concurrency.executor
 
     def set_previous(self, container: BaseContainer):
         self._concurrency.set_previous(container)
@@ -826,21 +817,12 @@ class BatchConcurrentStageContainer(BatchStageContainer[DataT]):
     def is_batch(self) -> bool:
         return True
 
-    def __getattr__(self, name: str):
-        concurrency = self.__dict__.get("_concurrency")
-        if concurrency is not None and hasattr(concurrency, name):
-            return getattr(concurrency, name)
-        raise AttributeError(name)
-
-    def __setattr__(self, name: str, value: Any):
-        if name == "_concurrency" or "_concurrency" not in self.__dict__:
-            super().__setattr__(name, value)
-            return
-        concurrency = self.__dict__.get("_concurrency")
-        if concurrency is not None and hasattr(concurrency, name):
-            setattr(concurrency, name, value)
-        else:
-            super().__setattr__(name, value)
+    @property
+    def executor(self) -> ExecutorType:
+        """
+        "processes" if we are using multiprocessing, "threads" if we are using threads
+        """
+        return self._concurrency.executor
 
     def set_previous(self, container: BaseContainer):
         self._concurrency.set_previous(container)
