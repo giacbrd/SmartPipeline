@@ -733,8 +733,6 @@ class ConcurrentStageContainer(StageContainer[DataT]):
             executor,
             logs_queue,
         )
-        # expose adapter state at the container level for backward compatibility
-        self._concurrency._container = self
 
     @property
     def is_concurrent(self) -> bool:

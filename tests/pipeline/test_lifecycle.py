@@ -203,11 +203,17 @@ def test_concurrent_init_failure_raises_on_build():
 def test_build_groups_stage_construction_errors():
     """Every stage construction failure is reported, not only the first one."""
     pipeline = (
-        get_pipeline().set_source(RandomTextSource(2)).append("broken", BrokenInitStage)
+        get_pipeline()
+        .set_source(RandomTextSource(2))
+        .append("broken0", BrokenInitStage)
+        .append("broken1", BrokenInitStage)
     )
     with cleanup_on_exit(pipeline):
-        with pytest.raises(RuntimeError, match="test init failure"):
+        with pytest.raises(
+            ExceptionGroup, match="stage construction failed"
+        ) as exc_info:
             pipeline.build()
+        assert len(exc_info.value.exceptions) == 2
 
 
 def test_repeated_build_after_init_failure_raises_again():
