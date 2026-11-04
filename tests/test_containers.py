@@ -402,13 +402,48 @@ def test_concurrent_shutdown_oserror(caplog):
     )
     future: Future = Future()
     future.set_result(None)
-    container._futures = [future]
+    container._concurrency._futures = [future]
 
     class _BoomExecutor:
         def shutdown(self):
             raise OSError("boom")
 
-    container._stage_executor = _BoomExecutor()
+    container._concurrency._stage_executor = _BoomExecutor()
     with caplog.at_level(logging.WARNING):
         container.shutdown()
     assert any("shutting down" in record.msg.lower() for record in caplog.records)
+
+
+def test_concurrent_container_keeps_its_own_counter_state():
+    """Container attributes are not forwarded to the concurrency adapter."""
+    container = ConcurrentStageContainer(
+        "own-state",
+        TextReverser(),
+        ErrorManager(),
+        RetryManager(),
+        Queue,
+        ThreadCounter,
+        Event,
+        concurrency=1,
+    )
+    container.increase_count()
+    assert container._counter == 1
+    assert container._concurrency._counter is None
+    assert container.count() == 0
+    assert container.executor == "threads"
+    assert not hasattr(container, "_futures")
+    batch = BatchConcurrentStageContainer(
+        "own-state-batch",
+        BatchTextReverser(),
+        ErrorManager(),
+        RetryManager(),
+        Queue,
+        ThreadCounter,
+        Event,
+        concurrency=1,
+    )
+    batch.increase_count()
+    assert batch._counter == 1
+    assert batch._concurrency._counter is None
+    assert batch.executor == "threads"
+    assert not hasattr(batch, "_stage_executor")
