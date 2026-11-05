@@ -44,18 +44,6 @@ def test_concurrent_run():
     with pytest.raises(ValueError):
         pipeline = get_pipeline().append("reverser", TextReverser()).build()
         run_with_timeout(pipeline)
-    pipeline = get_pipeline().append("reverser", TextReverser()).build()
-    assert pipeline._new_mp_queue() != pipeline._new_mp_queue()
-    assert pipeline._new_queue() != pipeline._new_queue()
-    assert not isinstance(pipeline._new_queue(), pipeline._new_mp_queue().__class__)
-    pipeline = get_pipeline().append("reverser", TextReverser()).build()
-    assert pipeline._new_mp_counter() != pipeline._new_mp_counter()
-    assert pipeline._new_counter() != pipeline._new_counter()
-    assert not isinstance(pipeline._new_counter(), pipeline._new_mp_counter().__class__)
-    pipeline = get_pipeline().append("reverser", TextReverser()).build()
-    assert pipeline._new_mp_event() != pipeline._new_mp_event()
-    assert pipeline._new_event() != pipeline._new_event()
-    assert not isinstance(pipeline._new_event(), pipeline._new_mp_event().__class__)
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(100))
@@ -130,7 +118,7 @@ def test_concurrent_run_without_source_raises():
         # the source is checked before building the pipeline, so no stage has been
         # constructed or started
         assert pipeline.state is PipelineState.INITIAL
-        assert pipeline._containers == {}
+        assert pipeline._stages == {}
 
 
 def test_queue_sizes():
@@ -503,9 +491,8 @@ def test_concurrent_initialization():
         .append("slow_init", SlowInitializer, concurrency=1, executor="processes")
         .build()
     )
-    pipeline._terminate_all()
     pipeline.close()
-    assert pipeline._containers["slow_init"]
+    assert pipeline.get_stage("slow_init") is not None
 
 
 def test_build():
@@ -563,10 +550,6 @@ def test_build():
         .build()
     )
     for pipeline in (pipeline3, pipeline4, pipeline5):
-        assert all(
-            isinstance(c.error_manager, ErrorManager)
-            for c in pipeline._containers.values()
-        )
         for item in run_with_timeout(pipeline):
             assert item.has_soft_errors()
         assert pipeline.count == 10
