@@ -15,6 +15,7 @@ from smartpipeline.stage import BatchStage, ItemsQueue, Stage, StageType
 from smartpipeline.utils import (
     ConcurrentCounter,
     ProcessCounter,
+    get_or_abort,
     put_or_abort,
     raise_collected_errors,
 )
@@ -428,6 +429,134 @@ def batch_stage_runner(
             if not put_or_abort(out_queue, Stop(), *guards):
                 _call_on_end_after_abort(on_multiprocess, error_manager, stage)
                 return
+
+
+def _single_worker_body(
+    stage: Stage[DataT],
+    in_queue: ItemsQueue,
+    out_queue: ItemsQueue,
+    error_manager: ErrorManager,
+    retry_manager: RetryManager,
+    cancel: Event,
+) -> None:
+    """Run a plain stage: one blocking get, one process, one abortable put."""
+    while True:
+        item: Optional[Item[DataT]] = get_or_abort(in_queue, cancel.is_set)
+        if item is None:
+            return
+        in_queue.task_done()
+        if isinstance(item, Stop):
+            return
+        result = process(stage, item, error_manager, retry_manager)
+        if not put_or_abort(out_queue, result, cancel.is_set):
+            return
+
+
+def _batch_worker_body(
+    stage: BatchStage[DataT],
+    in_queue: ItemsQueue,
+    out_queue: ItemsQueue,
+    error_manager: ErrorManager,
+    retry_manager: RetryManager,
+    cancel: Event,
+) -> None:
+    """Run a batch stage: fill up to `size` items, flush on timeout or `Stop`."""
+    while True:
+        first: Optional[Item[DataT]] = get_or_abort(in_queue, cancel.is_set)
+        if first is None:
+            return
+        in_queue.task_done()
+        if isinstance(first, Stop):
+            return
+        batch: list[Item[DataT]] = [first]
+        got_stop = False
+        while len(batch) < stage.size:
+            if cancel.is_set():
+                return
+            try:
+                nxt = in_queue.get(block=True, timeout=stage.timeout)
+            except queue.Empty:
+                break
+            in_queue.task_done()
+            if isinstance(nxt, Stop):
+                got_stop = True
+                break
+            if nxt is not None:
+                batch.append(nxt)
+        results = process_batch(stage, batch, error_manager, retry_manager)
+        for res in results:
+            if res is None:
+                continue
+            if not put_or_abort(out_queue, res, cancel.is_set):
+                return
+        if got_stop:
+            return
+
+
+def worker_loop(
+    stage: Stage[DataT] | BatchStage[DataT],
+    in_queue: ItemsQueue,
+    out_queue: ItemsQueue,
+    error_manager: ErrorManager,
+    retry_manager: RetryManager,
+    cancel: Event,
+    logs_queue: Optional[queue.Queue[logging.LogRecord]] = None,
+) -> None:
+    """
+    Run one concurrent worker: consume items, process them, produce results.
+
+    A plain stage pulls one item with a blocking get; a batch stage pulls up to
+    `size` items, flushing the partial batch on `timeout`. Results are put with
+    `put_or_abort`, so a worker blocked on a full queue exits when `cancel` is set.
+    On `Stop` the pending batch is flushed and the worker exits without forwarding
+    it: the coordinator forwards `Stop` downstream once every worker is done.
+    Processing errors propagate to the done-callback, which records them and sets
+    `cancel`. In a worker process (`logs_queue` given) `on_start` runs at entry and
+    `on_end` in a `finally`: `on_end` failures are logged when another error is
+    already propagating and raised otherwise.
+    """
+    is_process_worker = logs_queue is not None
+    if is_process_worker:
+        _setup_process_logging(logs_queue)
+        try:
+            error_manager.on_start()
+            stage.on_start()
+        except Exception:
+            stage.logger.exception("%s failed on_start", stage)
+            raise
+        try:
+            if isinstance(stage, BatchStage):
+                _batch_worker_body(
+                    stage, in_queue, out_queue, error_manager, retry_manager, cancel
+                )
+            else:
+                assert isinstance(stage, Stage)
+                _single_worker_body(
+                    stage, in_queue, out_queue, error_manager, retry_manager, cancel
+                )
+        except BaseException:
+            for end_error in _call_on_end_best_effort(error_manager, stage):
+                stage.logger.exception(
+                    "%s failed on_end after a processing error",
+                    stage,
+                    exc_info=end_error,
+                )
+            raise
+        else:
+            _raise_on_end_errors(
+                _call_on_end_best_effort(error_manager, stage), stage
+            )
+            return
+    else:
+        if isinstance(stage, BatchStage):
+            _batch_worker_body(
+                stage, in_queue, out_queue, error_manager, retry_manager, cancel
+            )
+        else:
+            assert isinstance(stage, Stage)
+            _single_worker_body(
+                stage, in_queue, out_queue, error_manager, retry_manager, cancel
+            )
 
 
 class StageRunner(Protocol[StageTypeContravariant]):
