@@ -68,6 +68,33 @@ def put_or_abort(
             continue
 
 
+def get_or_abort(
+    items_queue: ItemsQueue,
+    *guards: Callable[[], bool],
+    timeout: float = CONCURRENCY_WAIT,
+) -> Optional[Item[DataT]]:
+    """
+    Get an item from a queue without ever blocking indefinitely.
+
+    When the queue is empty, the `guards` conditions are recurrently checked and, as soon as
+    any of them is met, `None` is returned, so that a consumer is never stuck waiting for
+    producers which are not able to produce anymore (e.g. a failed pipeline).
+    Queues never contain `None`, so it unambiguously signals the abort.
+
+    :param items_queue: The queue where to get the item from
+    :param guards: Conditions which, when met, abort the get and return `None`
+    :param timeout: Time to wait for an item before checking the `guards`
+    :return: The item, or `None` when the get has been aborted
+    """
+    while True:
+        if any(guard() for guard in guards):
+            return None
+        try:
+            return items_queue.get(block=True, timeout=timeout)
+        except queue.Empty:
+            continue
+
+
 class ConcurrentCounter(ABC):
     """
     Interface for a counter that is safe for concurrent access
