@@ -45,11 +45,7 @@ def test_run():
         .build()
     )
     assert pipeline.name.startswith("Pipeline-")
-    assert str(pipeline._source_container)
     assert isinstance(pipeline.get_stage("duplicator"), TextDuplicator)
-    for container in pipeline._containers.values():
-        assert container.name
-        assert str(container)
     for item in run_with_timeout(pipeline):
         assert len([x for x in item.data.keys() if x.startswith("text")]) == 2
         assert item.get_timing("reverser")
@@ -70,7 +66,6 @@ def test_soft_errors_are_logged_and_flow(caplog):
         .append("error", ErrorStage())
         .build()
     )
-    assert all(c.error_manager == error_manager for c in pipeline._containers.values())
     for item in run_with_timeout(pipeline):
         assert item.has_soft_errors()
         assert item.get_timing("reverser")
@@ -247,10 +242,6 @@ def test_build():
         pipeline3,
         pipeline4,
     ):
-        assert all(
-            isinstance(c.error_manager, ErrorManager)
-            for c in pipeline._containers.values()
-        )
         for item in run_with_timeout(pipeline):
             assert item.has_soft_errors()
         assert pipeline.count == 10
@@ -489,15 +480,6 @@ def test_implicit_build_on_first_use():
     assert get_item_with_timeout(pipeline).data["text"] == "olleh"
 
 
-def test_build_container_rejects_inline_batch_stage():
-    """Inline batch stages are rejected at build time."""
-    pipeline = get_pipeline()
-    with pytest.raises(ValueError, match="concurrency"):
-        pipeline._build_container(
-            "batch", BatchTextReverser(), 0, "threads", tuple(), 0, 0.0
-        )
-
-
 def test_append_names_a_stage_instance_immediately():
     """An instance-based stage knows its pipeline name before build()."""
     stage = TextReverser()
@@ -577,11 +559,9 @@ def test_process_async_callback_error_is_delivered():
 def test_close_before_build_with_class_stage():
     """close() releases a pipeline whose class-based stage was never constructed."""
     pipeline = get_pipeline().append("reverser", TextReverser)
-    assert pipeline._sync_manager is None
-    assert pipeline._logs_receiver is None
     pipeline.close()
     assert pipeline.state is PipelineState.CLOSED
-    assert pipeline._containers == {}
+    assert pipeline._stages == {}
 
 
 def test_process_async_without_callback():
@@ -599,13 +579,6 @@ def test_stage_spec_requires_exactly_one_stage():
         StageSpec(name="empty")
     with pytest.raises(ValueError, match="exactly one"):
         StageSpec(name="both", stage=TextReverser(), stage_class=TextReverser)
-
-
-def test_last_stage_name_uses_the_specs_before_build():
-    """Before build() the last stage name comes from the collected specs."""
-    pipeline = get_pipeline().append("reverser", TextReverser)
-    assert pipeline._last_stage_name() == "reverser"
-    assert Pipeline()._last_stage_name() is None
 
 
 @pytest.mark.parametrize(

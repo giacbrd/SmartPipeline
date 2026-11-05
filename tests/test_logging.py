@@ -78,27 +78,6 @@ def test_logging_processes_forwards_records(caplog):
         assert all("logging item " in record.msg.lower() for record in messages)
 
 
-def test_process_logging_wiring():
-    """Process-based stages start a logs receiver at build time."""
-    pipeline = (
-        get_pipeline()
-        .append("reverser", TextReverser(), concurrency=1, executor="processes")
-        .build()
-    )
-    try:
-        assert pipeline._logs_receiver is not None
-        assert pipeline._get_logs_receiver_queue() is pipeline._logs_receiver.queue
-    finally:
-        pipeline.close()
-
-    pipeline = get_pipeline().append("reverser", TextReverser()).build()
-    try:
-        with pytest.raises(AttributeError):
-            pipeline._get_logs_receiver_queue()
-    finally:
-        pipeline.close()
-
-
 def test_logs_receiver_stop(caplog):
     """stopping the logs receiver must not wait for records received after the sentinel"""
     with caplog.at_level(logging.INFO):

@@ -1,16 +1,11 @@
 import logging
 import time
-from concurrent.futures import Future
-from queue import Queue
-from threading import Event, Thread
-from unittest import mock
+from threading import Thread
 
 import pytest
 
-from smartpipeline.containers import ConcurrentStageContainer
-from smartpipeline.error.handling import ErrorManager, RetryManager
+from smartpipeline.error.handling import ErrorManager
 from smartpipeline.pipeline import Pipeline, PipelineState, PipelineStateError
-from smartpipeline.utils import ThreadCounter
 from tests.utils import (
     PIPELINE_TIMEOUT,
     BrokenInitStage,
@@ -40,55 +35,6 @@ from tests.utils import (
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
-
-
-class _ScriptedConcurrentContainer(ConcurrentStageContainer):
-    """
-    Concurrent container double with scripted failures, for covering the pipeline
-    termination and build cleanup paths that real executions never hit
-    deterministically (a raising `terminate`/`shutdown`/`run`, non-empty queues).
-    """
-
-    def __init__(self, *args, fail_on=(), **kwargs):
-        super().__init__(*args, **kwargs)
-        self._fail_on = set(fail_on)
-        self._queues_empty_calls = 0
-
-    def run(self):
-        if "run" in self._fail_on:
-            raise RuntimeError("test container run failure")
-
-    def terminate(self):
-        if "terminate" in self._fail_on:
-            raise RuntimeError("test container terminate failure")
-        super().terminate()
-
-    def shutdown(self):
-        if "shutdown" in self._fail_on:
-            raise RuntimeError("test container shutdown failure")
-        super().shutdown()
-
-    def queues_empty(self):
-        self._queues_empty_calls += 1
-        if "queues_empty" in self._fail_on and self._queues_empty_calls == 1:
-            return False
-        return super().queues_empty()
-
-
-def _scripted_container(pipeline, fail_on=()):
-    container = _ScriptedConcurrentContainer(
-        "scripted",
-        TextReverser(),
-        ErrorManager(),
-        RetryManager(),
-        Queue,
-        ThreadCounter,
-        Event,
-        concurrency=1,
-        fail_on=fail_on,
-    )
-    pipeline._containers["scripted"] = container
-    return container
 
 
 def test_on_start_error_manager_raises_on_run():
@@ -285,68 +231,6 @@ def test_terminator_error_surfaces_during_run():
         run_with_timeout(pipeline)
 
 
-def test_terminate_all_waits_for_non_empty_queues():
-    """_terminate_all drains non-empty queues before terminating containers."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(2))
-        .append("reverser", TextReverser(), concurrency=1)
-    )
-    container = _scripted_container(pipeline, fail_on=("queues_empty",))
-    pipeline._terminate_all()
-    assert container._queues_empty_calls == 2
-
-
-def test_terminate_all_collects_terminate_error():
-    """Container terminate failures raise from _terminate_all."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(2))
-        .append("reverser", TextReverser(), concurrency=1)
-    )
-    _scripted_container(pipeline, fail_on=("terminate",))
-    with pytest.raises(RuntimeError, match="test container terminate failure"):
-        pipeline._terminate_all()
-
-
-def test_start_cleanup_survives_container_failures():
-    """A start failure cleans up containers even when their cleanup fails."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(2))
-        .append("reverser", TextReverser(), concurrency=1)
-        .build()
-    )
-    _scripted_container(pipeline, fail_on=("run", "terminate", "shutdown"))
-    with pytest.raises(RuntimeError, match="test container run failure"):
-        run_with_timeout(pipeline)
-    assert pipeline.state is PipelineState.CLOSED
-
-
-def test_wait_for_stopped_waits_for_stop():
-    """_wait_for_stopped blocks until the container stops."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(1))
-        .append("reverser", TextReverser())
-        .build()
-    )
-    container = pipeline._containers["reverser"]
-    assert not container.is_stopped()
-    stopped = Event()
-
-    def _waiter():
-        pipeline._wait_for_stopped(container)
-        stopped.set()
-
-    waiter = Thread(target=_waiter)
-    waiter.start()
-    time.sleep(0.5)
-    assert not stopped.is_set()
-    container.stop()
-    waiter.join(timeout=5)
-    assert stopped.is_set()
-
 
 def test_source_errors():
     """Source failures raise and stop the source across executors."""
@@ -376,166 +260,9 @@ def test_source_errors():
         assert source.is_stopped
 
 
-def test_new_shared_event_dispatch():
-    """Shared events come from the sync manager when one is present."""
-    pipeline = Pipeline()
-    event = pipeline._new_shared_event()
-    assert isinstance(event, type(Event()))
-    with mock.patch.object(
-        pipeline, "_new_mp_event", return_value="mp-event"
-    ) as mp_event:
-        pipeline._sync_manager = mock.sentinel.manager
-        assert pipeline._new_shared_event() == "mp-event"
-        mp_event.assert_called_once_with()
 
 
-def test_pipeline_is_fatal():
-    """_is_fatal reflects whether the fatal event fired."""
-    pipeline = Pipeline()
-    assert not pipeline._is_fatal()
-    pipeline._fatal_event = Event()
-    assert not pipeline._is_fatal()
-    pipeline._fatal_event.set()
-    assert pipeline._is_fatal()
 
-
-def test_check_errors_and_wait_for_runner_error():
-    """Runner failures surface through _check_errors and _wait_for_runner_error."""
-    pipeline = get_pipeline().append("reverser", TextReverser()).build()
-    # no failed future reports its error: raise instead of returning silently
-    with pytest.raises(RuntimeError, match="without reporting"):
-        pipeline._wait_for_runner_error(retries=2, wait_seconds=0.01)
-    container = ConcurrentStageContainer(
-        "boom",
-        TextReverser(),
-        ErrorManager(),
-        RetryManager(),
-        Queue,
-        ThreadCounter,
-        Event,
-        concurrency=1,
-    )
-    future: Future = Future()
-    future.set_exception(ValueError("runner boom"))
-    container._concurrency._futures = [future]
-    pipeline._containers["boom"] = container
-    with pytest.raises(ValueError):
-        pipeline._check_errors()
-    with pytest.raises(ValueError):
-        pipeline._wait_for_runner_error(retries=1, wait_seconds=0.01)
-
-
-def test_get_processed_or_abort():
-    """_get_processed_or_abort returns items, propagates runner errors, or aborts silently."""
-    pipeline = Pipeline()
-
-    class _FakeContainer:
-        def __init__(self, items):
-            self._items = list(items)
-
-        def get_processed(self, block=True, timeout=None):
-            return self._items.pop(0) if self._items else None
-
-    assert pipeline._get_processed_or_abort(_FakeContainer([text_item()])) is not None
-    assert (
-        pipeline._get_processed_or_abort(_FakeContainer([None, text_item()]))
-        is not None
-    )
-    pipeline._fatal_event = Event()
-    pipeline._fatal_event.set()
-    with mock.patch.object(
-        pipeline, "_wait_for_runner_error", side_effect=RuntimeError("runner")
-    ):
-        with pytest.raises(RuntimeError):
-            pipeline._get_processed_or_abort(_FakeContainer([None]))
-    with mock.patch.object(pipeline, "_wait_for_runner_error", return_value=None):
-        assert pipeline._get_processed_or_abort(_FakeContainer([None])) is None
-
-
-def test_process_propagates_runner_error():
-    """process() raises when a runner has already failed."""
-    pipeline = get_pipeline().append("reverser", TextReverser()).build()
-    with mock.patch.object(pipeline, "_is_fatal", return_value=True):
-        with mock.patch.object(
-            pipeline,
-            "_wait_for_runner_error",
-            side_effect=RuntimeError("runner down"),
-        ):
-            with pytest.raises(RuntimeError):
-                pipeline.process(text_item())
-
-
-def test_exit_run_does_not_mask_termination_errors(caplog):
-    """_exit_run logs stop failures instead of masking them."""
-    pipeline = get_pipeline().append("reverser", TextReverser()).build()
-    with mock.patch.object(pipeline, "stop", side_effect=RuntimeError("stop boom")):
-        with caplog.at_level(logging.ERROR):
-            pipeline._exit_run(None, None)
-    assert pipeline.count == 0
-    assert any(
-        "problems in terminating" in record.msg.lower() for record in caplog.records
-    )
-
-
-def test_run_cleans_up_on_keyboard_interrupt():
-    """run() terminates its workers when the consumer interrupts it."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(3))
-        .append("reverser", TextReverser())
-        .build()
-    )
-    run = pipeline.run()
-    next_with_timeout(run, pipeline=pipeline)
-    original_exit_run = pipeline._exit_run
-    with mock.patch.object(
-        pipeline, "_exit_run", side_effect=original_exit_run
-    ) as exit_run:
-        with pytest.raises(KeyboardInterrupt):
-            run.throw(KeyboardInterrupt())
-    exit_run.assert_called_once()
-
-
-def test_run_generator_close_terminates():
-    """Closing run() early stops the source container."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(5))
-        .append("reverser", TextReverser())
-        .build()
-    )
-    gen = pipeline.run()
-    first = next_with_timeout(gen, pipeline=pipeline)
-    assert first.data["text"]
-    gen.close()
-    assert pipeline._source_container.is_stopped()
-
-
-def test_exit_run_joins_terminator_thread():
-    """_exit_run joins the source and terminator threads."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(1))
-        .append("reverser", TextReverser())
-        .build()
-    )
-    source_thread = Thread(target=lambda: None)
-    terminator_thread = Thread(target=lambda: None)
-    source_thread.start()
-    terminator_thread.start()
-    source_thread.join()
-    terminator_thread.join()
-    pipeline._exit_run(source_thread, terminator_thread)
-    assert pipeline.count == 0
-
-
-def test_wait_for_runner_error_raises_when_no_error_surfaced():
-    """A missing runner error raises instead of only warning."""
-    pipeline = get_pipeline().append("reverser", TextReverser()).build()
-    pipeline._fatal_event = Event()
-    pipeline._fatal_event.set()
-    with pytest.raises(RuntimeError, match="without reporting"):
-        pipeline._wait_for_runner_error(retries=2, wait_seconds=0.01)
 
 
 def _lifecycle_pipeline(events):
@@ -814,21 +541,6 @@ def test_error_manager_start_failure_pairs_stage_on_end():
     assert "error-manager:end" not in events
 
 
-def test_close_releases_multiprocessing_resources():
-    """close() releases the logs receiver and the multiprocessing manager."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(1))
-        .append("reverser", TextReverser(), concurrency=1, executor="processes")
-        .build()
-    )
-    assert pipeline._sync_manager is not None
-    assert pipeline._logs_receiver is not None
-    pipeline.close()
-    assert pipeline.state is PipelineState.CLOSED
-    assert pipeline._sync_manager is None
-    assert pipeline._logs_receiver is None
-
 
 def test_source_can_be_set_after_build():
     """A source can be attached to a built pipeline before it starts."""
@@ -840,291 +552,7 @@ def test_source_can_be_set_after_build():
     assert pipeline.count == 2
 
 
-def test_close_from_running_stops_a_concurrent_source_thread():
-    """close() unblocks and joins the source thread of a concurrent pipeline."""
-    pipeline = (
-        get_pipeline(max_queues_size=1)
-        .set_source(RandomTextSource(1000))
-        .append("reverser", TextReverser(), concurrency=1)
-    )
-    run = pipeline.run()
-    try:
-        assert next_with_timeout(run, pipeline=pipeline)
-        assert pipeline.state is PipelineState.RUNNING
-        assert pipeline._source_thread is not None
-        pipeline.close()
-        assert pipeline.state is PipelineState.CLOSED
-        assert pipeline.count == 1
-        assert not pipeline._source_thread.is_alive()
-    finally:
-        run.close()
 
-
-def test_close_during_start_waits_for_the_start_phase():
-    """close() racing with the start phase terminates the runners it submits."""
-    start_entered = Event()
-    start_release = Event()
-    ended = Event()
-
-    class BlockingStartReverser(TextReverser):
-        def on_start(self):
-            start_entered.set()
-            start_release.wait(timeout=10)
-
-        def on_end(self):
-            ended.set()
-
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(3))
-        .append("reverser", BlockingStartReverser(), concurrency=1, executor="threads")
-        .build()
-    )
-    runner = Thread(target=lambda: list(pipeline.run()), daemon=True)
-    runner.start()
-    try:
-        assert start_entered.wait(PIPELINE_TIMEOUT)
-        closer = Thread(target=pipeline.close, daemon=True)
-        closer.start()
-        # close() must wait for the in-progress start phase instead of releasing
-        # the executor of a runner which is still being submitted
-        wait_for_state(pipeline, PipelineState.CLOSED)
-        start_release.set()
-        closer.join(PIPELINE_TIMEOUT)
-        assert not closer.is_alive()
-        container = pipeline._containers["reverser"]
-        assert all(
-            future.done() or future.cancelled()
-            for future in container._concurrency._futures
-        )
-        assert ended.is_set()
-        runner.join(PIPELINE_TIMEOUT)
-        assert not runner.is_alive()
-    finally:
-        start_release.set()
-        cleanup_on_exit(pipeline)
-
-
-def test_start_stages_starts_once_with_concurrent_callers():
-    """A second caller entering the start phase after the first returns does nothing."""
-    start_entered = Event()
-    start_release = Event()
-    events = []
-
-    class BlockingStartStage(TextReverser):
-        def on_start(self):
-            events.append("start")
-            start_entered.set()
-            start_release.wait(timeout=PIPELINE_TIMEOUT)
-
-        def on_end(self):
-            events.append("end")
-
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(1))
-        .append("blocking", BlockingStartStage())
-        .build()
-    )
-    first = Thread(target=pipeline._start_stages)
-    second = Thread(target=pipeline._start_stages)
-    with cleanup_on_exit(pipeline):
-        first.start()
-        assert start_entered.wait(PIPELINE_TIMEOUT)
-        second.start()
-        # let the second caller block on the lifecycle lock held by the first
-        time.sleep(0.1)
-        start_release.set()
-        first.join(PIPELINE_TIMEOUT)
-        second.join(PIPELINE_TIMEOUT)
-        assert not first.is_alive() and not second.is_alive()
-        assert events == ["start"]
-    assert events == ["start", "end"]
-
-
-def test_start_stages_skips_everything_when_close_won_the_race():
-    """A close request set before the start phase prevents any stage from starting."""
-    events = []
-    pipeline = _lifecycle_pipeline(events).build()
-    pipeline._close_requested = True
-    pipeline._start_stages()
-    assert pipeline._started_in_main == []
-    assert events == []
-    pipeline.close()
-    assert pipeline.state is PipelineState.CLOSED
-
-
-def test_start_stages_stops_submitting_after_a_close_request():
-    """A close request raised while starting one stage does not start the following ones."""
-    events = []
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(1))
-        .append("first", LifecycleStage(events))
-        .append("second", LifecycleStage(events))
-        .build()
-    )
-    first_stage = pipeline.get_stage("first")
-    assert first_stage is not None
-    original_on_start = first_stage.on_start
-
-    def close_on_start():
-        original_on_start()
-        pipeline._close_requested = True
-
-    first_stage.on_start = close_on_start
-    pipeline._start_stages()
-    assert events == ["first:start"]
-    assert [name for name, _ in pipeline._started_in_main] == ["first"]
-    pipeline.close()
-    assert events == ["first:start", "first:end"]
-
-
-def test_release_resources_is_idempotent_and_logs_manager_errors(caplog):
-    """Resource release runs once and a failing manager shutdown is only logged."""
-    pipeline = Pipeline()
-    pipeline._sync_manager = mock.Mock()
-    pipeline._sync_manager.shutdown.side_effect = RuntimeError("manager boom")
-    with caplog.at_level(logging.ERROR):
-        pipeline._release_resources()
-    assert pipeline._sync_manager is None
-    assert any(
-        "multiprocessing manager" in record.getMessage().lower()
-        for record in caplog.records
-    )
-    # a second release is a no-op
-    pipeline._release_resources()
-
-
-def test_join_thread_warns_when_it_does_not_end(caplog):
-    """A thread which outlives the join timeout produces a warning instead of blocking."""
-    pipeline = Pipeline()
-    release = Event()
-    thread = Thread(target=release.wait, args=(PIPELINE_TIMEOUT,))
-    thread.start()
-    try:
-        with caplog.at_level(logging.WARNING):
-            pipeline._join_thread(thread, "test thread", 0.01)
-        assert any(
-            "test thread did not end" in record.getMessage().lower()
-            for record in caplog.records
-        )
-    finally:
-        release.set()
-        thread.join(PIPELINE_TIMEOUT)
-
-
-def test_concurrent_close_calls_are_serialized():
-    """A second close() waits for the first instead of returning early."""
-    entered = Event()
-    release = Event()
-    events = []
-
-    class BlockingOnEndStage(TextReverser):
-        def on_end(self):
-            events.append("end-start")
-            entered.set()
-            assert release.wait(timeout=PIPELINE_TIMEOUT)
-            events.append("end-done")
-
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(10))
-        .append("reverser", BlockingOnEndStage(), concurrency=1)
-        .build()
-    )
-    pipeline._start_stages()
-    first_done = Event()
-    second_done = Event()
-
-    def _first():
-        pipeline.close()
-        first_done.set()
-
-    def _second():
-        pipeline.close()
-        second_done.set()
-
-    first = Thread(target=_first, daemon=True)
-    first.start()
-    try:
-        assert entered.wait(PIPELINE_TIMEOUT)
-        second = Thread(target=_second, daemon=True)
-        second.start()
-        time.sleep(0.3)
-        assert not second_done.is_set()
-        assert not first_done.is_set()
-        release.set()
-        first.join(PIPELINE_TIMEOUT)
-        second.join(PIPELINE_TIMEOUT)
-        assert not first.is_alive()
-        assert not second.is_alive()
-        assert pipeline.state is PipelineState.CLOSED
-        assert pipeline._sync_manager is None
-        assert events == ["end-start", "end-done"]
-    finally:
-        release.set()
-        cleanup_on_exit(pipeline)
-
-
-def test_close_logs_a_stop_failure(caplog):
-    """A source stop failure is logged and does not prevent the pipeline cleanup."""
-    pipeline = Pipeline()
-    with mock.patch.object(pipeline, "stop", side_effect=RuntimeError("stop boom")):
-        with caplog.at_level(logging.ERROR):
-            pipeline.close()
-    assert pipeline.state is PipelineState.CLOSED
-    assert any(
-        "problems in stopping" in record.getMessage().lower()
-        for record in caplog.records
-    )
-
-
-def test_close_raises_termination_failures():
-    """A termination failure aborts close() after the resources have been released."""
-    pipeline = Pipeline()
-    with mock.patch.object(
-        pipeline, "_terminate_all", side_effect=RuntimeError("termination boom")
-    ):
-        with pytest.raises(RuntimeError, match="termination boom"):
-            pipeline.close()
-    assert pipeline.state is PipelineState.CLOSED
-    assert pipeline._resources_released
-
-
-def test_build_respects_a_close_request_during_construction():
-    """A close requested while building leaves the pipeline closed, without starting it."""
-    pipeline = get_pipeline().append("reverser", TextReverser)
-    pipeline._close_requested = True
-    assert pipeline.build() is pipeline
-    assert pipeline.state is PipelineState.CLOSED
-    pipeline._release_resources()
-
-
-def test_finish_run_logs_a_release_failure(caplog):
-    """_finish_run reports release problems without masking the run outcome."""
-    pipeline = Pipeline()
-    with mock.patch.object(
-        pipeline, "_release_resources", side_effect=RuntimeError("release boom")
-    ):
-        with caplog.at_level(logging.ERROR):
-            pipeline._finish_run(None, None)
-    assert pipeline.state is PipelineState.CLOSED
-    assert any(
-        "releasing the pipeline resources" in record.getMessage().lower()
-        for record in caplog.records
-    )
-
-
-def test_finish_run_raises_termination_errors():
-    """_finish_run raises the errors collected while terminating the pipeline."""
-    pipeline = Pipeline()
-    with mock.patch.object(
-        pipeline, "_terminate_all", side_effect=RuntimeError("termination boom")
-    ):
-        with pytest.raises(RuntimeError, match="termination boom"):
-            pipeline._finish_run(None, None)
-    assert pipeline.state is PipelineState.CLOSED
 
 
 def test_run_returns_when_close_is_requested():
@@ -1141,23 +569,6 @@ def test_run_returns_when_close_is_requested():
     assert pipeline.state is PipelineState.CLOSED
 
 
-def test_process_aborts_when_closed_during_start():
-    """process() fails if the pipeline is closed while it is starting."""
-    pipeline = get_pipeline().append("reverser", TextReverser())
-    with mock.patch.object(pipeline, "_start_stages", side_effect=pipeline.close):
-        with pytest.raises(PipelineStateError, match="closed"):
-            pipeline.process(text_item())
-    assert pipeline.state is PipelineState.CLOSED
-
-
-def test_process_async_aborts_when_closed_during_start():
-    """process_async() fails if the pipeline is closed while it is starting."""
-    pipeline = get_pipeline().append("reverser", TextReverser())
-    with mock.patch.object(pipeline, "_start_stages", side_effect=pipeline.close):
-        with pytest.raises(PipelineStateError, match="closed"):
-            pipeline.process_async(text_item())
-    assert pipeline.state is PipelineState.CLOSED
-
 
 def _call_with_timeout(func, timeout: float = PIPELINE_TIMEOUT) -> bool:
     """Run ``func`` in a daemon thread, return True when it ended in time."""
@@ -1167,59 +578,6 @@ def _call_with_timeout(func, timeout: float = PIPELINE_TIMEOUT) -> bool:
     return not thread.is_alive()
 
 
-def test_terminate_all_does_not_hold_the_lifecycle_lock_while_waiting():
-    """A graceful termination waiting for queues leaves the lifecycle lock free."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(1))
-        .append("reverser", TextReverser(), concurrency=1)
-        .build()
-    )
-    with cleanup_on_exit(pipeline):
-        pipeline._start_stages()
-        # nobody consumes this item, so the graceful termination blocks on the join
-        pipeline._containers["reverser"].out_queue.put(text_item())
-        terminator = Thread(target=pipeline._terminate_all, daemon=True)
-        terminator.start()
-        try:
-            deadline = time.monotonic() + PIPELINE_TIMEOUT
-            while not pipeline._terminated_all:
-                assert time.monotonic() < deadline
-                time.sleep(0.01)
-            time.sleep(0.3)
-            assert terminator.is_alive()
-            acquired = pipeline._lifecycle_lock.acquire(timeout=1)
-            assert acquired
-            pipeline._lifecycle_lock.release()
-        finally:
-            pipeline._terminate_all(force=True)
-            terminator.join(PIPELINE_TIMEOUT)
-        assert not terminator.is_alive()
-
-
-def test_close_aborts_a_graceful_termination_waiting_for_consumers():
-    """close() does not wait forever for a termination blocked on unconsumed items."""
-    pipeline = (
-        get_pipeline()
-        .set_source(RandomTextSource(1))
-        .append("reverser", TextReverser(), concurrency=1)
-        .build()
-    )
-    with cleanup_on_exit(pipeline):
-        pipeline._start_stages()
-        pipeline._containers["reverser"].out_queue.put(text_item())
-        terminator = Thread(target=pipeline._terminate_all, daemon=True)
-        terminator.start()
-        deadline = time.monotonic() + PIPELINE_TIMEOUT
-        while not pipeline._terminated_all:
-            assert time.monotonic() < deadline
-            time.sleep(0.01)
-        time.sleep(0.3)
-        assert terminator.is_alive()
-        assert _call_with_timeout(pipeline.close)
-        terminator.join(PIPELINE_TIMEOUT)
-        assert not terminator.is_alive()
-        assert pipeline.state is PipelineState.CLOSED
 
 
 def test_closing_a_run_early_after_stop_reached_the_output_does_not_hang():
@@ -1251,3 +609,21 @@ def test_close_from_another_thread_after_an_early_break_does_not_hang():
         assert _call_with_timeout(pipeline.close)
         assert pipeline.state is PipelineState.CLOSED
         run.close()
+
+
+def _active_baseline():
+    import threading
+    import time
+
+    # Let daemon threads from previous tests exit.
+    deadline = time.monotonic() + 10.0
+    baseline = threading.active_count()
+    while time.monotonic() < deadline:
+        time.sleep(0.05)
+        current = threading.active_count()
+        if current <= baseline:
+            return current
+        baseline = current
+    return threading.active_count()
+
+

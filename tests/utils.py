@@ -18,7 +18,6 @@ from typing import (
 
 import pytest
 
-from smartpipeline.containers import ConcurrentContainerTypes
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.helpers import FilePathItem
@@ -466,28 +465,21 @@ def mark_item_checked(item: Item):
 
 def _stop_pipeline_forced(pipeline: Pipeline):
     """
-    Best-effort abort of a stuck pipeline: stop the source, wake the runners through the
-    fatal event and terminate every container, without waiting on any blocking join.
+    Best-effort abort of a stuck pipeline: stop the source and cancel its engine,
+    without waiting on any blocking join.
     """
     try:
         pipeline.stop()
     except BaseException:
         pass
-    fatal_event = getattr(pipeline, "_fatal_event", None)
-    if fatal_event is not None:
-        try:
-            fatal_event.set()
-        except BaseException:
-            pass
-    for container in list(getattr(pipeline, "_containers", {}).values()):
-        try:
-            if isinstance(container, ConcurrentContainerTypes):
-                container.empty_queues()
-            else:
-                container.stop()
-            container.terminate()
-        except BaseException:
-            pass
+    try:
+        engine = getattr(pipeline, "_engine", None)
+        if engine is not None:
+            cancel = getattr(engine, "cancel", None)
+            if cancel is not None:
+                cancel.set()
+    except BaseException:
+        pass
 
 
 def _close_with_timeout(pipeline: Pipeline, timeout: float = CLEANUP_TIMEOUT):
@@ -675,14 +667,10 @@ def get_pipeline(*args, **kwargs) -> Pipeline[Dict[str, Any]]:
 
 @contextmanager
 def cleanup_on_exit(pipeline: Pipeline) -> Iterator[Pipeline]:
-    """Guarantee pipeline cleanup (logs receiver and executors) on test exit, without hanging."""
+    """Guarantee pipeline cleanup (executors and manager) on test exit, without hanging."""
     try:
         yield pipeline
     finally:
-        try:
-            pipeline._stop_logs_receiver()
-        except Exception:
-            pass
         _stop_pipeline_forced(pipeline)
         _close_with_timeout(pipeline)
 
