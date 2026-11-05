@@ -402,8 +402,9 @@ def test_pipeline_is_fatal():
 def test_check_errors_and_wait_for_runner_error():
     """Runner failures surface through _check_errors and _wait_for_runner_error."""
     pipeline = get_pipeline().append("reverser", TextReverser()).build()
-    # no concurrent container: nothing to raise, just sleeps
-    pipeline._wait_for_runner_error(retries=2, wait_seconds=0.01)
+    # no failed future reports its error: raise instead of returning silently
+    with pytest.raises(RuntimeError, match="without reporting"):
+        pipeline._wait_for_runner_error(retries=2, wait_seconds=0.01)
     container = ConcurrentStageContainer(
         "boom",
         TextReverser(),
@@ -528,12 +529,13 @@ def test_exit_run_joins_terminator_thread():
     assert pipeline.count == 0
 
 
-def test_wait_for_runner_error_warns_when_no_error_surfaced(caplog):
-    """A missing runner error warns instead of hanging the waiter."""
+def test_wait_for_runner_error_raises_when_no_error_surfaced():
+    """A missing runner error raises instead of only warning."""
     pipeline = get_pipeline().append("reverser", TextReverser()).build()
-    with caplog.at_level(logging.WARNING):
+    pipeline._fatal_event = Event()
+    pipeline._fatal_event.set()
+    with pytest.raises(RuntimeError, match="without reporting"):
         pipeline._wait_for_runner_error(retries=2, wait_seconds=0.01)
-    assert any("runner error" in record.msg.lower() for record in caplog.records)
 
 
 def _lifecycle_pipeline(events):
@@ -659,6 +661,33 @@ def test_process_async_rejected_after_close():
     pipeline.close()
     with pytest.raises(PipelineStateError):
         pipeline.process_async(text_item())
+
+
+def test_get_item_after_async_run_end_raises():
+    """get_item() raises after the async run drained instead of blocking."""
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+    pipeline.process_async(text_item("hello"))
+    pipeline.process_async(text_item("world"))
+    pipeline.stop()
+    texts = {get_item_with_timeout(pipeline).data["text"] for _ in range(2)}
+    assert texts == {"olleh", "dlrow"}
+    outcome: dict = {}
+
+    def _get():
+        try:
+            pipeline.get_item()
+        except BaseException as e:  # noqa: BLE001 - record whatever surfaces
+            outcome["error"] = e
+
+    waiter = Thread(target=_get, daemon=True)
+    waiter.start()
+    waiter.join(timeout=1.0)
+    assert not waiter.is_alive()
+    assert isinstance(outcome.get("error"), PipelineStateError)
+    assert "asynchronous run ended" in str(outcome["error"])
+    with pytest.raises(PipelineStateError, match="asynchronous run ended"):
+        get_item_with_timeout(pipeline, timeout=5.0)
+    pipeline.close()
 
 
 def test_builder_methods_rejected_after_build():
@@ -985,17 +1014,57 @@ def test_join_thread_warns_when_it_does_not_end(caplog):
         thread.join(PIPELINE_TIMEOUT)
 
 
-def test_close_ignores_a_concurrent_close():
-    """A close() which races with another one leaves the pipeline to the first caller."""
-    pipeline = Pipeline()
-    pipeline._closing = True
-    try:
+def test_concurrent_close_calls_are_serialized():
+    """A second close() waits for the first instead of returning early."""
+    entered = Event()
+    release = Event()
+    events = []
+
+    class BlockingOnEndStage(TextReverser):
+        def on_end(self):
+            events.append("end-start")
+            entered.set()
+            assert release.wait(timeout=PIPELINE_TIMEOUT)
+            events.append("end-done")
+
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(10))
+        .append("reverser", BlockingOnEndStage(), concurrency=1)
+        .build()
+    )
+    pipeline._start_stages()
+    first_done = Event()
+    second_done = Event()
+
+    def _first():
         pipeline.close()
-        assert pipeline.state is PipelineState.INITIAL
+        first_done.set()
+
+    def _second():
+        pipeline.close()
+        second_done.set()
+
+    first = Thread(target=_first, daemon=True)
+    first.start()
+    try:
+        assert entered.wait(PIPELINE_TIMEOUT)
+        second = Thread(target=_second, daemon=True)
+        second.start()
+        time.sleep(0.3)
+        assert not second_done.is_set()
+        assert not first_done.is_set()
+        release.set()
+        first.join(PIPELINE_TIMEOUT)
+        second.join(PIPELINE_TIMEOUT)
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert pipeline.state is PipelineState.CLOSED
+        assert pipeline._sync_manager is None
+        assert events == ["end-start", "end-done"]
     finally:
-        pipeline._closing = False
-    pipeline.close()
-    assert pipeline.state is PipelineState.CLOSED
+        release.set()
+        cleanup_on_exit(pipeline)
 
 
 def test_close_logs_a_stop_failure(caplog):

@@ -100,6 +100,14 @@
   stage container which would never be ready
 - Fixed a `None` payload being silently replaced by the default empty dict one: `None` is a
   valid payload (e.g. for `Optional` types) and it is now kept as it is
+- `Pipeline.process()` raises `PipelineStateError` after `stop()` instead of returning the
+  internal `Stop` signal, and it never returns a `Stop` item
+- A second concurrent `Pipeline.close()` waits for the first one to finish instead of
+  returning while resources are still being released
+- `Pipeline.get_item()` raises `PipelineStateError` after the asynchronous run has ended
+  and its output has been drained, instead of blocking forever
+- A stage runner failure which sets the fatal event but reports no exception now raises
+  `RuntimeError` instead of being silently lost
 
 ## Version 0.7.0 [2023-09-27]
 

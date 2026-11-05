@@ -94,6 +94,13 @@ class _AsyncPipelineError:
         self.error = error
 
 
+class _AsyncEndOfStream:
+    """End-of-stream marker for the asynchronous runner, so `get_item` stops blocking."""
+
+
+_ASYNC_END = _AsyncEndOfStream()
+
+
 class PipelineState(Enum):
     """
     Lifecycle state of a :class:`.Pipeline`.
@@ -160,6 +167,9 @@ class Pipeline(Generic[DataT]):
         self._close_requested = False
         self._resources_released = False
         self._closing = False
+        # Set when a `close()` has finished: a second `close()` waits on it
+        # instead of returning while resources are still being released.
+        self._closed = Event()
         # Serializes the start phase with termination/close: a close() which races
         # with `_start_stages()` must not release the executors of runners which are
         # still being submitted. Reentrant because `_abort_start()` (called from the
@@ -479,15 +489,23 @@ class Pipeline(Generic[DataT]):
 
         When another thread is starting the pipeline, the close request stops the start
         phase and this call waits for it, so the runners it submits are terminated too.
+        A second `close()` racing with another one waits until the first has finished
+        instead of returning while resources are still being released.
 
         :param timeout: Time to wait for the source thread and the asynchronous runner
         """
-        if self._state is PipelineState.CLOSED:
+        with self._lifecycle_lock:
+            if self._closed.is_set():
+                return
+            if self._closing:
+                wait_for_close = True
+            else:
+                self._closing = True
+                self._state = PipelineState.CLOSED
+                wait_for_close = False
+        if wait_for_close:
+            self._closed.wait()
             return
-        if self._closing:
-            return
-        self._closing = True
-        self._state = PipelineState.CLOSED
         termination_error: Optional[BaseException] = None
         try:
             self._close_requested = True
@@ -520,6 +538,7 @@ class Pipeline(Generic[DataT]):
             self._release_resources()
         finally:
             self._closing = False
+            self._closed.set()
         if termination_error is not None:
             raise termination_error
 
@@ -964,7 +983,7 @@ class Pipeline(Generic[DataT]):
         for _ in range(retries):
             self._check_errors()
             time.sleep(wait_seconds)
-        self._logger.warning("Stage runner error not surfaced after %d checks", retries)
+        raise RuntimeError("a stage runner failed without reporting its error")
 
     def process(self, item: Item[DataT]) -> Item[DataT]:
         """
@@ -986,6 +1005,10 @@ class Pipeline(Generic[DataT]):
         if self._state is PipelineState.CLOSED:
             raise PipelineStateError("The pipeline is closed")
         self._logger.debug("Processing %s on stages: %s", item, self._log_stages())
+        if self._source_container.is_stopped():
+            raise PipelineStateError(
+                "Cannot process item: the pipeline source is stopped"
+            )
         last_stage_name = last_key(self._containers)
         self._source_container.prepend_item(item)
         ret = None
@@ -997,6 +1020,10 @@ class Pipeline(Generic[DataT]):
                 ret = self._get_processed_or_abort(container)
         if self._is_fatal():
             self._wait_for_runner_error()
+        if isinstance(ret, Stop):
+            raise PipelineStateError(
+                "Cannot process item: the pipeline source is stopped"
+            )
         return ret or item
 
     def process_async(
@@ -1044,6 +1071,9 @@ class Pipeline(Generic[DataT]):
             self._out_queue.task_done()
             if isinstance(item, _AsyncPipelineError):
                 raise item.error
+            if isinstance(item, _AsyncEndOfStream):
+                self._out_queue.put(item)
+                raise PipelineStateError("asynchronous run ended")
             return item
         else:
             raise ValueError(
@@ -1337,6 +1367,8 @@ class Pipeline(Generic[DataT]):
                         self._out_queue.put(item)
                 except BaseException as e:
                     self._out_queue.put(_AsyncPipelineError(e))
+                else:
+                    self._out_queue.put(_ASYNC_END)
                 finally:
                     # closing also terminates the pipeline when the callback failed
                     runner.close()
