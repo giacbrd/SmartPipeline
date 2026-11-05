@@ -67,8 +67,6 @@ def test_worker_loop_batch_flushes_on_stop():
 
 def test_worker_loop_batch_flushes_on_timeout():
     """A batch worker flushes a partial batch after its timeout, then exits on Stop."""
-    import threading
-
     in_queue: Queue = Queue()
     out_queue: Queue = Queue()
     cancel = Event()
@@ -87,9 +85,9 @@ def test_worker_loop_batch_flushes_on_timeout():
         daemon=True,
     )
     worker.start()
-    deadline = __import__("time").monotonic() + QUEUE_TIMEOUT
-    while out_queue.qsize() < 3 and __import__("time").monotonic() < deadline:
-        __import__("time").sleep(0.01)
+    deadline = time.monotonic() + QUEUE_TIMEOUT
+    while out_queue.qsize() < 3 and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert out_queue.qsize() == 3
     in_queue.put(Stop())
     worker.join(timeout=QUEUE_TIMEOUT)
@@ -99,9 +97,6 @@ def test_worker_loop_batch_flushes_on_timeout():
 
 def test_worker_loop_exits_on_cancel_while_blocked():
     """A worker blocked on a full output queue exits once cancel is set."""
-    import threading
-    import time
-
     in_queue: Queue = Queue()
     out_queue: Queue = Queue(maxsize=1)
     out_queue.put(text_item("full"))

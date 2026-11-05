@@ -1,4 +1,4 @@
-import logging
+import threading
 import time
 from threading import Thread
 
@@ -231,7 +231,6 @@ def test_terminator_error_surfaces_during_run():
         run_with_timeout(pipeline)
 
 
-
 def test_source_errors():
     """Source failures raise and stop the source across executors."""
     for concurrency, executor in ((0, "threads"), (2, "threads"), (2, "processes")):
@@ -258,11 +257,6 @@ def test_source_errors():
             for _ in range(3):
                 next_with_timeout(run, pipeline=pipeline)
         assert source.is_stopped
-
-
-
-
-
 
 
 def _lifecycle_pipeline(events):
@@ -541,7 +535,6 @@ def test_error_manager_start_failure_pairs_stage_on_end():
     assert "error-manager:end" not in events
 
 
-
 def test_source_can_be_set_after_build():
     """A source can be attached to a built pipeline before it starts."""
     events = []
@@ -550,9 +543,6 @@ def test_source_can_be_set_after_build():
     items = run_with_timeout(pipeline)
     assert len(items) == 2
     assert pipeline.count == 2
-
-
-
 
 
 def test_run_returns_when_close_is_requested():
@@ -569,15 +559,12 @@ def test_run_returns_when_close_is_requested():
     assert pipeline.state is PipelineState.CLOSED
 
 
-
 def _call_with_timeout(func, timeout: float = PIPELINE_TIMEOUT) -> bool:
     """Run ``func`` in a daemon thread, return True when it ended in time."""
     thread = Thread(target=func, daemon=True)
     thread.start()
     thread.join(timeout)
     return not thread.is_alive()
-
-
 
 
 def test_closing_a_run_early_after_stop_reached_the_output_does_not_hang():
@@ -611,28 +598,8 @@ def test_close_from_another_thread_after_an_early_break_does_not_hang():
         run.close()
 
 
-def _active_baseline():
-    import threading
-    import time
-
+def _active_baseline() -> int:
     # Let daemon threads from previous tests exit.
-    deadline = time.monotonic() + 10.0
-    baseline = threading.active_count()
-    while time.monotonic() < deadline:
-        time.sleep(0.05)
-        current = threading.active_count()
-        if current <= baseline:
-            return current
-        baseline = current
-    return threading.active_count()
-
-
-
-
-def _active_baseline():
-    import threading
-    import time
-
     deadline = time.monotonic() + 10.0
     baseline = threading.active_count()
     while time.monotonic() < deadline:
@@ -646,8 +613,6 @@ def _active_baseline():
 
 def test_concurrent_close_calls_are_serialized():
     """A second close() waits for the first instead of returning early."""
-    import threading
-
     baseline = _active_baseline()
     entered = threading.Event()
     release = threading.Event()
@@ -685,9 +650,7 @@ def test_concurrent_close_calls_are_serialized():
         assert entered.wait(PIPELINE_TIMEOUT)
         second = threading.Thread(target=_second, daemon=True)
         second.start()
-        import time as _time
-
-        _time.sleep(0.3)
+        time.sleep(0.3)
         assert not second_done.is_set()
         assert not first_done.is_set()
         release.set()
@@ -701,17 +664,14 @@ def test_concurrent_close_calls_are_serialized():
         release.set()
         run.close()
     assert pipeline.state is PipelineState.CLOSED
-    deadline = __import__("time").monotonic() + 10.0
-    while __import__("threading").active_count() > baseline:
-        assert __import__("time").monotonic() < deadline
-        __import__("time").sleep(0.05)
+    deadline = time.monotonic() + 10.0
+    while threading.active_count() > baseline:
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
 
 
 def test_close_during_slow_on_start_pairs_on_end():
     """close() racing with a slow on_start terminates without hanging."""
-    import threading
-    import time
-
     baseline = _active_baseline()
     events = []
     started = threading.Event()
@@ -757,9 +717,6 @@ def test_close_during_slow_on_start_pairs_on_end():
 
 def test_keyboard_interrupt_in_threads_stage_cleans_up():
     """A KeyboardInterrupt inside a threads stage ends the run without hanging."""
-    import threading
-    import time
-
     baseline = _active_baseline()
     events = []
 
@@ -786,7 +743,7 @@ def test_keyboard_interrupt_in_threads_stage_cleans_up():
         .build()
     )
     try:
-        with __import__("pytest").raises(KeyboardInterrupt):
+        with pytest.raises(KeyboardInterrupt):
             run_with_timeout(pipeline, timeout=PIPELINE_TIMEOUT)
     finally:
         pipeline.close()

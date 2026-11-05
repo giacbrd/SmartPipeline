@@ -5,8 +5,8 @@
 - BREAKING CHANGE: the pipeline has an explicit lifecycle
   `INITIAL -> BUILT -> RUNNING -> CLOSED`, exposed publicly by the `Pipeline.state`
   property and the `PipelineState` enum. `build()` validates, constructs stages and
-  prepares containers: stage `on_start` hooks and workers start in
-  `run()` / `process_async()`.
+  stores them: stage `on_start` hooks and workers start in
+  `run()` / `process_async()` via a segment engine.
   `append()` and `set_error_manager()` raise `PipelineStateError` after `build()`;
   `set_source()` is still accepted on a built pipeline which has not started. A
   pipeline is one-shot: after `run()` or `process_async()` it is closed and cannot
@@ -20,18 +20,16 @@
 - BREAKING CHANGE: `Pipeline.append()` accepts either a stage instance or a stage
   class, with keyword-only `args`/`kwargs` for classes. An instance exists immediately,
   while a class-based stage does not exist before `build()`: `build()` constructs the
-  classes one by one in order and then wires every container in one
-  deterministic pass. The method is overloaded so type checkers reject
+  classes one by one in order and stores them. The method is overloaded so type checkers reject
   `args`/`kwargs` on an instance. `Pipeline.append_concurrently()` has been removed;
   pass the stage class to `append()` instead
 - Added the public `StageSpec` dataclass, describing a stage instance or class and
   its pipeline configuration
-- Removed the placeholder/linker machinery used for background stage construction:
-  `_fake_container`, `_wait_for_previous()`, the init/linker executors,
-  `_wait_executors()` and `_init_errors`
-- Removed the dead synchronous `BatchStageContainer.process()` path: batch stages
-  always run with `concurrency=1` on a thread and use the concurrent queue path
-- Removed the internal `EmptyStage` helper
+- The concurrency engine has been rewritten: pipelines compile into segments
+  (`InlineSegment`, `ConcurrentSegment`) with queues only between them, one `Stop`
+  per worker, one `cancel` event, and errors via futures; custom stage runners
+  (`stage_runner`/`batch_stage_runner`, `run(runner=...)`) have been removed
+- Batch stages always run with `concurrency=1` on a thread
 - `Pipeline.count` is defined as the number of items delivered by `run()` or
   `process_async()`, including items with soft errors; items processed one by one
   with `process()` are not counted
@@ -42,8 +40,7 @@
 - `BatchStage.process_batch()` output length is validated: it must return exactly one
   item for every input item, and a mismatch raises the public `BatchOutputError`
   and stops the pipeline
-- `append()` never starts a `multiprocessing.Manager` or logs receiver; process-based
-  containers set them up during `build()`
+- `append()` and `build()` never start a `multiprocessing.Manager` or logs receiver; the Engine sets them up at run time when any segment uses processes
 - Exceptions raised by a `process_async()` callback are delivered by `get_item()`
   instead of silently killing the runner; `run()` also cleans up on `KeyboardInterrupt`
 - `Item.add_soft_error()` and `add_critical_error()` now handle subclasses of
@@ -65,21 +62,16 @@
   stage containers) has been replaced by
   `executor: Literal["threads", "processes"]` (`"threads"` by default, `"processes"`
   for multiprocessing). Update `parallel=True` to `executor="processes"` and
-  `parallel=False` to `executor="threads"`. The `ConcurrentContainer.parallel`
-  property is now `ConcurrentContainer.executor`
+  `parallel=False` to `executor="threads"`.
 
 - Fixed a deadlock on errors in concurrent stages: with `raise_on_critical_error` a failing
   concurrent stage kills its runners, and any execution blocked putting an item in a full
   queue (the main thread when a stage without concurrency produces items for it, a stage
   runner or the source thread) was waiting forever for consumers which were not able to
   consume anymore, so the pipeline never terminated
-- No execution blocks indefinitely on a queue anymore: puts and the last wait in `process`
-  recurrently check the container termination and a new pipeline-wide event which is set by
-  a stage runner that exits because of an error
+- No execution blocks indefinitely on a queue anymore: blocking puts and gets abort when the pipeline is cancelled (on error or `close()`)
 - Errors while retrieving the finally processed items now terminate the pipeline as any
   other error, and problems in the termination never mask the original exception
-- `stage_runner` and `batch_stage_runner` accept a new `fatal_event` argument,
-  custom stage runners must accept it
 - Fixed a deadlock on termination of concurrent batch stages: they were excluded from the
   termination of the other concurrent stages, so a failing one could leave the pipeline stuck
   with items in its queues
@@ -93,11 +85,9 @@
   could lose items and never terminate
 - Fixed a hang of `Pipeline.run()` when no source has been set: the source is checked before
   the pipeline is built, so a concurrent stage does not start its executions for a pipeline
-  which cannot run. The source container is not "set" anymore just because a concurrent stage
-  created its output queue
-- Fixed a hang of a second `build()` (or `run()`) after a failed concurrent stage
-  initialization: the initialization error is reported again instead of waiting forever for a
-  stage container which would never be ready
+  which cannot run. A missing source is checked before any worker starts.
+- Fixed a hang of a second `build()` (or `run()`) after a failed stage
+  initialization: the initialization error is reported again instead of waiting forever
 - Fixed a `None` payload being silently replaced by the default empty dict one: `None` is a
   valid payload (e.g. for `Optional` types) and it is now kept as it is
 - `Pipeline.process()` raises `PipelineStateError` after `stop()` instead of returning the
@@ -106,8 +96,7 @@
   returning while resources are still being released
 - `Pipeline.get_item()` raises `PipelineStateError` after the asynchronous run has ended
   and its output has been drained, instead of blocking forever
-- A stage runner failure which sets the fatal event but reports no exception now raises
-  `RuntimeError` instead of being silently lost
+- Worker failures are reported via futures and never silently lost
 
 ## Version 0.7.0 [2023-09-27]
 

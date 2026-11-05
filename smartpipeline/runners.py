@@ -310,9 +310,7 @@ def worker_loop(
                 )
             raise
         else:
-            _raise_on_end_errors(
-                _call_on_end_best_effort(error_manager, stage), stage
-            )
+            _raise_on_end_errors(_call_on_end_best_effort(error_manager, stage), stage)
             return
     else:
         if isinstance(stage, BatchStage):
