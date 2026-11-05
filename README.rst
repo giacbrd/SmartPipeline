@@ -153,6 +153,6 @@ The `examples` folder contains full working sample pipelines.
 AI code agents note
 ~~~~~~~~~~~~~~~~~~~
 
-Since October 2026 the codebase development is supported by LLM code agents,
+Since version 1.0.0 the codebase development is supported by LLM code agents,
 strictly using open-source tools and open-weight models,
 always human reviewed.
