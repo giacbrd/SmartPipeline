@@ -7,7 +7,12 @@ import pytest
 from smartpipeline.error.exceptions import RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import Item
-from smartpipeline.pipeline import Pipeline, PipelineState, StageSpec
+from smartpipeline.pipeline import (
+    Pipeline,
+    PipelineState,
+    PipelineStateError,
+    StageSpec,
+)
 from smartpipeline.stage import Stage
 from tests.utils import (
     BatchTextReverser,
@@ -631,3 +636,15 @@ def test_async_run_error_is_delivered_by_get_item():
     pipeline.process_async(text_item())
     with pytest.raises(ValueError, match="exception"):
         get_item_with_timeout(pipeline)
+
+
+def test_process_after_stop_raises():
+    """process() after stop() raises instead of returning the Stop signal."""
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+    pipeline.process(text_item("hello"))
+    pipeline.stop()
+    with pytest.raises(PipelineStateError):
+        pipeline.process(text_item("hello"))
+    with pytest.raises(PipelineStateError):
+        pipeline.process(text_item("hello"))
+    pipeline.close()

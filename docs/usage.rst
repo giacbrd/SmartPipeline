@@ -286,12 +286,15 @@ No source is set: items are submitted explicitly, one by one.
 
 ``process_async()`` can be called again while the pipeline is running to submit
 more items. After ``stop()`` the current run terminates and the pipeline is
-closed.
+closed. Once the run has ended and its output has been drained,
+:meth:`.Pipeline.get_item` raises :class:`.PipelineStateError` instead of blocking.
 
 Use :meth:`.Pipeline.process` only when no stage is concurrent:
 the item is processed synchronously and returned directly by the call.
 ``process()`` raises ``ValueError`` as soon as the pipeline contains a stage
 with ``concurrency > 0``, so it can never block on a concurrent queue.
+``process()`` raises :class:`.PipelineStateError` after :meth:`.Pipeline.stop`
+has been called.
 
 Pipeline lifecycle
 ^^^^^^^^^^^^^^^^^^
@@ -305,7 +308,8 @@ one by one while the pipeline is built.
 After ``build()`` the configuration is frozen: adding stages or replacing the
 error manager raises :class:`.PipelineStateError`, while a source can still be
 set until the pipeline starts. ``close()`` is idempotent and can release a
-pipeline which was built but never run. A closed pipeline cannot be built or
+pipeline which was built but never run. A second ``close()`` racing with another
+one waits until the first has finished. A closed pipeline cannot be built or
 run again.
 
 A further example

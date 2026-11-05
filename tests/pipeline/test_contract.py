@@ -437,6 +437,19 @@ def test_process_repeatedly():
     assert pipeline.state is PipelineState.CLOSED
 
 
+def test_process_after_stop_raises():
+    """process() after stop() raises instead of returning the Stop signal."""
+    pipeline = get_pipeline().append("reverser", TextReverser())
+    pipeline.process(text_item("hello"))
+    pipeline.stop()
+    with pytest.raises(PipelineStateError):
+        pipeline.process(text_item("hello"))
+    with pytest.raises(PipelineStateError):
+        pipeline.process(text_item("hello"))
+    pipeline.close()
+    assert pipeline.state is PipelineState.CLOSED
+
+
 @pytest.mark.parametrize("executor", ["threads", "processes"])
 def test_process_rejects_concurrent_stages(executor):
     """process() refuses pipelines with concurrent stages."""
