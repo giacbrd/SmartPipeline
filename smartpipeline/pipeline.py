@@ -4,7 +4,6 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
-from concurrent.futures.thread import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
 from inspect import isclass
@@ -129,11 +128,9 @@ class Pipeline(Generic[DataT]):
 
     def __init__(
         self,
-        max_init_workers: Optional[int] = None,
         max_queues_size: int = MAX_QUEUES_SIZE,
     ):
         """
-        :param max_init_workers: Number of workers to use for concurrent stage construction at build time, default the `ThreadPoolExecutor` default
         :param max_queues_size: Maximum size of any queue instanced for the pipeline (stage input and output queues)
         """
         self._stage_specs: OrderedDictType[str, StageSpec[DataT]] = OrderedDict()
@@ -141,7 +138,6 @@ class Pipeline(Generic[DataT]):
             str, StageContainer[DataT] | BatchStageContainer[DataT]
         ] = OrderedDict()
         self._error_manager = ErrorManager()
-        self._max_init_workers = max_init_workers
         self._pipeline_executor: Optional[Thread] = None
         self._max_queues_size = max_queues_size
         self._out_queue: Optional[Queue[Any]] = None
@@ -308,37 +304,22 @@ class Pipeline(Generic[DataT]):
         self, specs: Sequence[StageSpec[DataT]]
     ) -> list[Stage[DataT] | BatchStage[DataT]]:
         """
-        Construct every stage from its spec, joining all constructors before returning.
+        Construct every stage from its spec in order.
 
         Instances passed to :meth:`.Pipeline.append` are used as they are. Stage classes
-        are constructed concurrently in a thread pool bounded by `max_init_workers`, so
-        slow constructors overlap without any placeholder or polling machinery.
+        are constructed one by one in append order; heavy setup belongs in `on_start`.
         """
-        if not any(spec.stage_class is not None for spec in specs):
-            return [spec.construct() for spec in specs]
-        executor = ThreadPoolExecutor(max_workers=self._max_init_workers)
-        try:
-            futures = {
-                spec.name: executor.submit(spec.construct)
-                for spec in specs
-                if spec.stage_class is not None
-            }
-            stages: list[Stage[DataT] | BatchStage[DataT]] = []
-            errors: list[Exception] = []
-            for spec in specs:
-                if spec.stage_class is None:
-                    stages.append(spec.construct())
-                    continue
-                try:
-                    stages.append(futures[spec.name].result())
-                except Exception as e:
-                    # Collect every construction failure before raising, so a broken
-                    # stage does not hide the failures of the stages after it.
-                    errors.append(e)
-            raise_collected_errors(errors, "pipeline stage construction failed")
-            return stages
-        finally:
-            executor.shutdown(wait=True)
+        stages: list[Stage[DataT] | BatchStage[DataT]] = []
+        errors: list[Exception] = []
+        for spec in specs:
+            try:
+                stages.append(spec.construct())
+            except Exception as e:
+                # Collect every construction failure before raising, so a broken
+                # stage does not hide the failures of the stages after it.
+                errors.append(e)
+        raise_collected_errors(errors, "pipeline stage construction failed")
+        return stages
 
     def _wire_containers(
         self,
@@ -994,12 +975,12 @@ class Pipeline(Generic[DataT]):
         :raises ValueError: When the pipeline contains concurrent stages
         :raises PipelineStateError: When the pipeline is running or closed
         """
+        self._ensure_built()
         if self._has_concurrent_stages:
             raise ValueError(
                 "Pipeline.process() only supports pipelines without concurrent stages; "
                 "use run() or process_async()"
             )
-        self._ensure_built()
         self._start_stages()
         # close() may have run while the pipeline was starting
         if self._state is PipelineState.CLOSED:
@@ -1261,12 +1242,13 @@ class Pipeline(Generic[DataT]):
           this call, and :meth:`.Pipeline.get_stage` returns it before ``build()``.
           ``args`` and ``kwargs`` are not accepted with an instance.
         * A **class** is stored and constructed by :meth:`.Pipeline.build`,
-          concurrently with the other class-based stages; its constructor receives
+          one by one in append order; its constructor receives
           ``args`` and ``kwargs``. **A class-based stage does not exist until
           ``build()`` runs**: before that, :meth:`.Pipeline.get_stage` returns ``None``
           for it.
 
-        ``build()`` waits for every constructor before wiring the containers. No stage
+        ``build()`` constructs each class in order, collecting every failure
+        before wiring the containers. No stage
         worker starts until :meth:`.Pipeline.run` or :meth:`.Pipeline.process_async`.
 
         :param name: Name for identify the stage in the pipeline, it is also set in the stage and it must be unique in the pipeline
@@ -1317,16 +1299,15 @@ class Pipeline(Generic[DataT]):
             constructor_args = ()
             constructor_kwargs = {}
             is_batch = isinstance(stage_instance, BatchStage)
-            # Keep the old append() behavior: an instance knows its pipeline name
-            # immediately, even before build() wires its container.
+            # An instance knows its pipeline name immediately,
+            # even before build() wires its container.
             stage_instance.set_name(name)
 
-        # Batch stages always run on a thread: the synchronous batch path has been removed.
+        # Batch stages always run on a thread.
         if is_batch and concurrency < 1:
             executor = "threads"
             concurrency = 1
 
-        is_first = not self._stage_specs
         self._stage_specs[name] = StageSpec(
             name=name,
             stage=stage_instance,
@@ -1339,11 +1320,6 @@ class Pipeline(Generic[DataT]):
             max_retries=max_retries,
             backoff=backoff,
         )
-        if concurrency > 0:
-            self._has_concurrent_stages = True
-            # if it is concurrent and it is the first stage, make the source work on an output queue
-            if is_first:
-                self._enqueue_source = True
         return self
 
     def _start_pipeline_executor(self) -> Thread:

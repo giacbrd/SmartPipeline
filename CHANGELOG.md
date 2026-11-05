@@ -20,7 +20,7 @@
 - BREAKING CHANGE: `Pipeline.append()` accepts either a stage instance or a stage
   class, with keyword-only `args`/`kwargs` for classes. An instance exists immediately,
   while a class-based stage does not exist before `build()`: `build()` constructs the
-  classes concurrently in a thread pool and then wires every container in one
+  classes one by one in order and then wires every container in one
   deterministic pass. The method is overloaded so type checkers reject
   `args`/`kwargs` on an instance. `Pipeline.append_concurrently()` has been removed;
   pass the stage class to `append()` instead

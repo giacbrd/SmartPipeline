@@ -458,7 +458,7 @@ def test_process_rejects_concurrent_stages(executor):
     )
     with pytest.raises(ValueError, match="concurrent"):
         pipeline.process(text_item())
-    assert pipeline.state is PipelineState.INITIAL
+    assert pipeline.state is PipelineState.BUILT
     pipeline.close()
 
 

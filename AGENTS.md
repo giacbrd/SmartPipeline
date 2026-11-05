@@ -35,8 +35,8 @@ Execution flows `pipeline.py -> containers.py -> runners.py`; read in that order
   plus keyword-only `args`/`kwargs` for classes), `build()`,
   `run()`, `process()`/`process_async()`/`get_item()`/`stop()`, `close()`.
   `append()` only records a `StageSpec`: an instance stage exists and is named
-  immediately, while `build()` constructs class-based stages concurrently in a thread
-  pool and then wires every container in one deterministic pass. `_containers` is empty
+  immediately, while `build()` constructs class-based stages one by one in order
+  and then wires every container in one deterministic pass. `_containers` is empty
   until `build()`; `get_stage()` returns a class-based stage only after it.
   `PipelineState` (`INITIAL → BUILT → RUNNING → CLOSED`) is the lifecycle contract.
 - `containers.py` — per-stage wiring (`SourceContainer`, `StageContainer`,
