@@ -627,3 +627,173 @@ def _active_baseline():
     return threading.active_count()
 
 
+
+
+def _active_baseline():
+    import threading
+    import time
+
+    deadline = time.monotonic() + 10.0
+    baseline = threading.active_count()
+    while time.monotonic() < deadline:
+        time.sleep(0.05)
+        current = threading.active_count()
+        if current <= baseline:
+            return current
+        baseline = current
+    return threading.active_count()
+
+
+def test_concurrent_close_calls_are_serialized():
+    """A second close() waits for the first instead of returning early."""
+    import threading
+
+    baseline = _active_baseline()
+    entered = threading.Event()
+    release = threading.Event()
+    events = []
+
+    class BlockingOnEndStage(TextReverser):
+        def on_end(self):
+            events.append("end-start")
+            entered.set()
+            assert release.wait(timeout=PIPELINE_TIMEOUT)
+            events.append("end-done")
+
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(10))
+        .append("reverser", BlockingOnEndStage(), concurrency=1)
+        .build()
+    )
+    run = pipeline.run()
+    try:
+        assert next_with_timeout(run, pipeline=pipeline)
+        first_done = threading.Event()
+        second_done = threading.Event()
+
+        def _first():
+            pipeline.close()
+            first_done.set()
+
+        def _second():
+            pipeline.close()
+            second_done.set()
+
+        first = threading.Thread(target=_first, daemon=True)
+        first.start()
+        assert entered.wait(PIPELINE_TIMEOUT)
+        second = threading.Thread(target=_second, daemon=True)
+        second.start()
+        import time as _time
+
+        _time.sleep(0.3)
+        assert not second_done.is_set()
+        assert not first_done.is_set()
+        release.set()
+        first.join(PIPELINE_TIMEOUT)
+        second.join(PIPELINE_TIMEOUT)
+        assert not first.is_alive()
+        assert not second.is_alive()
+        assert pipeline.state is PipelineState.CLOSED
+        assert events == ["end-start", "end-done"]
+    finally:
+        release.set()
+        run.close()
+    assert pipeline.state is PipelineState.CLOSED
+    deadline = __import__("time").monotonic() + 10.0
+    while __import__("threading").active_count() > baseline:
+        assert __import__("time").monotonic() < deadline
+        __import__("time").sleep(0.05)
+
+
+def test_close_during_slow_on_start_pairs_on_end():
+    """close() racing with a slow on_start terminates without hanging."""
+    import threading
+    import time
+
+    baseline = _active_baseline()
+    events = []
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowStartStage(TextReverser):
+        def on_start(self):
+            events.append("start")
+            started.set()
+            assert release.wait(timeout=PIPELINE_TIMEOUT)
+
+        def on_end(self):
+            events.append("end")
+
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(3))
+        .append("slow", SlowStartStage())
+        .build()
+    )
+    runner = threading.Thread(target=lambda: list(pipeline.run()), daemon=True)
+    runner.start()
+    try:
+        assert started.wait(PIPELINE_TIMEOUT)
+        closer = threading.Thread(target=pipeline.close, daemon=True)
+        closer.start()
+        release.set()
+        closer.join(PIPELINE_TIMEOUT)
+        assert not closer.is_alive()
+        runner.join(PIPELINE_TIMEOUT)
+        assert not runner.is_alive()
+        assert pipeline.state is PipelineState.CLOSED
+        assert events.count("start") == 1
+        assert events.count("end") == 1
+    finally:
+        release.set()
+        pipeline.close()
+    deadline = time.monotonic() + 10.0
+    while threading.active_count() > baseline:
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+
+
+def test_keyboard_interrupt_in_threads_stage_cleans_up():
+    """A KeyboardInterrupt inside a threads stage ends the run without hanging."""
+    import threading
+    import time
+
+    baseline = _active_baseline()
+    events = []
+
+    class InterruptStage(TextReverser):
+        def __init__(self):
+            self._seen = 0
+
+        def on_start(self):
+            events.append("start")
+
+        def on_end(self):
+            events.append("end")
+
+        def process(self, item):
+            self._seen += 1
+            if self._seen == 2:
+                raise KeyboardInterrupt("test interrupt")
+            return super().process(item)
+
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(10))
+        .append("interrupt", InterruptStage(), concurrency=2)
+        .build()
+    )
+    try:
+        with __import__("pytest").raises(KeyboardInterrupt):
+            run_with_timeout(pipeline, timeout=PIPELINE_TIMEOUT)
+    finally:
+        pipeline.close()
+    assert pipeline.state is PipelineState.CLOSED
+    assert events.count("start") >= 1
+    assert events.count("end") >= 1
+    deadline = time.monotonic() + 10.0
+    while threading.active_count() > baseline:
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
