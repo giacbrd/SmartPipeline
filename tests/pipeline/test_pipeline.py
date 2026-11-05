@@ -557,8 +557,8 @@ def test_process_rejects_concurrent_stages(stage, kwargs):
     pipeline = get_pipeline().append("stage", stage, **kwargs)
     with pytest.raises(ValueError, match="concurrent"):
         pipeline.process(text_item())
-    # the guard runs before build, so no stage has been constructed or started
-    assert pipeline.state is PipelineState.INITIAL
+    # the guard runs after build, so the pipeline is built but no stage has started
+    assert pipeline.state is PipelineState.BUILT
 
 
 def test_process_async_callback_error_is_delivered():

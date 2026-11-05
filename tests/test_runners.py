@@ -9,7 +9,6 @@ import pytest
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import Item, Stop
 from smartpipeline.runners import (
-    OnEndErrors,
     _call_on_end_after_abort,
     _call_on_end_best_effort,
     _call_on_start,
@@ -36,18 +35,6 @@ from tests.utils import (
 )
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
-
-
-def test_on_end_errors_type():
-    """OnEndErrors collects stage and error-manager termination failures."""
-    assert not OnEndErrors(None, None)
-    assert OnEndErrors(None, None).exceptions == []
-    first, second = RuntimeError("first"), ValueError("second")
-    assert OnEndErrors(first, None).exceptions == [first]
-    assert OnEndErrors(None, second).exceptions == [second]
-    result = OnEndErrors(first, second)
-    assert result
-    assert result.exceptions == [first, second]
 
 
 def test_runners_with_shared_counters():
@@ -301,7 +288,7 @@ def test_on_end_helpers_report_both_failures(caplog):
     """Both on_end hooks are attempted, their errors reported, the abort path only logs."""
     fatal = Event()
     result = _call_on_end_best_effort(BrokenOnEndErrorManager(), BrokenOnEndStage())
-    assert len(result.exceptions) == 2
+    assert len(result) == 2
     with pytest.raises(ExceptionGroup, match="failed on_end"):
         _raise_on_end_errors(result, BrokenOnEndStage(), fatal)
     assert fatal.is_set()

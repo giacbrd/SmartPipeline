@@ -484,7 +484,7 @@ def test_concurrent_initialization():
     items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
-        get_pipeline(max_init_workers=1)
+        get_pipeline()
         .set_source(RandomTextSource(100))
         .append(
             "reverser0", TextReverser, args=[20], concurrency=1, executor="processes"
@@ -498,7 +498,7 @@ def test_concurrent_initialization():
     items = run_with_timeout(pipeline)
     check_items(items, 100, pipeline)
     pipeline = (
-        get_pipeline(max_init_workers=1)
+        get_pipeline()
         .set_source(RandomTextSource(100))
         .append("slow_init", SlowInitializer, concurrency=1, executor="processes")
         .build()
@@ -778,7 +778,7 @@ def test_single_items(items_generator_fx):
     assert result.data["text"] != item.data["text"]
 
     pipeline = (
-        get_pipeline(max_init_workers=2)
+        get_pipeline()
         .append(
             "reverser0", TextReverser, args=[20], concurrency=1, executor="processes"
         )

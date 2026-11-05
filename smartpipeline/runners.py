@@ -5,7 +5,7 @@ import queue
 import time
 from logging.handlers import QueueHandler
 from threading import Event
-from typing import Callable, List, NamedTuple, Optional, Protocol, Sequence, TypeVar
+from typing import Callable, List, Optional, Protocol, Sequence, TypeVar
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.exceptions import BatchOutputError, RetryError
@@ -24,6 +24,8 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 StageTypeContravariant = TypeVar(
     "StageTypeContravariant", bound=StageType, contravariant=True
 )
+
+T = TypeVar("T")
 
 
 def _setup_process_logging(
@@ -65,67 +67,39 @@ def _call_on_start(
         raise
 
 
-class OnEndErrors(NamedTuple):
-    """
-    Best-effort outcome of the two `on_end` lifecycle hooks of a worker copy.
-
-    Each field holds the exception raised by that hook, or None when it succeeded.
-    There are exactly two slots — one per hook — so use `exceptions` to get the
-    raised errors instead of treating this as an arbitrary list.
-    """
-
-    error_manager_error: Optional[Exception]
-    stage_error: Optional[Exception]
-
-    @property
-    def exceptions(self) -> list[Exception]:
-        """The raised errors, error-manager first, skipping hooks that succeeded."""
-        return [
-            error
-            for error in (self.error_manager_error, self.stage_error)
-            if error is not None
-        ]
-
-    def __bool__(self) -> bool:
-        return self.error_manager_error is not None or self.stage_error is not None
-
-
 def _call_on_end_best_effort(
     error_manager: ErrorManager,
     stage: StageType,
-) -> OnEndErrors:
+) -> list[Exception]:
     """
     Run `on_end` lifecycle hooks attempting both, never raising.
 
-    :return: The per-hook outcome, with an error in a slot when that hook failed
+    :return: The raised errors, error-manager first, skipping hooks that succeeded.
     """
+    errors: list[Exception] = []
     try:
         error_manager.on_end()
     except Exception as e:
-        error_manager_error: Optional[Exception] = e
-    else:
-        error_manager_error = None
+        errors.append(e)
     try:
         stage.on_end()
     except Exception as e:
-        stage_error: Optional[Exception] = e
-    else:
-        stage_error = None
-    return OnEndErrors(error_manager_error, stage_error)
+        errors.append(e)
+    return errors
 
 
 def _raise_on_end_errors(
-    result: OnEndErrors,
+    errors: list[Exception],
     stage: StageType,
     fatal_event: Optional[Event] = None,
 ) -> None:
     """Report `on_end` failures as fatal pipeline errors."""
-    if not result:
+    if not errors:
         return
     stage.logger.exception("%s failed on_end", stage)
     if fatal_event is not None:
         fatal_event.set()
-    raise_collected_errors(result.exceptions, f"{stage} failed on_end")
+    raise_collected_errors(errors, f"{stage} failed on_end")
 
 
 def _call_on_end_after_abort(
@@ -142,10 +116,36 @@ def _call_on_end_after_abort(
     """
     if not on_multiprocess:
         return
-    for end_error in _call_on_end_best_effort(error_manager, stage).exceptions:
+    for end_error in _call_on_end_best_effort(error_manager, stage):
         stage.logger.exception(
             "%s failed on_end after an aborted put", stage, exc_info=end_error
         )
+
+
+def _retry(call: Callable[[], T], retry_manager: RetryManager) -> T | RetryError:
+    """
+    Run `call`, retrying only `retry_manager.retryable_errors` with exponential backoff.
+
+    Sleeps `2**(n-1) * backoff` between attempts, never after the last one, and
+    returns the built `RetryError` on exhaustion. Other exceptions propagate.
+    """
+    caught: list[Exception] = []
+    while True:
+        try:
+            return call()
+        except retry_manager.retryable_errors as exc:
+            if isinstance(exc, BatchOutputError):
+                # A broken batch contract is a programming error, never retry it.
+                raise
+            caught.append(exc)
+            if len(caught) > retry_manager.max_retries:
+                break
+            time.sleep(pow(2, len(caught) - 1) * retry_manager.backoff)
+    last = caught[-1]
+    attempts = "; ".join(f"{type(e).__name__}: {e}" for e in caught)
+    error = RetryError(f"failed after {len(caught)} attempts: {attempts}")
+    error.with_exception(last)
+    return error
 
 
 def process(
@@ -160,48 +160,33 @@ def process(
     if error_manager.check_critical_errors(item):
         return item
     time1 = time.perf_counter()
-    # keeping track of caught exceptions
-    caught_retryable_exceptions: List[Exception] = []
-    while True:
-        try:
-            stage.logger.debug("%s is processing %s", stage, item)
-            processed_item = stage.process(item)
-            stage.logger.debug("%s has finished processing %s", stage, processed_item)
-            # this can't be in a finally, otherwise it would register the `error_manager.handle` time
-            processed_item.set_timing(stage.name, time.perf_counter() - time1)
-            return processed_item
-        except retry_manager.retryable_errors as retryable_exc:
-            caught_retryable_exceptions.append(retryable_exc)
-            if len(caught_retryable_exceptions) > retry_manager.max_retries:
-                break
-            # Sleep only if another attempt is going to be made.
-            time.sleep(
-                pow(2, len(caught_retryable_exceptions) - 1) * retry_manager.backoff
-            )
-        except Exception as e:
-            stage.logger.debug("%s has failed processing %s", stage, item)
-            item.set_timing(stage.name, time.perf_counter() - time1)
-            error_manager.handle(e, stage, item)
-            return item
-    stage.logger.debug(
-        "%s has failed processing the %s many times with %s errors",
-        stage,
-        item,
-        len(caught_retryable_exceptions),
-    )
-    item.set_timing(stage.name, time.perf_counter() - time1)
-    last_retryable_exception = caught_retryable_exceptions[-1]
-    attempts = "; ".join(
-        f"{type(exc).__name__}: {exc}" for exc in caught_retryable_exceptions
-    )
-    error_manager.handle(
-        RetryError(
-            f"failed after {len(caught_retryable_exceptions)} attempts: {attempts}"
-        ).with_exception(last_retryable_exception),
-        stage,
-        item,
-    )
-    return item
+
+    def _call() -> Item[DataT]:
+        stage.logger.debug("%s is processing %s", stage, item)
+        processed_item = stage.process(item)
+        stage.logger.debug("%s has finished processing %s", stage, processed_item)
+        # this can't be in a finally, otherwise it would register the `error_manager.handle` time
+        return processed_item
+
+    try:
+        result = _retry(_call, retry_manager)
+    except Exception as e:
+        stage.logger.debug("%s has failed processing %s", stage, item)
+        item.set_timing(stage.name, time.perf_counter() - time1)
+        error_manager.handle(e, stage, item)
+        return item
+    if isinstance(result, RetryError):
+        stage.logger.debug(
+            "%s has failed processing the %s many times with %s errors",
+            stage,
+            item,
+            retry_manager.max_retries + 1,
+        )
+        item.set_timing(stage.name, time.perf_counter() - time1)
+        error_manager.handle(result, stage, item)
+        return item
+    result.set_timing(stage.name, time.perf_counter() - time1)
+    return result
 
 
 def process_batch(
@@ -222,69 +207,54 @@ def process_batch(
             stage.logger.debug("%s is going to process %s", stage, item)
             to_process[i] = item
     time1 = time.perf_counter()
-    # keeping track of caught exceptions
-    caught_retryable_exceptions: List[Exception] = []
-    while True:
-        try:
-            stage.logger.debug("%s is processing %s items", stage, len(to_process))
-            processed = stage.process_batch(list(to_process.values()))
-            if len(processed) != len(to_process):
-                raise BatchOutputError(
-                    f"{stage} returned {len(processed)} items for a batch of "
-                    f"{len(to_process)}; BatchStage.process_batch() must return "
-                    "exactly one item per input item"
-                )
-            stage.logger.debug(
-                "%s has finished processing %s items", stage, len(to_process)
+
+    def _call() -> Sequence[Item[DataT]]:
+        stage.logger.debug("%s is processing %s items", stage, len(to_process))
+        processed = stage.process_batch(list(to_process.values()))
+        if len(processed) != len(to_process):
+            raise BatchOutputError(
+                f"{stage} returned {len(processed)} items for a batch of "
+                f"{len(to_process)}; BatchStage.process_batch() must return "
+                "exactly one item per input item"
             )
-            spent = (time.perf_counter() - time1) / (len(to_process) or 1.0)
-            for n, i in enumerate(to_process.keys()):
-                item = processed[n]
-                item.set_timing(stage.name, spent)
-                ret[i] = item
-            return ret
-        except BatchOutputError:
-            # A broken batch contract is a programming error: it must not be
-            # retried nor downgraded to a per-item error.
-            raise
-        except retry_manager.retryable_errors as retryable_exc:
-            caught_retryable_exceptions.append(retryable_exc)
-            if len(caught_retryable_exceptions) > retry_manager.max_retries:
-                break
-            # Sleep only if another attempt is going to be made.
-            time.sleep(
-                pow(2, len(caught_retryable_exceptions) - 1) * retry_manager.backoff
-            )
-        except Exception as e:
-            stage.logger.debug(
-                "%s had failures in processing %s items", stage, len(to_process)
-            )
-            spent = (time.perf_counter() - time1) / (len(to_process) or 1.0)
-            for i, item in to_process.items():
-                item.set_timing(stage.name, spent)
-                error_manager.handle(e, stage, item)
-                ret[i] = item
-            return ret
-    stage.logger.debug(
-        "%s has failed in processing %s items many times with %s errors",
-        stage,
-        len(to_process),
-        len(caught_retryable_exceptions),
-    )
-    spent = (time.perf_counter() - time1) / (len(to_process) or 1.0)
-    last_retryable_exception = caught_retryable_exceptions[-1]
-    attempts = "; ".join(
-        f"{type(exc).__name__}: {exc}" for exc in caught_retryable_exceptions
-    )
-    for i, item in to_process.items():
-        item.set_timing(stage.name, spent)
-        error_manager.handle(
-            RetryError(
-                f"failed after {len(caught_retryable_exceptions)} attempts: {attempts}"
-            ).with_exception(last_retryable_exception),
-            stage,
-            item,
+        stage.logger.debug(
+            "%s has finished processing %s items", stage, len(to_process)
         )
+        return processed
+
+    try:
+        result = _retry(_call, retry_manager)
+    except BatchOutputError:
+        # A broken batch contract is a programming error: it must not be
+        # retried nor downgraded to a per-item error.
+        raise
+    except Exception as e:
+        stage.logger.debug(
+            "%s had failures in processing %s items", stage, len(to_process)
+        )
+        spent = (time.perf_counter() - time1) / (len(to_process) or 1.0)
+        for i, item in to_process.items():
+            item.set_timing(stage.name, spent)
+            error_manager.handle(e, stage, item)
+            ret[i] = item
+        return ret
+    if isinstance(result, RetryError):
+        stage.logger.debug(
+            "%s has failed in processing %s items many times with %s errors",
+            stage,
+            len(to_process),
+            retry_manager.max_retries + 1,
+        )
+        spent = (time.perf_counter() - time1) / (len(to_process) or 1.0)
+        for i, item in to_process.items():
+            item.set_timing(stage.name, spent)
+            error_manager.handle(result, stage, item)
+            ret[i] = item
+        return ret
+    spent = (time.perf_counter() - time1) / (len(to_process) or 1.0)
+    for n, i in enumerate(to_process.keys()):
+        item = result[n]
+        item.set_timing(stage.name, spent)
         ret[i] = item
     return ret
 
@@ -348,9 +318,7 @@ def stage_runner(
                     fatal_event.set()
                 if on_multiprocess:
                     # best effort closing, the original processing error is kept
-                    for end_error in _call_on_end_best_effort(
-                        error_manager, stage
-                    ).exceptions:
+                    for end_error in _call_on_end_best_effort(error_manager, stage):
                         stage.logger.exception(
                             "%s failed on_end after a processing error",
                             stage,
@@ -439,9 +407,7 @@ def batch_stage_runner(
                     fatal_event.set()
                 if on_multiprocess:
                     # best effort closing, the original processing error is kept
-                    for end_error in _call_on_end_best_effort(
-                        error_manager, stage
-                    ).exceptions:
+                    for end_error in _call_on_end_best_effort(error_manager, stage):
                         stage.logger.exception(
                             "%s failed on_end after a processing error",
                             stage,

@@ -177,6 +177,62 @@ class Item(Generic[DataT]):
         for e in self._critical_errors:
             yield e
 
+    @overload
+    def _add_error(
+        self,
+        stage: str,
+        exception: Exception,
+        error_cls: type[SoftError],
+        forbidden_cls: type[Exception],
+    ) -> SoftError: ...
+
+    @overload
+    def _add_error(
+        self,
+        stage: str,
+        exception: Exception,
+        error_cls: type[CriticalError],
+        forbidden_cls: type[Exception],
+    ) -> CriticalError: ...
+
+    def _add_error(
+        self,
+        stage: str,
+        exception: Exception,
+        error_cls: type[SoftError] | type[CriticalError],
+        forbidden_cls: type[Exception],
+    ) -> SoftError | CriticalError:
+        if not isinstance(exception, forbidden_cls):
+            if isinstance(exception, error_cls):
+                # preserve explicit chaining (`raise ... from e`)
+                # across pickling, where __cause__ is lost but _exception_cause survives
+                cause = getattr(exception, "__cause__", None)
+                if (
+                    cause is not None
+                    and getattr(exception, "_exception_cause", None) is None
+                ):
+                    exception.with_exception(cause)
+                exception.set_stage(stage)
+                if error_cls is CriticalError:
+                    assert isinstance(exception, CriticalError)
+                    self._critical_errors.append(exception)
+                else:
+                    assert isinstance(exception, SoftError)
+                    self._soft_errors.append(exception)
+                return exception
+            elif isinstance(exception, Exception):
+                error = error_cls(f"{type(exception).__name__}: {exception}")
+                error.with_exception(exception)
+                error.set_stage(stage)
+                if error_cls is CriticalError:
+                    assert isinstance(error, CriticalError)
+                    self._critical_errors.append(error)
+                else:
+                    assert isinstance(error, SoftError)
+                    self._soft_errors.append(error)
+                return error
+        raise ValueError(f"Add a pipeline {error_cls.__name__} or a generic exception")
+
     def add_soft_error(
         self, stage: str, exception: Union[SoftError, Exception]
     ) -> SoftError:
@@ -186,26 +242,7 @@ class Item(Generic[DataT]):
 
         :param exception: It can be an :class:`.error.exceptions.SoftError` instance or any exception, which will be encapsulated in an :class:`.error.exceptions.SoftError`
         """
-        if not isinstance(exception, CriticalError):
-            if isinstance(exception, SoftError):
-                # preserve explicit chaining (`raise SoftError(...) from e`)
-                # across pickling, where __cause__ is lost but _exception_cause survives
-                cause = getattr(exception, "__cause__", None)
-                if (
-                    cause is not None
-                    and getattr(exception, "_exception_cause", None) is None
-                ):
-                    exception.with_exception(cause)
-                exception.set_stage(stage)
-                self._soft_errors.append(exception)
-                return exception
-            elif isinstance(exception, Exception):
-                error = SoftError(f"{type(exception).__name__}: {exception}")
-                error.with_exception(exception)
-                error.set_stage(stage)
-                self._soft_errors.append(error)
-                return error
-        raise ValueError("Add a pipeline SoftError or a generic exception")
+        return self._add_error(stage, exception, SoftError, CriticalError)
 
     def add_critical_error(
         self, stage: str, exception: Union[CriticalError, Exception]
@@ -216,26 +253,7 @@ class Item(Generic[DataT]):
 
         :param exception: It can be a :class:`.error.exceptions.CriticalError` instance or any exception, which will be encapsulated in a :class:`.error.exceptions.CriticalError`
         """
-        if not isinstance(exception, SoftError):
-            if isinstance(exception, CriticalError):
-                # preserve explicit chaining (`raise CriticalError(...) from e`)
-                # across pickling, where __cause__ is lost but _exception_cause survives
-                cause = getattr(exception, "__cause__", None)
-                if (
-                    cause is not None
-                    and getattr(exception, "_exception_cause", None) is None
-                ):
-                    exception.with_exception(cause)
-                exception.set_stage(stage)
-                self._critical_errors.append(exception)
-                return exception
-            elif isinstance(exception, Exception):
-                error = CriticalError(f"{type(exception).__name__}: {exception}")
-                error.with_exception(exception)
-                error.set_stage(stage)
-                self._critical_errors.append(error)
-                return error
-        raise ValueError("Add a pipeline CriticalError or a generic exception")
+        return self._add_error(stage, exception, CriticalError, SoftError)
 
 
 class Stop(Item[Any]):

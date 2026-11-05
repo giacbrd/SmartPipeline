@@ -222,10 +222,9 @@ construction timing:
      - :meth:`.Pipeline.get_stage` returns ``None``
 
 **A class-based stage does not exist until ``build()``.** Class constructors run
-concurrently when several classes are appended, so slow constructors overlap;
-``build()`` waits for all of them before wiring the containers. This is useful when
-construction itself is slow, for example when it builds large in-memory data
-structures. ``args`` and ``kwargs`` are only valid with a class.
+one by one in append order; ``build()`` collects every failure before wiring
+the containers. Heavy setup belongs in ``on_start``, which already runs
+sequentially. ``args`` and ``kwargs`` are only valid with a class.
 
 Always finish the concatenation with :meth:`.Pipeline.build`.
 ``build()`` validates and prepares the pipeline: instance stages already exist,
