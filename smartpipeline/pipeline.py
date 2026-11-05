@@ -90,9 +90,7 @@ class _AsyncSource(Source[DataT]):
 
     def pop(self) -> Optional[Item[DataT]]:
         try:
-            item: Optional[Item[DataT]] = self._async_queue.get(
-                block=True, timeout=0.1
-            )
+            item: Optional[Item[DataT]] = self._async_queue.get(block=True, timeout=0.1)
             self._async_queue.task_done()
             return item
         except queue.Empty:
@@ -273,9 +271,7 @@ class Pipeline(Generic[DataT]):
                     termination_error = (
                         errors[0]
                         if len(errors) == 1
-                        else ExceptionGroup(
-                            "pipeline termination failed", errors
-                        )
+                        else ExceptionGroup("pipeline termination failed", errors)
                     )
             self._join_background(timeout)
         finally:

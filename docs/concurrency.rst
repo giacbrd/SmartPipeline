@@ -20,7 +20,13 @@ and what a stage must do to run correctly on threads and on processes.
 
 ``×N`` is the ``concurrency`` argument of :meth:`.Pipeline.append`
 (threads by default, processes with ``executor="processes"``).
-``concurrency=0`` means inline execution: no workers, no queues, no overlap.
+``concurrency=0`` means inline execution: no executor workers.
+
+Internally a pipeline compiles into *segments* with queues only *between* them:
+one concurrent stage becomes one segment with ``N`` workers, while a maximal run of
+``concurrency=0`` stages becomes one inline segment executed as a plain chain.
+A middle inline segment runs on one dedicated driver thread, the last inline segment
+runs on the caller's thread; a single inline pipeline uses no threads, queues or overlap.
 
 Concurrency vs. parallelism
 ---------------------------

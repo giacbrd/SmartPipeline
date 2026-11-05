@@ -2,8 +2,6 @@ import logging
 from queue import Queue
 from threading import Event, Thread
 
-import pytest
-
 from smartpipeline.defaults import LOGS_STOP_TIMEOUT
 from smartpipeline.utils import LogsReceiver
 from tests.utils import (

@@ -29,12 +29,17 @@ from queue import Queue
 from threading import Event, Lock, Thread, current_thread
 from typing import Any, Callable, Generic, Literal, Optional, Sequence
 
-from smartpipeline.defaults import CONCURRENCY_WAIT, MAX_QUEUES_SIZE
+from smartpipeline.defaults import MAX_QUEUES_SIZE
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import DataT, Item, Stop
-from smartpipeline.runners import process, process_batch, worker_loop
+from smartpipeline.runners import process, worker_loop
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage
-from smartpipeline.utils import LogsReceiver, get_or_abort, put_or_abort, raise_collected_errors
+from smartpipeline.utils import (
+    LogsReceiver,
+    get_or_abort,
+    put_or_abort,
+    raise_collected_errors,
+)
 
 __all__ = [
     "InlineSegment",
@@ -300,7 +305,9 @@ class Engine(Generic[DataT]):
             if isinstance(seg, InlineSegment):
                 seg.thread = thread
             self._threads.append(thread)
-        if not (len(self.segments) == 1 and isinstance(self.segments[0], InlineSegment)):
+        if not (
+            len(self.segments) == 1 and isinstance(self.segments[0], InlineSegment)
+        ):
             thread = Thread(target=self._source_loop, daemon=True)
             self._threads.append(thread)
         for thread in self._threads:
@@ -332,7 +339,9 @@ class Engine(Generic[DataT]):
         except BaseException as e:
             self._record(e)
 
-    def _inline_queue_driver(self, seg: InlineSegment[DataT], next_workers: int) -> None:
+    def _inline_queue_driver(
+        self, seg: InlineSegment[DataT], next_workers: int
+    ) -> None:
         assert seg.input_queue is not None and seg.output_queue is not None
         try:
             while True:
