@@ -34,6 +34,7 @@ from smartpipeline.defaults import (
 )
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import DataT, Item, Stop
+from smartpipeline.runners import process as _process_stage
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage
 from smartpipeline.utils import (
     LogsReceiver,
@@ -137,6 +138,13 @@ class Pipeline(Generic[DataT]):
         self._containers: OrderedDictType[
             str, StageContainer[DataT] | BatchStageContainer[DataT]
         ] = OrderedDict()
+        # Ordered stages for the synchronous `process()` path, no containers involved.
+        self._built_stages: OrderedDictType[str, Stage[DataT] | BatchStage[DataT]] = (
+            OrderedDict()
+        )
+        # Set once `stop()` is called, so `process()` can refuse new items
+        # without touching the source container.
+        self._stopped = False
         self._error_manager = ErrorManager()
         self._pipeline_executor: Optional[Thread] = None
         self._max_queues_size = max_queues_size
@@ -333,8 +341,10 @@ class Pipeline(Generic[DataT]):
         the resources of the containers already created.
         """
         self._containers = OrderedDict()
+        self._built_stages = OrderedDict()
         previous: BaseContainer = self._source_container
         for spec, stage in zip(specs, stages):
+            self._built_stages[spec.name] = stage
             container = self._build_container(
                 spec.name,
                 stage,
@@ -971,6 +981,7 @@ class Pipeline(Generic[DataT]):
         Process a single item synchronously (no concurrency) through the pipeline.
 
         A built pipeline can process several items one by one until it is closed.
+        It runs the stages directly, with no containers and no queues.
 
         :raises ValueError: When the pipeline contains concurrent stages
         :raises PipelineStateError: When the pipeline is running or closed
@@ -986,26 +997,25 @@ class Pipeline(Generic[DataT]):
         if self._state is PipelineState.CLOSED:
             raise PipelineStateError("The pipeline is closed")
         self._logger.debug("Processing %s on stages: %s", item, self._log_stages())
-        if self._source_container.is_stopped():
+        if self._stopped or isinstance(item, Stop):
             raise PipelineStateError(
                 "Cannot process item: the pipeline source is stopped"
             )
-        last_stage_name = last_key(self._containers)
-        self._source_container.prepend_item(item)
-        ret = None
-        for name, container in self._containers.items():
-            # process() rejects concurrent pipelines, so every container is inline
-            assert isinstance(container, StageContainer)
-            container.process()
-            if name == last_stage_name:
-                ret = self._get_processed_or_abort(container)
-        if self._is_fatal():
-            self._wait_for_runner_error()
-        if isinstance(ret, Stop):
-            raise PipelineStateError(
-                "Cannot process item: the pipeline source is stopped"
+        for name in self._built_stages:
+            spec = self._stage_specs[name]
+            stage = self._built_stages[name]
+            assert not isinstance(stage, BatchStage)
+            retry_manager = RetryManager(
+                backoff=spec.backoff,
+                max_retries=spec.max_retries,
+                retryable_errors=spec.retryable_errors,
             )
-        return ret or item
+            item = _process_stage(stage, item, self._error_manager, retry_manager)
+            if isinstance(item, Stop):
+                raise PipelineStateError(
+                    "Cannot process item: the pipeline source is stopped"
+                )
+        return item
 
     def process_async(
         self, item: Item[DataT], callback: Optional[Callable[[Item[DataT]], Any]] = None
@@ -1036,6 +1046,7 @@ class Pipeline(Generic[DataT]):
         Tell the source to stop to generate items and consequently terminate the pipeline
         after all "remaining" items are processed.
         """
+        self._stopped = True
         self._source_container.stop()
 
     def get_item(self, block: bool = True) -> Item[DataT]:
