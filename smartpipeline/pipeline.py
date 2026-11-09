@@ -13,11 +13,15 @@ from typing import Any, Callable, Generator, Generic, Literal, Mapping, Optional
 from typing import OrderedDict as OrderedDictType
 from typing import Self, Sequence, Tuple, Type, Union, cast, get_args, overload
 
-from smartpipeline.defaults import MAX_QUEUES_SIZE, PIPELINE_CLOSE_TIMEOUT
+from smartpipeline.defaults import (
+    CONCURRENCY_WAIT,
+    MAX_QUEUES_SIZE,
+    PIPELINE_CLOSE_TIMEOUT,
+)
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import DataT, Item, Stop
 from smartpipeline.runners import process as _process_stage
-from smartpipeline.segments import Engine, compile_segments
+from smartpipeline.segments import Engine, compile_segments, run_stage_on_ends
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage
 from smartpipeline.utils import put_or_abort, raise_collected_errors
 
@@ -90,7 +94,9 @@ class _AsyncSource(Source[DataT]):
 
     def pop(self) -> Optional[Item[DataT]]:
         try:
-            item: Optional[Item[DataT]] = self._async_queue.get(block=True, timeout=0.1)
+            item: Optional[Item[DataT]] = self._async_queue.get(
+                block=True, timeout=CONCURRENCY_WAIT
+            )
             self._async_queue.task_done()
             return item
         except queue.Empty:
@@ -150,7 +156,7 @@ class Pipeline(Generic[DataT]):
         self._pipeline_executor: Optional[Thread] = None
         self._async_queue: Optional[Queue] = None
         self._async_stopped: Event = Event()
-        self._started_main: list[tuple[str, Any]] = []
+        self._started_main: list[tuple[str, Stage[DataT] | BatchStage[DataT]]] = []
         self._error_manager_started = False
         self._name = f"{self.__class__.__name__}-{str(uuid.uuid4())[:8]}"
         self._logger = logging.getLogger(self._name)
@@ -219,7 +225,7 @@ class Pipeline(Generic[DataT]):
     def _has_concurrent(self) -> bool:
         return any(spec.concurrency > 0 for spec in self._stage_specs.values())
 
-    def close(self, timeout: float = PIPELINE_CLOSE_TIMEOUT):
+    def close(self, timeout: float = PIPELINE_CLOSE_TIMEOUT) -> None:
         """
         Close the pipeline, idempotently.
 
@@ -256,23 +262,14 @@ class Pipeline(Generic[DataT]):
                 except BaseException as e:
                     termination_error = e
             else:
-                errors: list[Exception] = []
-                for _, stage in list(self._started_main):
-                    try:
-                        stage.on_end()
-                    except Exception as e:
-                        errors.append(e)
-                if self._error_manager_started:
-                    try:
-                        self._error_manager.on_end()
-                    except Exception as e:
-                        errors.append(e)
-                if errors:
-                    termination_error = (
-                        errors[0]
-                        if len(errors) == 1
-                        else ExceptionGroup("pipeline termination failed", errors)
+                try:
+                    run_stage_on_ends(
+                        self._started_main,
+                        self._error_manager,
+                        self._error_manager_started,
                     )
+                except BaseException as e:
+                    termination_error = e
             self._join_background(timeout)
         finally:
             self._closed.set()
@@ -313,6 +310,7 @@ class Pipeline(Generic[DataT]):
                 raise PipelineStateError("The pipeline is already running")
             if not any(self._stage_specs):
                 raise ValueError("Must append at least a stage")
+
             self._logger.debug(
                 "Building the pipeline on stages: %s", self._log_stages()
             )
@@ -326,8 +324,6 @@ class Pipeline(Generic[DataT]):
                 self._state = PipelineState.CLOSED
                 self._closed.set()
                 raise
-            if self._state is PipelineState.CLOSED:
-                return self
             self._stages = OrderedDict(zip(self._stage_specs.keys(), stages))
             self._state = PipelineState.BUILT
             return self
@@ -355,18 +351,11 @@ class Pipeline(Generic[DataT]):
             self._error_manager.on_start()
             self._error_manager_started = True
         except BaseException:
-            errors: list[Exception] = []
-            for _, stage in list(self._started_main):
-                try:
-                    stage.on_end()
-                except Exception as e:
-                    errors.append(e)
-            self._started_main.clear()
-            self._error_manager_started = False
+            started, self._started_main = self._started_main, []
             self._state = PipelineState.CLOSED
             self._closed.set()
-            if errors:
-                raise_collected_errors(errors, "pipeline termination failed")
+            # the error manager never started if its own on_start raised
+            run_stage_on_ends(started, self._error_manager, False)
             raise
 
     def process(self, item: Item[DataT]) -> Item[DataT]:
@@ -393,9 +382,7 @@ class Pipeline(Generic[DataT]):
             raise PipelineStateError(
                 "Cannot process item: the pipeline source is stopped"
             )
-        for name in self._stages:
-            spec = self._stage_specs[name]
-            stage = self._stages[name]
+        for spec, stage in zip(self._stage_specs.values(), self._stages.values()):
             assert not isinstance(stage, BatchStage)
             retry_manager = RetryManager(
                 backoff=spec.backoff,
@@ -425,16 +412,14 @@ class Pipeline(Generic[DataT]):
         """
         if self._source is None:
             raise ValueError("Set the data source for this pipeline")
-        if self._state is PipelineState.RUNNING:
-            raise PipelineStateError("The pipeline is already running")
         self._ensure_built()
-        source = self._source
-        assert source is not None
-        engine = self._make_engine(source)
+        assert self._source is not None
         with self._lock:
             if self._state is PipelineState.CLOSED:
                 return
-            self._engine = engine
+            if self._state is not PipelineState.BUILT:
+                raise PipelineStateError("The pipeline is already running")
+            self._engine = engine = self._make_engine(self._source)
             try:
                 engine.start()
             except BaseException:
@@ -477,17 +462,18 @@ class Pipeline(Generic[DataT]):
         if callback is not None:
             item.set_callback(callback)
         if self._async_queue is None:
-            self._async_queue = Queue()
-            self._async_stopped = Event()
-            async_source: Source[DataT] = _AsyncSource(
-                self._async_queue, self._async_stopped
-            )
-            async_source.set_name(self._source_name)
-            engine = self._make_engine(async_source)
             with self._lock:
                 if self._state is PipelineState.CLOSED:
                     raise PipelineStateError("The pipeline is closed")
-                self._engine = engine
+                if self._state is not PipelineState.BUILT:
+                    raise PipelineStateError("The pipeline is already running")
+                self._async_queue = Queue()
+                self._async_stopped = Event()
+                async_source: Source[DataT] = _AsyncSource(
+                    self._async_queue, self._async_stopped
+                )
+                async_source.set_name(self._source_name)
+                self._engine = engine = self._make_engine(async_source)
                 try:
                     engine.start()
                 except BaseException:

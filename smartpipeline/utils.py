@@ -3,8 +3,6 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from abc import ABC, abstractmethod
-from multiprocessing.managers import SyncManager
 from queue import Queue
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -93,61 +91,6 @@ def get_or_abort(
             return items_queue.get(block=True, timeout=timeout)
         except queue.Empty:
             continue
-
-
-class ConcurrentCounter(ABC):
-    """
-    Interface for a counter that is safe for concurrent access
-    """
-
-    @abstractmethod
-    def __iadd__(self, incr: int) -> ConcurrentCounter:
-        return self
-
-    @property
-    @abstractmethod
-    def value(self) -> int:
-        return 0
-
-
-class ThreadCounter(ConcurrentCounter):
-    """
-    Thread safe counter
-    """
-
-    def __init__(self):
-        self._value = 0
-        self._lock = threading.Lock()
-
-    def __iadd__(self, incr: int) -> ThreadCounter:
-        with self._lock:
-            self._value += incr
-        return self
-
-    @property
-    def value(self) -> int:
-        with self._lock:
-            return self._value
-
-
-class ProcessCounter(ConcurrentCounter):
-    """
-    Process safe counter
-    """
-
-    def __init__(self, manager: SyncManager):
-        self._value = manager.Value("i", 0)
-        self._lock = manager.Lock()
-
-    def __iadd__(self, incr: int) -> ProcessCounter:
-        with self._lock:
-            self._value.value += incr
-        return self
-
-    @property
-    def value(self) -> int:
-        with self._lock:
-            return self._value.value
 
 
 class LogsReceiver:

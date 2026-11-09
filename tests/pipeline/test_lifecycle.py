@@ -219,7 +219,7 @@ def test_build_surfaces_stage_construction_errors():
             pipeline.build()
 
 
-def test_terminator_error_surfaces_during_run():
+def test_on_end_error_surfaces_during_run():
     """Slow on_end failures surface while the run terminates."""
     pipeline = (
         get_pipeline().set_source(RandomTextSource(2)).append("slow", SlowOnEndStage())
@@ -535,6 +535,26 @@ def test_error_manager_start_failure_pairs_stage_on_end():
     assert "error-manager:end" not in events
 
 
+@pytest.mark.parametrize("executor", ("threads", "processes"))
+def test_error_manager_start_failure_cancels_started_workers(executor):
+    """An error-manager on_start failure after worker submission cancels the run."""
+    events = []
+    pipeline = (
+        get_pipeline()
+        .set_error_manager(LifecycleErrorManager(events, fail_on_start=True))
+        .set_source(RandomTextSource(2))
+        .append("tracked", LifecycleStage(events), concurrency=2, executor=executor)
+        .build()
+    )
+    with cleanup_on_exit(pipeline):
+        with pytest.raises(RuntimeError, match="error manager on_start"):
+            run_with_timeout(pipeline)
+    assert pipeline.state is PipelineState.CLOSED
+    if executor == "threads":
+        assert "tracked:start" in events
+        assert "tracked:end" in events
+
+
 def test_source_can_be_set_after_build():
     """A source can be attached to a built pipeline before it starts."""
     events = []
@@ -754,3 +774,42 @@ def test_keyboard_interrupt_in_threads_stage_cleans_up():
     while threading.active_count() > baseline:
         assert time.monotonic() < deadline
         time.sleep(0.05)
+
+
+def test_run_does_not_double_start_a_starting_pipeline():
+    """A second run() while the first is still starting raises instead of starting a second engine."""
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowStartStage(TextReverser):
+        def on_start(self):
+            started.set()
+            assert release.wait(timeout=PIPELINE_TIMEOUT)
+
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(1))
+        .append("slow", SlowStartStage())
+        .build()
+    )
+    outcome: dict[str, object] = {}
+
+    def _run(tag: str) -> None:
+        try:
+            outcome[tag] = list(pipeline.run())
+        except BaseException as e:
+            outcome[tag] = e
+
+    with cleanup_on_exit(pipeline):
+        runner = Thread(target=_run, args=("first",), daemon=True)
+        runner.start()
+        assert started.wait(PIPELINE_TIMEOUT)
+        challenger = Thread(target=_run, args=("second",), daemon=True)
+        challenger.start()
+        time.sleep(0.2)  # let the challenger queue on the starting pipeline's lock
+        release.set()
+        challenger.join(PIPELINE_TIMEOUT)
+        runner.join(PIPELINE_TIMEOUT)
+        assert not challenger.is_alive() and not runner.is_alive()
+    assert isinstance(outcome["second"], PipelineStateError)
+    assert pipeline.state is PipelineState.CLOSED
