@@ -25,9 +25,8 @@ from concurrent.futures.process import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from multiprocessing import Manager, get_context
 from multiprocessing.managers import SyncManager
-from queue import Queue
 from threading import Event, Lock, Thread, current_thread
-from typing import Any, Callable, Generic, Literal, Optional, Sequence
+from typing import Any, Callable, Generator, Generic, Literal, Optional, Sequence
 
 from smartpipeline.defaults import MAX_QUEUES_SIZE
 from smartpipeline.error.handling import ErrorManager, RetryManager
@@ -49,8 +48,28 @@ __all__ = [
     "Engine",
 ]
 
-
 ExecutorName = Literal["threads", "processes"]
+StageInstance = Stage[Any] | BatchStage[Any]
+
+
+def run_stage_on_ends(
+    started_main: list[tuple[str, StageInstance]],
+    error_manager: ErrorManager,
+    error_manager_started: bool,
+) -> None:
+    """Run `on_end` for every started main-process stage and the error manager."""
+    errors: list[Exception] = []
+    for _, stage in list(started_main):
+        try:
+            stage.on_end()
+        except Exception as e:
+            errors.append(e)
+    if error_manager_started:
+        try:
+            error_manager.on_end()
+        except Exception as e:
+            errors.append(e)
+    raise_collected_errors(errors, "pipeline termination failed")
 
 
 @dataclass
@@ -175,14 +194,14 @@ class Engine(Generic[DataT]):
         self._threads: list[Thread] = []
         self._executors: list[Any] = []
         self._logs_receiver: Optional[LogsReceiver] = None
-        self._logs_queue: Optional[Queue] = None
-        self.started_main: list[tuple[str, Any]] = []
+        self._logs_queue: Optional[queue.Queue[logging.LogRecord]] = None
+        self.started_main: list[tuple[str, StageInstance]] = []
         self.error_manager_started = False
 
     def _new_queue(self) -> ItemsQueue:
         if self._manager is not None:
             return self._manager.Queue(maxsize=self.max_queues_size)
-        return Queue(maxsize=self.max_queues_size)
+        return queue.Queue(maxsize=self.max_queues_size)
 
     def _record(self, error: BaseException) -> None:
         with self._errors_lock:
@@ -212,7 +231,7 @@ class Engine(Generic[DataT]):
         if isinstance(last, ConcurrentSegment):
             last.output_queue = self._new_queue()
 
-    def _ensure_logs(self) -> Optional[Queue]:
+    def _ensure_logs(self) -> Optional[queue.Queue[logging.LogRecord]]:
         if not self.has_processes:
             return None
         assert self._manager is not None
@@ -279,7 +298,11 @@ class Engine(Generic[DataT]):
             self.error_manager.on_start()
             self.error_manager_started = True
         except BaseException:
-            self._run_on_end()
+            # workers are already submitted: abort them before waiting the executors
+            self.cancel.set()
+            run_stage_on_ends(
+                self.started_main, self.error_manager, self.error_manager_started
+            )
             self._shutdown_executors()
             raise
         for i, seg in enumerate(self.segments):
@@ -398,14 +421,10 @@ class Engine(Generic[DataT]):
             "pipeline run failed",
         )
 
-    def iter_results(self):
-        """Yield every item of the run, handling Stop, cancel and errors."""
-        from smartpipeline.item import Stop as _Stop
-        from smartpipeline.utils import get_or_abort as _get_or_abort
-
+    def iter_results(self) -> Generator[Item[DataT], None, None]:
+        """Yield every item of the run, handling `Stop`, `cancel` and errors."""
         if len(self.segments) == 1 and isinstance(self.segments[0], InlineSegment):
             seg = self.segments[0]
-            assert isinstance(seg, InlineSegment)
             while True:
                 self.check_errors()
                 if self.cancel.is_set():
@@ -422,40 +441,30 @@ class Engine(Generic[DataT]):
                 if raw is None:
                     continue
                 yield seg.run_chain(raw, self.error_manager)
-        elif isinstance(self.segments[-1], InlineSegment):
-            last = self.segments[-1]
-            assert isinstance(last, InlineSegment)
-            assert last.input_queue is not None
-            while True:
-                self.check_errors()
-                item_q: Optional[Item[DataT]] = _get_or_abort(
-                    last.input_queue, self.cancel.is_set
-                )
-                if item_q is None:
-                    self.check_errors()
-                    return
-                last.input_queue.task_done()
-                if isinstance(item_q, _Stop):
-                    self.check_errors()
-                    return
-                yield last.run_chain(item_q, self.error_manager)
         else:
-            last_c = self.segments[-1]
-            assert isinstance(last_c, ConcurrentSegment)
-            assert last_c.output_queue is not None
+            last = self.segments[-1]
+            # the caller consumes the final output queue, or the input queue of the
+            # last segment when that segment runs inline on this very thread
+            results: Optional[ItemsQueue] = (
+                last.input_queue
+                if isinstance(last, InlineSegment)
+                else last.output_queue
+            )
+            assert results is not None
             while True:
                 self.check_errors()
-                out_item: Optional[Item[DataT]] = _get_or_abort(
-                    last_c.output_queue, self.cancel.is_set
-                )
-                if out_item is None:
+                item: Optional[Item[DataT]] = get_or_abort(results, self.cancel.is_set)
+                if item is None:
                     self.check_errors()
                     return
-                last_c.output_queue.task_done()
-                if isinstance(out_item, _Stop):
+                results.task_done()
+                if isinstance(item, Stop):
                     self.check_errors()
                     return
-                yield out_item
+                if isinstance(last, InlineSegment):
+                    yield last.run_chain(item, self.error_manager)
+                else:
+                    yield item
 
     def join_threads(self, timeout: Optional[float] = None) -> None:
         for thread in list(self._threads):
@@ -479,28 +488,14 @@ class Engine(Generic[DataT]):
                         break
 
     def _run_on_end(self) -> None:
-        errors: list[Exception] = []
-        for _, stage in list(self.started_main):
-            try:
-                stage.on_end()
-            except Exception as e:
-                errors.append(e)
-        if self.error_manager_started:
-            try:
-                self.error_manager.on_end()
-            except Exception as e:
-                errors.append(e)
-        raise_collected_errors(errors, "pipeline termination failed")
+        run_stage_on_ends(
+            self.started_main, self.error_manager, self.error_manager_started
+        )
 
     def _shutdown_executors(self) -> None:
         for executor in self._executors:
             try:
                 executor.shutdown(wait=True, cancel_futures=True)
-            except TypeError:
-                try:
-                    executor.shutdown(wait=True)
-                except Exception:
-                    logging.exception("Problems in shutting down an executor")
             except Exception:
                 logging.exception("Problems in shutting down an executor")
         self._executors.clear()
@@ -519,6 +514,9 @@ class Engine(Generic[DataT]):
 
     def shutdown(self, run_on_end: bool = True) -> None:
         self.cancel.set()
+        # shortcut: a worker stuck inside user code cannot be interrupted, so this
+        # join and the executor shutdown wait for it; upgrade by killing/abandoning
+        # stuck workers if real-world hangs appear
         self.join_threads()
         # Futures may still run user code; cancel what never started.
         for seg in self.segments:

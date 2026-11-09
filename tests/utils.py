@@ -594,7 +594,7 @@ def run_with_timeout(
     thread.join(timeout)
     if thread.is_alive():
         # a stuck pipeline leaves its executions behind: abort it as a whole, so that
-        # non-daemon runner/terminator threads cannot keep the interpreter alive either
+        # non-daemon runner threads cannot keep the interpreter alive either
         _stop_pipeline_forced(pipeline)
         _close_with_timeout(pipeline)
         # `pytest.fail` is not an `Exception`, so it is never captured by `pytest.raises`
