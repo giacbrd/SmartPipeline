@@ -507,18 +507,20 @@ def test_append_stage_class_is_constructed_at_build():
     pipeline.close()
 
 
-def test_append_stage_class_with_args_and_kwargs():
+def test_append_stage_class_with_init_args_and_init_kwargs():
     """append() forwards constructor arguments to a class-based stage."""
-    pipeline = get_pipeline().append("reverser", TextReverser, args=[1])
+    pipeline = get_pipeline().append("reverser", TextReverser, init_args=[1])
     assert pipeline.process(text_item("hello")).data["text"] == "olleh"
-    pipeline = get_pipeline().append("reverser", TextReverser, kwargs={"cycles": 1})
+    pipeline = get_pipeline().append(
+        "reverser", TextReverser, init_kwargs={"cycles": 1}
+    )
     assert pipeline.process(text_item("hello")).data["text"] == "olleh"
 
 
 def test_append_rejects_constructor_args_for_an_instance():
     """Constructor arguments are only valid together with a stage class."""
     with pytest.raises(ValueError, match="stage class"):
-        get_pipeline().append("reverser", TextReverser(), args=[1])
+        get_pipeline().append("reverser", TextReverser(), init_args=[1])
 
 
 def test_append_concurrently_is_removed():

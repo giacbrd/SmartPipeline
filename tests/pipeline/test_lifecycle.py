@@ -198,7 +198,7 @@ def test_build_waits_for_slow_concurrent_init():
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(2))
-        .append("slow", SlowInitializer, args=[1])
+        .append("slow", SlowInitializer, init_args=[1])
     )
     with cleanup_on_exit(pipeline):
         pipeline.build()

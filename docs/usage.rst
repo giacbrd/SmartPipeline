@@ -245,14 +245,14 @@ construction timing:
    * - An instance, e.g. ``TextReplacer()``
      - Immediately, by the caller
      - The instance exists and :meth:`.Pipeline.get_stage` returns it
-   * - A class, optionally with ``args``/``kwargs``
+   * - A class, optionally with ``init_args``/``init_kwargs``
      - By :meth:`.Pipeline.build`
      - :meth:`.Pipeline.get_stage` returns ``None``
 
 **A class-based stage does not exist until ``build()``.** Class constructors run
 one by one in append order; ``build()`` collects every failure before wiring
 the containers. Heavy setup belongs in ``on_start``, which already runs
-sequentially. ``args`` and ``kwargs`` are only valid with a class.
+sequentially. ``init_args`` and ``init_kwargs`` are only valid with a class.
 
 Always finish the concatenation with :meth:`.Pipeline.build`.
 ``build()`` validates and prepares the pipeline: instance stages already exist,
