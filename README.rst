@@ -79,9 +79,7 @@ We define the source of the data and two stages, then we build and run the pipel
     import requests
     from sentence_transformers import SentenceTransformer
 
-    from smartpipeline.item import Item
-    from smartpipeline.pipeline import Pipeline
-    from smartpipeline.stage import BatchStage, Source, Stage
+    from smartpipeline import BatchStage, Item, Pipeline, Stage
 
 
     class NewsData(TypedDict):

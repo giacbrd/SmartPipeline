@@ -345,7 +345,7 @@ Put `*` after `stage` in both overloads and in the implementation, and optionall
 `args`/`kwargs`. Fix every call site in tests, docs and examples
 (`grep -rn "append(" docs examples tests README.rst`).
 
-### [ ] T4.4 Top-level exports [D-9]
+### [x] T4.4 Top-level exports [D-9]
 Export the agreed names from `smartpipeline/__init__.py` with an `__all__`. Avoid an
 import cycle (check `python -c "import smartpipeline"`). Update the `AGENTS.md` rule
 "exports nothing", the README imports, and add a test.
@@ -380,6 +380,10 @@ versions, then follow `CONTRIBUTING.md` (Git Flow release branch from `develop`)
 
 ## Notes
 <!-- tasks append findings and benchmark numbers here -->
+
+### Phase 4 (T4.1, T4.3, T4.4 done; T4.2 skipped)
+
+- T4.2 skipped per D-7 ("no"): critical errors stay skipped by default, no code change.
 
 ### T0.3 baseline benchmark (2026-11-05, `PYTHONPATH=. .venv/bin/python examples/benchmark.py`, 20k items)
 
