@@ -328,7 +328,7 @@ no hang, `on_end` pairing holds, and `threading.active_count()` returns to its b
 
 ## Phase 4 — Public API improvements (each gated by its decision)
 
-### [ ] T4.1 Iterable sources [D-6]
+### [x] T4.1 Iterable sources [D-6]
 `set_source(source: Source[DataT] | Iterable[Item[DataT]])`. An iterable is wrapped in
 a private `_IterableSource(Source)` whose `pop()` calls `next()` and calls `stop()` on
 `StopIteration`. Update the README example and `docs/usage.rst` to use a generator, and

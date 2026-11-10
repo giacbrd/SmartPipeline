@@ -56,3 +56,30 @@ def test_optional_payload_process():
     assert out.data is None
     out = pipeline.process(Item[Optional[str]]("hello"))
     assert out.data == "hello"
+
+
+def test_iterable_source_pipeline():
+    """A generator of typed items can be set as the pipeline source."""
+
+    def rows(count: int = 5):
+        for i in range(1, count + 1):
+            yield Item[TypedRow]({"id": str(i), "text": "hello"})
+
+    pipeline: Pipeline[TypedRow] = (
+        Pipeline[TypedRow]().set_source(rows()).append("upper", TypedRowUpper()).build()
+    )
+    items = run_with_timeout(pipeline)
+    assert len(items) == 5
+    assert sorted(item.data["id"] for item in items) == ["1", "2", "3", "4", "5"]
+    for item in items:
+        assert item.data["text"] == "HELLO"
+
+    pipeline = (
+        Pipeline[TypedRow]()
+        .set_source([Item[TypedRow]({"id": "1", "text": "hello"})])
+        .append("upper", TypedRowUpper())
+        .build()
+    )
+    items = run_with_timeout(pipeline)
+    assert len(items) == 1
+    assert items[0].data["text"] == "HELLO"

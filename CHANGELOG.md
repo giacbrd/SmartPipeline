@@ -30,6 +30,8 @@
   per worker, one `cancel` event, and errors via futures; custom stage runners
   (`stage_runner`/`batch_stage_runner`, `run(runner=...)`) have been removed
 - Batch stages always run with `concurrency=1` on a thread
+- `Pipeline.set_source()` accepts any iterable of items (e.g. a generator) besides
+a `Source`, wrapped in a private source which stops when the iterable is exhausted
 - `Pipeline.count` is defined as the number of items delivered by `run()` or
   `process_async()`, including items with soft errors; items processed one by one
   with `process()` are not counted

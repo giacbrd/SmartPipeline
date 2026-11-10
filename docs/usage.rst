@@ -80,6 +80,34 @@ Typical cases are: all documents in an index have been read,
 or all lines of a CSV file have been consumed.
 A source may also produce items indefinitely, in which case the pipeline never ends.
 
+Alternatively, :meth:`.Pipeline.set_source` accepts any iterable of items
+(e.g. a generator), which is wrapped in a private source stopping when exhausted:
+
+.. code-block:: python
+
+    def random_text_items(total=1000):
+        for count in range(1, total + 1):
+            text = ''.join(
+                random.choices(
+                    string.ascii_letters + string.digits,
+                    k=random.randint(50, 200)
+                )
+            )
+            item = Item()
+            item.data.update({
+                "text": text,
+                "id": hash(text)
+            })
+            item.metadata['count'] = count
+            yield item
+
+    pipeline = (
+        Pipeline()
+        .set_source(random_text_items())
+        .append("text_replacer", TextReplacer(substitution="XXX"))
+        .build()
+    )
+
 The following example defines a source that generates 1000 items,
 each carrying a random string in its data.
 

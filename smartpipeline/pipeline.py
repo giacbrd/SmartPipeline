@@ -9,7 +9,16 @@ from enum import Enum
 from inspect import isclass
 from queue import Queue
 from threading import Event, RLock, Thread, current_thread
-from typing import Any, Callable, Generator, Generic, Literal, Mapping, Optional
+from typing import (
+    Any,
+    Callable,
+    Generator,
+    Generic,
+    Iterable,
+    Literal,
+    Mapping,
+    Optional,
+)
 from typing import OrderedDict as OrderedDictType
 from typing import Self, Sequence, Tuple, Type, Union, cast, get_args, overload
 
@@ -102,6 +111,20 @@ class _AsyncSource(Source[DataT]):
         except queue.Empty:
             if self._stopped_event.is_set():
                 self.stop()
+            return None
+
+
+class _IterableSource(Source[DataT]):
+    """Wrap an iterable of items as a source, stopping when exhausted."""
+
+    def __init__(self, iterable: Iterable[Item[DataT]]):
+        self._iterator = iter(iterable)
+
+    def pop(self) -> Optional[Item[DataT]]:
+        try:
+            return next(self._iterator)
+        except StopIteration:
+            self.stop()
             return None
 
 
@@ -561,9 +584,11 @@ class Pipeline(Generic[DataT]):
                 "No pipeline is running asynchronously, no item can be retrieved from the output queue"
             )
 
-    def set_source(self, source: Source[DataT]) -> Self:
+    def set_source(self, source: Source[DataT] | Iterable[Item[DataT]]) -> Self:
         """
         Set the source of the pipeline: a subclass of :class:`.stage.Source`
+        or any iterable of items (e.g. a generator), wrapped in a private source
+        which stops when exhausted.
 
         A built pipeline without a source can still be given one, as long as it has
         not started running.
@@ -571,8 +596,11 @@ class Pipeline(Generic[DataT]):
         :raises PipelineStateError: When the pipeline is running or closed
         """
         self._require_not_running("set a source on")
-        source.set_name(self._source_name)
-        self._source = source
+        wrapped: Source[DataT] = (
+            source if isinstance(source, Source) else _IterableSource(source)
+        )
+        wrapped.set_name(self._source_name)
+        self._source = wrapped
         return self
 
     def set_error_manager(self, error_manager: ErrorManager) -> Self:

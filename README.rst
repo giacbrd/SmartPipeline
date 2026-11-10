@@ -73,7 +73,7 @@ We define the source of the data and two stages, then we build and run the pipel
 .. code-block:: python
 
     import re
-    from typing import Optional, Sequence, TypedDict
+    from typing import Generator, Sequence, TypedDict
 
     import feedparser
     import requests
@@ -90,21 +90,10 @@ We define the source of the data and two stages, then we build and run the pipel
         vector: list[float]
 
 
-    class FeedReader(Source[NewsData]):
-        def __init__(self):
-            feed = feedparser.parse("https://hnrss.org/newest")
-            self.urls = (entry.link for entry in feed.entries)
-
-        # pop method generates a new data item when called
-        def pop(self) -> Optional[Item[NewsData]]:
-            # each call of pop consumes a URL to send to the pipeline
-            url = next(self.urls, None)
-            if url is not None:
-                return Item[NewsData]({"url": url, "content": "", "vector": []})
-            # when all URLs are consumed we stop the pipeline
-            else:
-                self.stop()
-                return None
+    def feed() -> Generator[Item[NewsData], None, None]:
+        parsed = feedparser.parse("https://hnrss.org/newest")
+        for entry in parsed.entries:
+            yield Item[NewsData]({"url": entry.link, "content": "", "vector": []})
 
 
     class NewsRetrieve(Stage[NewsData]):
@@ -134,7 +123,7 @@ We define the source of the data and two stages, then we build and run the pipel
 
     pipeline: Pipeline[NewsData] = (
         Pipeline[NewsData]()
-        .set_source(FeedReader())
+        .set_source(feed())
         # with threads (the default) we speed up the multiple HTTP calls
         .append("retriever", NewsRetrieve(), concurrency=4)
         # each batch of items to vectorize will be of size 10
