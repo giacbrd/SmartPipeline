@@ -415,12 +415,14 @@ def test_stop_is_the_last_item():
 
 
 def test_concurrent_initialization():
-    """append wires batch stage classes with args and kwargs."""
+    """append wires batch stage classes with init_args and init_kwargs."""
     pipeline = (
         get_pipeline()
         .set_source(RandomTextSource(100))
-        .append("reverser0", BatchTextReverser, kwargs={"cycles": 3}, concurrency=2)
-        .append("reverser1", BatchTextReverser, args=[5], concurrency=0)
+        .append(
+            "reverser0", BatchTextReverser, init_kwargs={"cycles": 3}, concurrency=2
+        )
+        .append("reverser1", BatchTextReverser, init_args=[5], concurrency=0)
         .append("reverser2", BatchTextReverser(), concurrency=1)
         .append("duplicator", BatchTextDuplicator(), concurrency=2)
         .build()
@@ -434,7 +436,7 @@ def test_concurrent_initialization():
         .append(
             "reverser1",
             BatchTextReverser,
-            args=[10],
+            init_args=[10],
             concurrency=1,
             executor="processes",
         )
@@ -442,7 +444,7 @@ def test_concurrent_initialization():
         .append(
             "duplicator",
             BatchTextDuplicator,
-            args=[10],
+            init_args=[10],
             concurrency=2,
             executor="processes",
         )
@@ -486,17 +488,21 @@ def test_concurrent_initialization():
         .append(
             "reverser0",
             BatchTextReverser,
-            args=[20],
+            init_args=[20],
             concurrency=1,
             executor="processes",
         )
         .append(
-            "reverser1", BatchTextReverser, args=[20], concurrency=1, executor="threads"
+            "reverser1",
+            BatchTextReverser,
+            init_args=[20],
+            concurrency=1,
+            executor="threads",
         )
         .append(
             "duplicator",
             BatchTextDuplicator,
-            args=[20],
+            init_args=[20],
             concurrency=1,
             executor="processes",
         )
@@ -652,8 +658,10 @@ def test_single_items(items_generator_fx):
 
     pipeline = (
         get_pipeline()
-        .append("reverser0", BatchTextReverser, kwargs={"cycles": 3}, concurrency=2)
-        .append("reverser1", BatchTextReverser, args=[5], concurrency=0)
+        .append(
+            "reverser0", BatchTextReverser, init_kwargs={"cycles": 3}, concurrency=2
+        )
+        .append("reverser1", BatchTextReverser, init_args=[5], concurrency=0)
         .append("reverser2", BatchTextReverser(), concurrency=1)
         .append("duplicator", BatchTextDuplicator(), concurrency=2)
         .build()
@@ -672,7 +680,7 @@ def test_single_items(items_generator_fx):
         .append(
             "reverser1",
             BatchTextReverser,
-            args=[9],
+            init_args=[9],
             concurrency=1,
             executor="processes",
         )
@@ -680,7 +688,7 @@ def test_single_items(items_generator_fx):
         .append(
             "duplicator",
             BatchTextDuplicator,
-            args=[10],
+            init_args=[10],
             concurrency=2,
             executor="processes",
         )
@@ -747,17 +755,21 @@ def test_single_items(items_generator_fx):
         .append(
             "reverser0",
             BatchTextReverser,
-            args=[20],
+            init_args=[20],
             concurrency=1,
             executor="processes",
         )
         .append(
-            "reverser1", BatchTextReverser, args=[20], concurrency=1, executor="threads"
+            "reverser1",
+            BatchTextReverser,
+            init_args=[20],
+            concurrency=1,
+            executor="threads",
         )
         .append(
             "duplicator",
             BatchTextDuplicator,
-            args=[20],
+            init_args=[20],
             concurrency=1,
             executor="processes",
         )
@@ -796,8 +808,8 @@ def test_mixed_single_items(items_generator_fx):
 
     pipeline = (
         get_pipeline()
-        .append("reverser0", TextReverser, kwargs={"cycles": 3}, concurrency=2)
-        .append("reverser1", BatchTextReverser, args=[5], concurrency=0)
+        .append("reverser0", TextReverser, init_kwargs={"cycles": 3}, concurrency=2)
+        .append("reverser1", BatchTextReverser, init_args=[5], concurrency=0)
         .append("reverser2", TextReverser(), concurrency=1)
         .append("duplicator", BatchTextDuplicator(), concurrency=2)
         .build()
@@ -816,7 +828,7 @@ def test_mixed_single_items(items_generator_fx):
         .append(
             "reverser1",
             BatchTextReverser,
-            args=[9],
+            init_args=[9],
             concurrency=1,
             executor="processes",
         )
@@ -824,7 +836,7 @@ def test_mixed_single_items(items_generator_fx):
         .append(
             "duplicator",
             BatchTextDuplicator,
-            args=[10],
+            init_args=[10],
             concurrency=2,
             executor="processes",
         )

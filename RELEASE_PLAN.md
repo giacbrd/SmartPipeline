@@ -340,7 +340,7 @@ remove `raise_on_critical_error()`/`no_skip_on_critical_error()`, or keep
 `raise_on_critical_error` as a no-op if the maintainer prefers. Update
 `tests/utils.get_pipeline`, the docs, the CHANGELOG (BREAKING) and `AGENTS.md`.
 
-### [ ] T4.3 Keyword-only `append()` parameters [D-8]
+### [x] T4.3 Keyword-only `append()` parameters [D-8]
 Put `*` after `stage` in both overloads and in the implementation, and optionally rename
 `args`/`kwargs`. Fix every call site in tests, docs and examples
 (`grep -rn "append(" docs examples tests README.rst`).

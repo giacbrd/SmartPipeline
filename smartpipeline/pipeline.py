@@ -56,8 +56,8 @@ class StageSpec(Generic[DataT]):
     name: str
     stage: Optional[Stage[DataT] | BatchStage[DataT]] = None
     stage_class: Optional[Type[Stage[DataT]] | Type[BatchStage[DataT]]] = None
-    args: Tuple[Any, ...] = ()
-    kwargs: Mapping[str, Any] = field(default_factory=dict)
+    init_args: Tuple[Any, ...] = ()
+    init_kwargs: Mapping[str, Any] = field(default_factory=dict)
     concurrency: int = 0
     executor: ExecutorType = "threads"
     retryable_errors: Tuple[Type[Exception], ...] = ()
@@ -77,7 +77,7 @@ class StageSpec(Generic[DataT]):
         if self.stage is not None:
             return self.stage
         assert self.stage_class is not None
-        return self.stage_class(*self.args, **self.kwargs)
+        return self.stage_class(*self.init_args, **self.init_kwargs)
 
 
 class _AsyncPipelineError:
@@ -632,6 +632,7 @@ class Pipeline(Generic[DataT]):
         self,
         name: str,
         stage: Stage[DataT] | BatchStage[DataT],
+        *,
         concurrency: int = 0,
         executor: ExecutorType = "threads",
         retryable_errors: Tuple[Type[Exception], ...] = tuple(),
@@ -644,14 +645,14 @@ class Pipeline(Generic[DataT]):
         self,
         name: str,
         stage: Type[Stage[DataT]] | Type[BatchStage[DataT]],
+        *,
         concurrency: int = 0,
         executor: ExecutorType = "threads",
         retryable_errors: Tuple[Type[Exception], ...] = tuple(),
         max_retries: int = 0,
         backoff: Union[float, int] = 0.0,
-        *,
-        args: Optional[Sequence[Any]] = None,
-        kwargs: Optional[Mapping[str, Any]] = None,
+        init_args: Optional[Sequence[Any]] = None,
+        init_kwargs: Optional[Mapping[str, Any]] = None,
     ) -> Self: ...
 
     def append(
@@ -663,14 +664,14 @@ class Pipeline(Generic[DataT]):
             | Type[Stage[DataT]]
             | Type[BatchStage[DataT]]
         ),
+        *,
         concurrency: int = 0,
         executor: ExecutorType = "threads",
         retryable_errors: Tuple[Type[Exception], ...] = tuple(),
         max_retries: int = 0,
         backoff: Union[float, int] = 0.0,
-        *,
-        args: Optional[Sequence[Any]] = None,
-        kwargs: Optional[Mapping[str, Any]] = None,
+        init_args: Optional[Sequence[Any]] = None,
+        init_kwargs: Optional[Mapping[str, Any]] = None,
     ) -> Self:
         """
         Append a stage to the pipeline just after the last one appended, or after the source if it is the first stage.
@@ -679,10 +680,10 @@ class Pipeline(Generic[DataT]):
 
         * An **instance** is used as it is. It exists immediately, its name is set by
           this call, and :meth:`.Pipeline.get_stage` returns it before ``build()``.
-          ``args`` and ``kwargs`` are not accepted with an instance.
+          ``init_args`` and ``init_kwargs`` are not accepted with an instance.
         * A **class** is stored and constructed by :meth:`.Pipeline.build`,
           one by one in append order; its constructor receives
-          ``args`` and ``kwargs``. **A class-based stage does not exist until
+          ``init_args`` and ``init_kwargs``. **A class-based stage does not exist until
           ``build()`` runs**: before that, :meth:`.Pipeline.get_stage` returns ``None``
           for it.
 
@@ -697,8 +698,8 @@ class Pipeline(Generic[DataT]):
         :param retryable_errors: list of exceptions for which the stage applies an exponential backoff strategy. After the final failed attempt, a :class:`.error.exceptions.RetryError` soft error is attached to the item
         :param max_retries: maximum number of retries for the stage before attaching a RetryError(SoftError) (default 0)
         :param backoff: backoff factor for the `exponential backoff strategy` used by the stage when it raises one of the exceptions declared in `retryable_errors` param (default 0.0)
-        :param args: Positional arguments for the stage constructor, only valid with a stage class
-        :param kwargs: Keyword arguments for the stage constructor, only valid with a stage class
+        :param init_args: Positional arguments for the stage constructor, only valid with a stage class
+        :param init_kwargs: Keyword arguments for the stage constructor, only valid with a stage class
         :raises PipelineStateError: When the pipeline has already been built
         :raises ValueError: When the stage or its configuration is not valid
         """
@@ -721,13 +722,13 @@ class Pipeline(Generic[DataT]):
             if not issubclass(stage_cls, (Stage, BatchStage)):
                 raise ValueError("A stage class must extend Stage or BatchStage")
             stage_instance = None
-            constructor_args = tuple(args or ())
-            constructor_kwargs = dict(kwargs or {})
+            constructor_args = tuple(init_args or ())
+            constructor_kwargs = dict(init_kwargs or {})
             is_batch = issubclass(stage_cls, BatchStage)
         else:
-            if args is not None or kwargs is not None:
+            if init_args is not None or init_kwargs is not None:
                 raise ValueError(
-                    "`args` and `kwargs` are only valid when appending a stage class"
+                    "`init_args` and `init_kwargs` are only valid when appending a stage class"
                 )
             stage_instance = cast(Stage[DataT] | BatchStage[DataT], stage)
             if not isinstance(stage_instance, (Stage, BatchStage)):
@@ -748,8 +749,8 @@ class Pipeline(Generic[DataT]):
             name=name,
             stage=stage_instance,
             stage_class=stage_cls,
-            args=constructor_args,
-            kwargs=constructor_kwargs,
+            init_args=constructor_args,
+            init_kwargs=constructor_kwargs,
             concurrency=concurrency,
             executor=executor,
             retryable_errors=retryable_errors,

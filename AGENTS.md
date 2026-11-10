@@ -31,8 +31,7 @@ tests, run the full suite before finishing.
 
 Execution flows `pipeline.py -> segments.py -> runners.py`; read in that order.
 
-- `pipeline.py` — `Pipeline`: `set_source()`, `append()` (stage **instance or class**,
-  plus keyword-only `args`/`kwargs` for classes), `build()`,
+- `pipeline.py` — `Pipeline`: `set_source()` (a `Source` or an iterable of items), `append()` (stage **instance or class**, everything after `stage` keyword-only, plus `init_args`/`init_kwargs` for classes), `build()`,
   `run()`, `process()`/`process_async()`/`get_item()`/`stop()`, `close()`.
   `append()` only records a `StageSpec`: an instance stage exists and is named
   immediately, while `build()` constructs class-based stages one by one in order.
@@ -93,7 +92,7 @@ attempt one `RetryError` soft error is attached to the item.
   `BUILT`. `close()` is idempotent and runs `on_end`/resource release via the engine;
   a second `close()` waits on `_closed` instead of returning early.
 - `append()`/`set_error_manager()` raise `PipelineStateError` after `build()`;
-  `set_source()` is still allowed on `BUILT`. `append(..., args, kwargs)` is only valid
+  `set_source()` is still allowed on `BUILT`. `append(..., init_args, init_kwargs)` is only valid
   with a stage class.
   `process()` raises `ValueError` with any concurrent stage (use
   `run()`/`process_async()`), runs stages directly with no queues, and never returns `Stop`;

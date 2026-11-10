@@ -18,10 +18,11 @@
   removed, use `close()` instead. A failed start runs `on_end` only for the stages
   whose `on_start` completed
 - BREAKING CHANGE: `Pipeline.append()` accepts either a stage instance or a stage
-  class, with keyword-only `args`/`kwargs` for classes. An instance exists immediately,
+  class, with everything after `stage` keyword-only and `init_args`/`init_kwargs`
+  for classes (renamed from `args`/`kwargs`). An instance exists immediately,
   while a class-based stage does not exist before `build()`: `build()` constructs the
   classes one by one in order and stores them. The method is overloaded so type checkers reject
-  `args`/`kwargs` on an instance. `Pipeline.append_concurrently()` has been removed;
+  `init_args`/`init_kwargs` on an instance. `Pipeline.append_concurrently()` has been removed;
   pass the stage class to `append()` instead
 - Added the public `StageSpec` dataclass, describing a stage instance or class and
   its pipeline configuration
