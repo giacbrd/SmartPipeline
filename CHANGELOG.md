@@ -26,6 +26,9 @@
   pass the stage class to `append()` instead
 - Added the public `StageSpec` dataclass, describing a stage instance or class and
   its pipeline configuration
+- Added top-level exports: `Pipeline`, `Stage`, `BatchStage`, `Source`, `Item`,
+  `ErrorManager`, `SoftError` and `CriticalError` can be imported directly from
+  `smartpipeline`
 - The concurrency engine has been rewritten: pipelines compile into segments
   (`InlineSegment`, `ConcurrentSegment`) with queues only between them, one `Stop`
   per worker, one `cancel` event, and errors via futures; custom stage runners

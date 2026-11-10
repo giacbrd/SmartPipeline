@@ -71,8 +71,9 @@ Execution flows `pipeline.py -> segments.py -> runners.py`; read in that order.
   are skipped by default** — `raise_on_critical_error()` to raise).
 - `defaults.py` — `CONCURRENCY_WAIT=0.1`, `MAX_QUEUES_SIZE=1000`.
 
-`smartpipeline/__init__.py` exports nothing (`__author__`, `__version__` only) — always
-import from submodules (`from smartpipeline.pipeline import Pipeline`).
+`smartpipeline/__init__.py` exports the public names (`Pipeline`, `Stage`, `BatchStage`,
+`Source`, `Item`, `ErrorManager`, `SoftError`, `CriticalError` via `__all__`) — examples
+import from the top level (`from smartpipeline import Pipeline`).
 
 Payloads are generic: `Item[MyData]`/`Stage[MyData]`/`Source[MyData]`/`Pipeline[MyData]`;
 `Item()` infers `Item[Dict[str, Any]]`. Concurrency uses
