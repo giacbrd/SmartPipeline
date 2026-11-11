@@ -394,25 +394,16 @@ class Pipeline(Generic[DataT]):
         return self._count
 
     def _ensure_process_started(self) -> None:
-        if self._state is PipelineState.CLOSED:
-            raise PipelineStateError("The pipeline is closed")
         if self._process_started:
             return
         try:
             for name, stage in self._stages.items():
-                if self._state is PipelineState.CLOSED:
-                    raise PipelineStateError("The pipeline is closed")
                 stage.on_start()
                 if self._closed.is_set():
                     run_stage_on_ends([(name, stage)], self._error_manager, False)
                     raise PipelineStateError("The pipeline is closed")
                 self._started_main.append((name, stage))
-            if self._state is PipelineState.CLOSED:
-                raise PipelineStateError("The pipeline is closed")
             self._error_manager.on_start()
-            if self._closed.is_set():
-                run_stage_on_ends([], self._error_manager, True)
-                raise PipelineStateError("The pipeline is closed")
             self._error_manager_started = True
             self._process_started = True
         except PipelineStateError:
@@ -547,7 +538,6 @@ class Pipeline(Generic[DataT]):
         if self._async_queue is None:
             with self._lock:
                 if self._async_queue is None:
-                    self._ensure_built()
                     if self._state is PipelineState.CLOSED:  # pragma: no cover
                         # only reachable by a close() owning the lock before this thread
                         raise PipelineStateError("The pipeline is closed")
@@ -655,13 +645,7 @@ class Pipeline(Generic[DataT]):
         :raises BaseException: Whatever exception has made the asynchronous runner fail
         """
         if self._out_queue is not None:
-            if self._closed.is_set():
-                try:
-                    item = self._out_queue.get_nowait()
-                except queue.Empty:
-                    raise PipelineStateError("asynchronous run ended")
-            else:
-                item = self._out_queue.get(block)
+            item = self._out_queue.get(block)
             self._out_queue.task_done()
             if isinstance(item, _AsyncPipelineError):
                 try:

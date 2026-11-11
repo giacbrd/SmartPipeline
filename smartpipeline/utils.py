@@ -133,20 +133,14 @@ class LogsReceiver:
                 while True:
                     try:
                         record = queue.get()
-                    except (EOFError, OSError):
-                        # the queue has been closed, e.g. by the multiprocessing manager
-                        break
-                    if record is None:
-                        try:
+                        if record is None:
                             queue.task_done()
-                        except (EOFError, OSError):
-                            pass
-                        break
-                    logger = logging.getLogger(record.name)
-                    logger.handle(record)
-                    try:
+                            break
+                        logger = logging.getLogger(record.name)
+                        logger.handle(record)
                         queue.task_done()
                     except (EOFError, OSError):
+                        # the queue has been closed, e.g. by the multiprocessing manager
                         break
 
             self._thread = threading.Thread(

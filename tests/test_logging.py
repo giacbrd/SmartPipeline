@@ -107,6 +107,9 @@ def test_logs_receiver_eof_ends_thread():
         def get(self, *args, **kwargs):
             raise EOFError
 
+        def put(self, *args, **kwargs):
+            raise EOFError
+
     receiver = LogsReceiver(_EOFQueue())
     receiver.start()
     receiver._thread.join(timeout=2)
