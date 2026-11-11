@@ -20,12 +20,8 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 T = TypeVar("T")
 
 
-def _setup_process_logging(
-    logs_queue: Optional[queue.Queue[logging.LogRecord]],
-) -> None:
+def _setup_process_logging(logs_queue: queue.Queue[logging.LogRecord]) -> None:
     """Forward worker process logs to the main process through `logs_queue`."""
-    if logs_queue is None:
-        return
     root_logger = logging.getLogger()
     if not any(
         isinstance(handler, QueueHandler) and str(handler.queue) == str(logs_queue)
@@ -136,16 +132,15 @@ def process_batch(
     items: Sequence[Item[DataT]],
     error_manager: ErrorManager,
     retry_manager: RetryManager,
-) -> List[Optional[Item[DataT]]]:
+) -> List[Item[DataT]]:
     """
     Execute the :meth:`.stage.BatchStage.process_batch` method of a batch stage for a batch of items
     """
-    ret: List[Optional[Item]] = [None] * len(items)
+    # items already carrying a critical error keep their slot and skip the batch call
+    ret: List[Item[DataT]] = list(items)
     to_process = {}
     for i, item in enumerate(items):
-        if error_manager.check_critical_errors(item):
-            ret[i] = item
-        else:
+        if not error_manager.check_critical_errors(item):
             stage.logger.debug("%s is going to process %s", stage, item)
             to_process[i] = item
     if not to_process:
@@ -260,10 +255,7 @@ def _batch_worker_body(
                 break
             if nxt is not None:
                 batch.append(nxt)
-        results = process_batch(stage, batch, error_manager, retry_manager)
-        for res in results:
-            if res is None:
-                continue
+        for res in process_batch(stage, batch, error_manager, retry_manager):
             if not put_or_abort(out_queue, res, cancel.is_set):
                 return
         if got_stop:

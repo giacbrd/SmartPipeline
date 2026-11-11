@@ -12,7 +12,7 @@ core = sysmon
 [report]
 exclude_lines =
     pragma: no cover
-    pass
+    ^\s*pass\s*$
     @abstractmethod
     @overload
     ^\s*\.\.\.\s*$

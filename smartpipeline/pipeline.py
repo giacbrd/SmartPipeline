@@ -461,7 +461,9 @@ class Pipeline(Generic[DataT]):
         self._ensure_built()
         assert self._source is not None
         with self._lock:
-            if self._state is PipelineState.CLOSED:
+            if self._state is PipelineState.CLOSED:  # pragma: no cover
+                # only reachable by a close() taking the lock right after the check
+                # above: there is nothing to run, the pipeline is already terminated
                 return
             if self._state is not PipelineState.BUILT:
                 raise PipelineStateError("The pipeline is already running")
@@ -500,7 +502,9 @@ class Pipeline(Generic[DataT]):
         """
         if self._state is not PipelineState.RUNNING:
             self._ensure_built()
-        if self._state is PipelineState.CLOSED:
+        if self._state is PipelineState.CLOSED:  # pragma: no cover
+            # only reachable by a close() landing between the build check above
+            # and this one
             raise PipelineStateError("The pipeline is closed")
         if self._stopped or isinstance(item, Stop):
             raise PipelineStateError(
@@ -513,7 +517,8 @@ class Pipeline(Generic[DataT]):
             item.set_callback(callback)
         if self._async_queue is None:
             with self._lock:
-                if self._state is PipelineState.CLOSED:
+                if self._state is PipelineState.CLOSED:  # pragma: no cover
+                    # only reachable by a close() owning the lock before this thread
                     raise PipelineStateError("The pipeline is closed")
                 if self._state is not PipelineState.BUILT:
                     raise PipelineStateError("The pipeline is already running")
@@ -569,7 +574,8 @@ class Pipeline(Generic[DataT]):
                         return
                 try:
                     engine.check_errors()
-                except BaseException as e:
+                except BaseException as e:  # pragma: no cover
+                    # only reachable by an error recorded after iter_results' own check
                     _deliver(_AsyncPipelineError(e))
                     return
                 _deliver(_ASYNC_END)

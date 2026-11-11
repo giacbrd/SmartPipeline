@@ -3,7 +3,7 @@ from typing import Optional
 import pytest
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
-from smartpipeline.item import Item
+from smartpipeline.item import Item, Stop
 from tests.utils import TextReverser
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
@@ -81,3 +81,20 @@ def test_none_is_a_valid_payload():
     # the default payload is only used when the data is not given at all
     assert Item().data == {}
     assert Item({"a": 1}).data == {"a": 1}
+
+
+def test_timed_stages_lists_the_stages_with_a_timing():
+    """Only the stages which recorded a process time are listed."""
+    item = Item()
+    item.set_timing("reverser", 0.5)
+    item.set_timing("generator", 0.25)
+    assert set(item.timed_stages) == {"reverser", "generator"}
+    assert item.get_timing("reverser") == 0.5
+    assert not Item().timed_stages
+
+
+def test_stop_is_a_str_signal_item():
+    """The internal Stop sentinel reads as a stop signal carrying its id."""
+    stop = Stop()
+    assert str(stop) == f"Stop signal {stop.id}"
+    assert isinstance(stop, Item)

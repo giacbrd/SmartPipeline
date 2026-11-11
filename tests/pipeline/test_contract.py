@@ -655,3 +655,47 @@ def test_batch_stage_skipped_when_every_item_already_failed():
     items = run_with_timeout(pipeline)
     assert len(items) == 4
     assert calls == [], f"the batch stage ran on an empty batch: {calls}"
+
+
+def test_close_releases_an_async_runner_blocked_on_a_result():
+    """close() aborts an async runner waiting to deliver a result to nobody."""
+    pipeline = get_pipeline(max_queues_size=1).append("reverser", TextReverser())
+    pipeline.process_async(text_item("hello"))
+    pipeline.process_async(text_item("world"))
+    time.sleep(0.5)  # the first result fills the output queue, the second one blocks
+    closer = threading.Thread(target=pipeline.close, daemon=True)
+    started = time.monotonic()
+    closer.start()
+    closer.join(PIPELINE_TIMEOUT)
+    assert not closer.is_alive(), "close() stalled on the blocked async runner"
+    assert time.monotonic() - started < 5, "close() waited for the blocked runner"
+    assert pipeline.state is PipelineState.CLOSED
+
+
+def test_process_async_over_a_running_pipeline_raises():
+    """A pipeline already running its source cannot start a second async run."""
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingStage(TextReverser):
+        def process(self, item):
+            started.set()
+            assert release.wait(PIPELINE_TIMEOUT)
+            return super().process(item)
+
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(3))
+        .append("block", BlockingStage())
+        .build()
+    )
+    runner = threading.Thread(target=lambda: list(pipeline.run()), daemon=True)
+    runner.start()
+    try:
+        assert started.wait(PIPELINE_TIMEOUT)
+        with pytest.raises(PipelineStateError, match="already running"):
+            pipeline.process_async(text_item("late"))
+    finally:
+        release.set()
+        runner.join(PIPELINE_TIMEOUT)
+    assert pipeline.state is PipelineState.CLOSED

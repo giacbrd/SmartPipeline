@@ -487,6 +487,15 @@ def test_append_names_a_stage_instance_immediately():
     assert stage.name == "reverser"
 
 
+def test_source_str_is_its_name():
+    """A source stringifies to its name, generating one while it has none."""
+    source = RandomTextSource(1)
+    assert str(source) == source.name
+    assert str(source).startswith("RandomTextSource-")
+    source.set_name("source")
+    assert str(source) == "source"
+
+
 def test_append_stage_class_is_constructed_at_build():
     """append() accepts a stage class and defers its construction to build()."""
     events = []
