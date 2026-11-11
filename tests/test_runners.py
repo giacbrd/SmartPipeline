@@ -166,21 +166,26 @@ def test_worker_loop_on_start_failure_propagates_without_on_end():
     assert not [e for e in events if e.endswith(":end")]
 
 
-def test_worker_loop_on_end_failure_raises():
+def test_worker_loop_on_end_failure_raises(caplog):
     """An on_end failure on a clean exit is raised as fatal."""
     in_queue: Queue = Queue()
     in_queue.put(text_item("hello"))
     in_queue.put(Stop())
-    with pytest.raises(RuntimeError, match="test on_end failure"):
-        worker_loop(
-            BrokenOnEndStage(),
-            in_queue,
-            Queue(),
-            ErrorManager(),
-            RetryManager(),
-            Event(),
-            Queue(),
-        )
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError, match="test on_end failure"):
+            worker_loop(
+                BrokenOnEndStage(),
+                in_queue,
+                Queue(),
+                ErrorManager(),
+                RetryManager(),
+                Event(),
+                Queue(),
+            )
+    assert any(
+        record.exc_info is not None and "test on_end failure" in str(record.exc_info[1])
+        for record in caplog.records
+    )
 
 
 def test_worker_loop_error_manager_on_end_failure_raises():

@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import logging
-import uuid
 from typing import Any, Optional, Tuple, Type, Union
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.item import Item
-from smartpipeline.stage import AliveMixin
+from smartpipeline.stage import AliveMixin, ConstructorMixin
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
@@ -14,7 +12,7 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 __all__ = ["ErrorManager", "RetryManager"]
 
 
-class ErrorManager:
+class ErrorManager(AliveMixin, ConstructorMixin):
     """
     Basic error handling of a pipeline, principally manages :class:`.exceptions.SoftError` and :class:`.exceptions.CriticalError` types
     """
@@ -38,30 +36,6 @@ class ErrorManager:
         """
         self._skip_on_critical = False
         return self
-
-    def on_start(self) -> Any:
-        """
-        Called for a concurrent stage executor in a process (only when multiprocessing concurrency)
-        or simply after construction, by the pipeline.
-        The error manager in the executor is a copy of the original,
-        by overriding this method one can initialize variables specifically for the copies, that is mandatory
-        when they are not serializable.
-
-        Any exception raised here is fatal for the whole pipeline and is
-        reported to the pipeline caller (on `build()`/`run()`) instead of
-        hanging the execution without feedback.
-        """
-        pass
-
-    def on_end(self) -> Any:
-        """
-        Called when the pipeline terminates, useful for executing closing operations (e.g. on files)
-
-        Any exception raised here is fatal for the whole pipeline and is
-        reported to the pipeline caller on termination instead of hanging
-        the execution without feedback.
-        """
-        pass
 
     def handle(
         self, error: Exception, stage: AliveMixin, item: Item[Any]
@@ -90,14 +64,6 @@ class ErrorManager:
             if exception:
                 return item_error
         return None
-
-    @property
-    def logger(self) -> logging.Logger:
-        if getattr(self, "_logger", None) is None:
-            self._logger = logging.getLogger(
-                f"{self.__class__.__name__}-{str(uuid.uuid4())[:8]}"
-            )
-        return self._logger
 
     def _check_critical(
         self, error: CriticalError

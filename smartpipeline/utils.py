@@ -133,15 +133,21 @@ class LogsReceiver:
                 while True:
                     try:
                         record = queue.get()
-                    except EOFError:
+                    except (EOFError, OSError):
                         # the queue has been closed, e.g. by the multiprocessing manager
                         break
                     if record is None:
-                        queue.task_done()
+                        try:
+                            queue.task_done()
+                        except (EOFError, OSError):
+                            pass
                         break
                     logger = logging.getLogger(record.name)
                     logger.handle(record)
-                    queue.task_done()
+                    try:
+                        queue.task_done()
+                    except (EOFError, OSError):
+                        break
 
             self._thread = threading.Thread(
                 target=_receiver, args=(self._logs_queue,), daemon=True
@@ -155,7 +161,10 @@ class LogsReceiver:
         cannot be joined, as its unfinished tasks would never be marked as done
         """
         if self._thread is not None:
-            self._logs_queue.put(None)
+            try:
+                self._logs_queue.put(None)
+            except (EOFError, OSError):
+                pass
             self._thread.join(timeout=self._stop_timeout)
             if self._thread.is_alive():
                 logging.warning(

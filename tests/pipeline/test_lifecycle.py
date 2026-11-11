@@ -414,6 +414,26 @@ def test_get_item_after_async_run_end_raises():
         get_item_with_timeout(pipeline, timeout=5.0)
     pipeline.close()
 
+    # get_item() after close() and after an async callback failure must also raise
+    # instead of blocking forever
+    closed_async = get_pipeline().append("reverser", TextReverser()).build()
+    closed_async.process_async(text_item("hello"))
+    assert get_item_with_timeout(closed_async).data["text"] == "olleh"
+    closed_async.close()
+    with pytest.raises(PipelineStateError, match="asynchronous run ended"):
+        get_item_with_timeout(closed_async, timeout=5.0)
+
+    failed_async = get_pipeline().append("reverser", TextReverser()).build()
+    failed_async.process_async(
+        text_item("hello"),
+        callback=lambda _: (_ for _ in ()).throw(RuntimeError("callback boom")),
+    )
+    failed_async.stop()
+    with pytest.raises(RuntimeError, match="callback boom"):
+        get_item_with_timeout(failed_async, timeout=5.0)
+    with pytest.raises(PipelineStateError, match="asynchronous run ended"):
+        get_item_with_timeout(failed_async, timeout=5.0)
+
 
 def test_builder_methods_rejected_after_build():
     """Builder methods are rejected once the pipeline is built."""
@@ -905,6 +925,7 @@ def test_process_start_failure_ends_the_stages_which_started():
 
 def test_process_refuses_items_when_close_wins_the_start_race():
     """A pipeline closed while its stages start never processes another item."""
+    events: list = []
 
     class ClosingOnStartStage(TextReverser):
         def __init__(self, closer):
@@ -912,15 +933,25 @@ def test_process_refuses_items_when_close_wins_the_start_race():
             self._closer = closer
 
         def on_start(self):
+            events.append("closer:start")
             self._closer()
+
+        def on_end(self):
+            events.append("closer:end")
 
         def process(self, item):
             raise AssertionError("a closed pipeline cannot process items")
 
-    pipeline = get_pipeline().append("reverser", TextReverser())
-    pipeline.append("closer", ClosingOnStartStage(pipeline.close)).build()
+    pipeline = (
+        get_pipeline()
+        .set_error_manager(LifecycleErrorManager(events))
+        .append("first", LifecycleStage(events))
+    )
+    pipeline.append("closer", ClosingOnStartStage(pipeline.close))
+    pipeline.append("third", LifecycleStage(events)).build()
     with pytest.raises(PipelineStateError, match="The pipeline is closed"):
         pipeline.process(text_item())
+    assert events == ["first:start", "closer:start", "first:end", "closer:end"]
 
 
 def test_process_refuses_an_item_which_became_a_stop():
@@ -968,3 +999,77 @@ def test_async_run_logs_the_on_end_failure_of_its_own_close(caplog):
             # the consumer closes its own run: wait for its thread to log the failure
             pipeline._pipeline_executor.join(PIPELINE_TIMEOUT)
         assert "Problems in closing an async run" in caplog.text
+
+
+def test_concurrent_process_async_startup_serializes():
+    """Concurrent initial process_async() calls wait for engine startup."""
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowStartStage(TextReverser):
+        def on_start(self):
+            started.set()
+            assert release.wait(timeout=PIPELINE_TIMEOUT)
+
+    pipeline = get_pipeline().append("slow", SlowStartStage()).build()
+    second_done = threading.Event()
+    with cleanup_on_exit(pipeline):
+        first = Thread(
+            target=lambda: pipeline.process_async(text_item("a")), daemon=True
+        )
+        first.start()
+        assert started.wait(PIPELINE_TIMEOUT)
+        second = Thread(
+            target=lambda: (
+                pipeline.process_async(text_item("b")),
+                second_done.set(),
+            ),
+            daemon=True,
+        )
+        second.start()
+        time.sleep(0.1)
+        assert not second_done.is_set()
+        release.set()
+        first.join(PIPELINE_TIMEOUT)
+        second.join(PIPELINE_TIMEOUT)
+        pipeline.stop()
+        texts = {get_item_with_timeout(pipeline).data["text"] for _ in range(2)}
+        assert texts == {"a", "b"}
+
+
+def test_close_during_inline_source_pop_skips_stage_process():
+    """Closing while an inline run is in source.pop() never calls process after on_end."""
+    in_pop = threading.Event()
+    release_pop = threading.Event()
+
+    class BlockingSource(RandomTextSource):
+        def __init__(self):
+            super().__init__(2)
+
+        def pop(self):
+            if self.counter == 1:
+                in_pop.set()
+                assert release_pop.wait(timeout=PIPELINE_TIMEOUT)
+            return super().pop()
+
+    events: list = []
+    pipeline = (
+        get_pipeline()
+        .set_source(BlockingSource())
+        .append("tracked", LifecycleStage(events))
+        .build()
+    )
+    run = pipeline.run()
+    try:
+        assert next_with_timeout(run, pipeline=pipeline)
+        consumer = Thread(target=lambda: list(run), daemon=True)
+        consumer.start()
+        assert in_pop.wait(PIPELINE_TIMEOUT)
+        pipeline.close()
+        release_pop.set()
+        consumer.join(PIPELINE_TIMEOUT)
+        assert not consumer.is_alive()
+    finally:
+        release_pop.set()
+        run.close()
+    assert events == ["tracked:start", "tracked:process", "tracked:end"]

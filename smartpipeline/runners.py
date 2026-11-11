@@ -58,7 +58,8 @@ def _raise_on_end_errors(
     """Report `on_end` failures as fatal pipeline errors."""
     if not errors:
         return
-    stage.logger.exception("%s failed on_end", stage)
+    for error in errors:
+        stage.logger.exception("%s failed on_end", stage, exc_info=error)
     raise_collected_errors(errors, f"{stage} failed on_end")
 
 
@@ -103,6 +104,10 @@ def process(
     def _call() -> Item[DataT]:
         stage.logger.debug("%s is processing %s", stage, item)
         processed_item = stage.process(item)
+        if processed_item is None:
+            raise ValueError(
+                f"{stage} returned None; Stage.process() must return an Item"
+            )
         stage.logger.debug("%s has finished processing %s", stage, processed_item)
         return processed_item
 
@@ -152,9 +157,10 @@ def process_batch(
     def _call() -> Sequence[Item[DataT]]:
         stage.logger.debug("%s is processing %s items", stage, len(to_process))
         processed = stage.process_batch(list(to_process.values()))
-        if len(processed) != len(to_process):
+        if processed is None or len(processed) != len(to_process):
+            returned = "None" if processed is None else f"{len(processed)} items"
             raise BatchOutputError(
-                f"{stage} returned {len(processed)} items for a batch of "
+                f"{stage} returned {returned} for a batch of "
                 f"{len(to_process)}; BatchStage.process_batch() must return "
                 "exactly one item per input item"
             )
@@ -163,6 +169,7 @@ def process_batch(
         )
         return processed
 
+    batch_error: Optional[Exception] = None
     try:
         result = _retry(_call, retry_manager)
     except BatchOutputError:
@@ -171,26 +178,24 @@ def process_batch(
         stage.logger.debug(
             "%s had failures in processing %s items", stage, len(to_process)
         )
-        spent = (time.perf_counter() - time1) / (len(to_process) or 1.0)
-        for i, item in to_process.items():
-            item.set_timing(stage.name, spent)
-            error_manager.handle(e, stage, item)
-            ret[i] = item
-        return ret
-    if isinstance(result, RetryError):
-        stage.logger.debug(
-            "%s has failed in processing %s items many times with %s errors",
-            stage,
-            len(to_process),
-            retry_manager.max_retries + 1,
-        )
-        spent = (time.perf_counter() - time1) / (len(to_process) or 1.0)
-        for i, item in to_process.items():
-            item.set_timing(stage.name, spent)
-            error_manager.handle(result, stage, item)
-            ret[i] = item
-        return ret
+        batch_error = e
+    else:
+        if isinstance(result, RetryError):
+            stage.logger.debug(
+                "%s has failed in processing %s items many times with %s errors",
+                stage,
+                len(to_process),
+                retry_manager.max_retries + 1,
+            )
+            batch_error = result
     spent = (time.perf_counter() - time1) / (len(to_process) or 1.0)
+    if batch_error is not None:
+        for i, item in to_process.items():
+            item.set_timing(stage.name, spent)
+            error_manager.handle(batch_error, stage, item)
+            ret[i] = item
+        return ret
+    assert not isinstance(result, RetryError)
     for n, i in enumerate(to_process.keys()):
         item = result[n]
         item.set_timing(stage.name, spent)
@@ -242,13 +247,15 @@ def _batch_worker_body(
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
-            if cancel.is_set():
-                return
             try:
+                if cancel.is_set():
+                    return
                 # poll in short slices, so a long `timeout` never delays a cancellation
                 nxt = in_queue.get(block=True, timeout=min(CONCURRENCY_WAIT, remaining))
             except queue.Empty:
                 continue
+            except (EOFError, OSError):
+                return
             in_queue.task_done()
             if isinstance(nxt, Stop):
                 got_stop = True
