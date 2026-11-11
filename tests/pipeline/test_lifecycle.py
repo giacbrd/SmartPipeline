@@ -1,3 +1,4 @@
+import multiprocessing
 import threading
 import time
 from threading import Thread
@@ -813,3 +814,26 @@ def test_run_does_not_double_start_a_starting_pipeline():
         assert not challenger.is_alive() and not runner.is_alive()
     assert isinstance(outcome["second"], PipelineStateError)
     assert pipeline.state is PipelineState.CLOSED
+
+
+def test_start_rollback_releases_workers_when_on_end_fails():
+    """A failing on_end during the start rollback still releases executors and manager."""
+    baseline = {child.pid for child in multiprocessing.active_children()}
+    pipeline = (
+        get_pipeline()
+        .set_error_manager(BrokenOnStartErrorManager())
+        .set_source(RandomTextSource(3))
+        .append("boom", BrokenOnEndStage())
+        .append("workers", TextReverser(), concurrency=2, executor="processes")
+        .build()
+    )
+    with cleanup_on_exit(pipeline):
+        with pytest.raises(RuntimeError, match="error manager on_start"):
+            run_with_timeout(pipeline)
+    assert pipeline.state is PipelineState.CLOSED
+    leaked = [
+        child
+        for child in multiprocessing.active_children()
+        if child.pid not in baseline and child.is_alive()
+    ]
+    assert not leaked, f"the failed start leaked processes: {leaked}"

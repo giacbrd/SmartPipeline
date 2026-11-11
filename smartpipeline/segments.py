@@ -25,7 +25,7 @@ from concurrent.futures.process import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from multiprocessing import Manager, get_context
 from multiprocessing.managers import SyncManager
-from threading import Event, Lock, Thread, current_thread
+from threading import Event, Lock, RLock, Thread, current_thread
 from typing import Any, Callable, Generator, Generic, Literal, Optional, Sequence
 
 from smartpipeline.defaults import MAX_QUEUES_SIZE
@@ -138,11 +138,7 @@ def compile_segments(
             inline_retries.clear()
 
     for spec, stage in zip(specs, stages):
-        retry_manager = RetryManager(
-            backoff=spec.backoff,
-            max_retries=spec.max_retries,
-            retryable_errors=spec.retryable_errors,
-        )
+        retry_manager = spec.retry_manager
         if spec.concurrency <= 0:
             assert not isinstance(stage, BatchStage)
             assert isinstance(stage, Stage)
@@ -173,7 +169,14 @@ class Engine(Generic[DataT]):
         error_manager: ErrorManager,
         source: Source[DataT],
         max_queues_size: int = MAX_QUEUES_SIZE,
+        started_main: Optional[list[tuple[str, StageInstance]]] = None,
+        error_manager_started: bool = False,
     ):
+        """
+        :param started_main: Stages whose `on_start` already ran in this process, so that
+            they are not started twice (a pipeline can have processed items with
+            :meth:`.Pipeline.process` before running its source)
+        """
         self.segments = segments
         self.error_manager = error_manager
         self.source = source
@@ -195,8 +198,13 @@ class Engine(Generic[DataT]):
         self._executors: list[Any] = []
         self._logs_receiver: Optional[LogsReceiver] = None
         self._logs_queue: Optional[queue.Queue[logging.LogRecord]] = None
-        self.started_main: list[tuple[str, StageInstance]] = []
-        self.error_manager_started = False
+        # `process()` may already have started the main-process stages of this pipeline
+        self.started_main = list(started_main) if started_main is not None else []
+        self.error_manager_started = error_manager_started
+        # guards the main-process stages, so `on_end` never runs while a stage is still
+        # processing an item on the caller's thread; reentrant, since a stage may close
+        # the pipeline from inside its own `process`
+        self._stage_lock = RLock()
 
     def _new_queue(self) -> ItemsQueue:
         if self._manager is not None:
@@ -209,6 +217,9 @@ class Engine(Generic[DataT]):
         self.cancel.set()
 
     def _done_callback(self, future: Future) -> None:
+        if future.cancelled():
+            # a future cancelled on shutdown never ran, so it reports no error
+            return
         try:
             exc = future.exception()
         except Exception as e:
@@ -245,16 +256,19 @@ class Engine(Generic[DataT]):
     def start(self) -> None:
         self._wire_queues()
         logs_queue = self._ensure_logs()
+        started = {name for name, _ in self.started_main}
         try:
             for seg in self.segments:
                 if isinstance(seg, InlineSegment):
                     for name, stage in zip(seg.names, seg.stages):
+                        if name in started:
+                            continue
                         stage.on_start()
                         self.started_main.append((name, stage))
                 else:
                     assert isinstance(seg, ConcurrentSegment)
                     assert seg.stage is not None and seg.retry_manager is not None
-                    if seg.executor_name == "threads":
+                    if seg.executor_name == "threads" and seg.name not in started:
                         seg.stage.on_start()
                         self.started_main.append((seg.name, seg.stage))
             for seg in self.segments:
@@ -295,15 +309,21 @@ class Engine(Generic[DataT]):
                     )
                     future.add_done_callback(self._done_callback)
                     seg.futures.append(future)
-            self.error_manager.on_start()
-            self.error_manager_started = True
+            if not self.error_manager_started:
+                self.error_manager.on_start()
+                self.error_manager_started = True
         except BaseException:
-            # workers are already submitted: abort them before waiting the executors
+            # workers are already submitted: abort and join them before the main-process
+            # hooks, so `on_end` never runs while a worker is still using the stage
             self.cancel.set()
-            run_stage_on_ends(
-                self.started_main, self.error_manager, self.error_manager_started
-            )
             self._shutdown_executors()
+            try:
+                run_stage_on_ends(
+                    self.started_main, self.error_manager, self.error_manager_started
+                )
+            except BaseException:
+                # the start failure is the reason of the rollback, it must not be masked
+                logging.exception("Problems in the start-phase rollback termination")
             raise
         for i, seg in enumerate(self.segments):
             is_last = i == len(self.segments) - 1
@@ -348,16 +368,18 @@ class Engine(Generic[DataT]):
                 except Exception as e:
                     self._record(e)
                     return
+                if item is not None and not put_or_abort(
+                    first.input_queue, item, self.cancel.is_set
+                ):
+                    return
+                # the check comes after the put: a source stopping while returning its
+                # last item must not lose it
                 if self.source.is_stopped:
                     for _ in range(first.num_workers):
                         if not put_or_abort(
                             first.input_queue, Stop(), self.cancel.is_set
                         ):
                             return
-                    return
-                if item is None:
-                    continue
-                if not put_or_abort(first.input_queue, item, self.cancel.is_set):
                     return
         except BaseException as e:
             self._record(e)
@@ -435,12 +457,15 @@ class Engine(Generic[DataT]):
                     self._record(e)
                     self.check_errors()
                     return
+                if raw is not None:
+                    with self._stage_lock:
+                        result = seg.run_chain(raw, self.error_manager)
+                    yield result
+                # as in `_source_loop`, an item returned together with the stop signal
+                # is delivered before ending the flow
                 if self.source.is_stopped:
                     self.check_errors()
                     return
-                if raw is None:
-                    continue
-                yield seg.run_chain(raw, self.error_manager)
         else:
             last = self.segments[-1]
             # the caller consumes the final output queue, or the input queue of the
@@ -457,14 +482,20 @@ class Engine(Generic[DataT]):
                 if item is None:
                     self.check_errors()
                     return
-                results.task_done()
+                try:
+                    results.task_done()
+                except (EOFError, OSError):
+                    # a concurrent close() shut down the manager while this thread was
+                    # consuming: the run is over, there is nothing left to read
+                    self.check_errors()
+                    return
                 if isinstance(item, Stop):
                     self.check_errors()
                     return
                 if isinstance(last, InlineSegment):
-                    yield last.run_chain(item, self.error_manager)
-                else:
-                    yield item
+                    with self._stage_lock:
+                        item = last.run_chain(item, self.error_manager)
+                yield item
 
     def join_threads(self, timeout: Optional[float] = None) -> None:
         for thread in list(self._threads):
@@ -484,13 +515,16 @@ class Engine(Generic[DataT]):
                         q.task_done()
                     except queue.Empty:
                         break
-                    except (ValueError, AttributeError):
+                    except (ValueError, AttributeError, EOFError, OSError):
+                        # the queue is closed or its manager is gone
                         break
 
     def _run_on_end(self) -> None:
-        run_stage_on_ends(
-            self.started_main, self.error_manager, self.error_manager_started
-        )
+        # never close a stage while the caller's thread is still processing on it
+        with self._stage_lock:
+            run_stage_on_ends(
+                self.started_main, self.error_manager, self.error_manager_started
+            )
 
     def _shutdown_executors(self) -> None:
         for executor in self._executors:
@@ -514,11 +548,8 @@ class Engine(Generic[DataT]):
 
     def shutdown(self, run_on_end: bool = True) -> None:
         self.cancel.set()
-        # shortcut: a worker stuck inside user code cannot be interrupted, so this
-        # join and the executor shutdown wait for it; upgrade by killing/abandoning
-        # stuck workers if real-world hangs appear
-        self.join_threads()
-        # Futures may still run user code; cancel what never started.
+        # Futures still running user code cannot be interrupted: cancel the ones which
+        # never started, before waiting for the workers to be done.
         for seg in self.segments:
             if isinstance(seg, ConcurrentSegment):
                 for future in seg.futures:
@@ -526,6 +557,10 @@ class Engine(Generic[DataT]):
                         future.cancel()
                     except Exception:
                         pass
+        # shortcut: a worker stuck inside user code cannot be interrupted, so this
+        # join and the executor shutdown wait for it; upgrade by killing/abandoning
+        # stuck workers if real-world hangs appear
+        self.join_threads()
         self.drain_queues()
         try:
             if run_on_end:

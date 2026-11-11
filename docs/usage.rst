@@ -161,6 +161,9 @@ and stops the pipeline.
 Batching pays off when the underlying operation is cheaper in bulk,
 for example an HTTP API that accepts lists of values (fewer calls),
 or a machine learning model optimized for predicting on multiple samples.
+As with a single item, an item which already raised a critical error skips the
+batch stage: if the whole batch is made of such items, :meth:`.BatchStage.process_batch`
+is not called at all.
 
 When a stage is concurrent, its ``process`` method is invoked
 on different subsets of the data flow at the same time
@@ -325,8 +328,9 @@ Use :meth:`.Pipeline.process` only when no stage is concurrent:
 the item is processed synchronously and returned directly by the call.
 ``process()`` raises ``ValueError`` as soon as the pipeline contains a stage
 with ``concurrency > 0``, so it can never block on a concurrent queue.
-``process()`` raises :class:`.PipelineStateError` after :meth:`.Pipeline.stop`
-has been called.
+Both :meth:`.Pipeline.process` and :meth:`.Pipeline.process_async` raise
+:class:`.PipelineStateError` after :meth:`.Pipeline.stop` has been called:
+the run is ending, so new items cannot be delivered anymore.
 
 Pipeline lifecycle
 ^^^^^^^^^^^^^^^^^^

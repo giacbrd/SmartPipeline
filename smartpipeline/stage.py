@@ -2,7 +2,7 @@ import uuid
 from abc import ABC, abstractmethod
 from logging import Logger, getLogger
 from queue import Queue
-from typing import Any, Generic, Optional, Sequence, TypeVar, Union
+from typing import Any, Generic, Optional, Sequence
 
 from smartpipeline.item import DataT, Item
 
@@ -165,5 +165,3 @@ class Source(ABC, AliveMixin, Generic[DataT]):
 
 
 ItemsQueue = Queue[Optional[Item[Any]]]
-StageType = Union[Stage[Any], BatchStage[Any]]
-StageTypeVar = TypeVar("StageTypeVar", bound=StageType)

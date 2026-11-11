@@ -7,15 +7,11 @@ from queue import Queue
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
-from typing import Any, Callable, Optional, OrderedDict, Sequence
+from typing import Callable, Optional, Sequence
 
 from smartpipeline.defaults import CONCURRENCY_WAIT, LOGS_STOP_TIMEOUT
 from smartpipeline.item import DataT, Item
 from smartpipeline.stage import ItemsQueue
-
-
-def last_key(ordered_dict: OrderedDict[str, Any]) -> str:
-    return next(reversed(ordered_dict.keys()))
 
 
 def raise_collected_errors(errors: Sequence[Exception], message: str) -> None:
@@ -31,6 +27,23 @@ def raise_collected_errors(errors: Sequence[Exception], message: str) -> None:
     if len(errors) == 1:
         raise errors[0]
     raise ExceptionGroup(message, errors)
+
+
+def _guards_met(guards: Sequence[Callable[[], bool]]) -> bool:
+    """
+    True as soon as any guard is met, treating a broken shared state as a guard.
+
+    The guards may read multiprocessing proxies: once the manager has been shut down
+    (by a concurrent `close()`) any read on them fails, and there is nothing left to
+    produce or consume, so the loop must abort instead of raising.
+    """
+    for guard in guards:
+        try:
+            if guard():
+                return True
+        except (EOFError, OSError):
+            return True
+    return False
 
 
 def put_or_abort(
@@ -57,13 +70,17 @@ def put_or_abort(
         # Check before putting too: once a guard is met the item must be dropped even
         # if the queue still has room, otherwise a producer can keep feeding a pipeline
         # which has already terminated.
-        if any(guard() for guard in guards):
+        if _guards_met(guards):
             return False
         try:
             items_queue.put(item, block=True, timeout=timeout)
             return True
         except queue.Full:
             continue
+        except (EOFError, OSError):
+            # the multiprocessing manager is gone (a concurrent close() shut it down):
+            # nothing can be queued anymore, so abort instead of crashing the producer
+            return False
 
 
 def get_or_abort(
@@ -85,12 +102,16 @@ def get_or_abort(
     :return: The item, or `None` when the get has been aborted
     """
     while True:
-        if any(guard() for guard in guards):
+        if _guards_met(guards):
             return None
         try:
             return items_queue.get(block=True, timeout=timeout)
         except queue.Empty:
             continue
+        except (EOFError, OSError):
+            # the multiprocessing manager is gone (a concurrent close() shut it down):
+            # there is nothing left to read, so abort the get instead of raising
+            return None
 
 
 class LogsReceiver:
