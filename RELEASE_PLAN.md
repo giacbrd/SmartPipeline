@@ -361,7 +361,7 @@ throwaway script and execute them, using stub stages for network/model calls. Ev
 public class needs an `autoclass` entry. Build with `sphinx-build -W docs /tmp/docs-out`
 if Sphinx is available.
 
-### [ ] T5.2 CHANGELOG consolidation
+### [x] T5.2 CHANGELOG consolidation
 Rewrite the 1.0.0 entry for users, in three sections: **Breaking changes** (each with a
 migration line), **Added**, **Fixed**. No private names. Merge duplicated statements:
 the entry currently repeats the lifecycle/one-shot rules and the hang fixes several times.
@@ -433,7 +433,7 @@ Phase 3 must not regress these by more than 20%.
 - Noted limitation (commented in `Engine.shutdown`): a worker stuck inside user
   code cannot be interrupted; `close(timeout)` only bounds the async-consumer join.
 
-### Phase 5 (T5.1 done)
+### Phase 5 (T5.1, T5.2 done)
 
 - T5.1: every snippet in `README.rst`, `docs/usage.rst`, `docs/concurrency.rst`
   was extracted into a throwaway script and run with stubs for network/model
@@ -444,3 +444,6 @@ Phase 3 must not regress these by more than 20%.
   Doc fixes: `usage.rst` no longer says `build()` wires "containers", the
   iterable-source snippet now imports `random`/`string`, and the logging snippet
   imports `logging`.
+- T5.2: 1.0.0 entry rewritten as Breaking changes (each with migration) / Added /
+  Fixed; lifecycle and hang-fix duplicates merged; no underscore-private names
+  remain (checked).
