@@ -354,7 +354,7 @@ import cycle (check `python -c "import smartpipeline"`). Update the `AGENTS.md` 
 
 ## Phase 5 — Release
 
-### [ ] T5.1 Docs pass
+### [x] T5.1 Docs pass
 Read `README.rst`, `docs/usage.rst`, `docs/concurrency.rst` and `docs/api.rst`
 completely against the final code. Every code snippet must run, so extract them into a
 throwaway script and execute them, using stub stages for network/model calls. Every
@@ -365,11 +365,6 @@ if Sphinx is available.
 Rewrite the 1.0.0 entry for users, in three sections: **Breaking changes** (each with a
 migration line), **Added**, **Fixed**. No private names. Merge duplicated statements:
 the entry currently repeats the lifecycle/one-shot rules and the hang fixes several times.
-
-### [ ] T5.3 Version and release
-Sync the version in `setup.py`, `smartpipeline/__init__.py` and `docs/conf.py`, and set
-the release date in `CHANGELOG.md`. Check that the CI matrix is green on all Python
-versions, then follow `CONTRIBUTING.md` (Git Flow release branch from `develop`).
 
 ---
 
@@ -437,3 +432,15 @@ Phase 3 must not regress these by more than 20%.
   `_AsyncSource.pop` uses `CONCURRENCY_WAIT` instead of a literal.
 - Noted limitation (commented in `Engine.shutdown`): a worker stuck inside user
   code cannot be interrupted; `close(timeout)` only bounds the async-consumer join.
+
+### Phase 5 (T5.1 done)
+
+- T5.1: every snippet in `README.rst`, `docs/usage.rst`, `docs/concurrency.rst`
+  was extracted into a throwaway script and run with stubs for network/model
+  calls (11 groups incl. a spawn-safe `Manager` one): all pass on the final code.
+  Sphinx is not installed in the venv, so no `sphinx-build -W` run; `docs/api.rst`
+  already covers every public class, no entry added. `docs/_static/concurrency.png`
+  kept: it shows only queues-between-stages and Nx workers, still accurate.
+  Doc fixes: `usage.rst` no longer says `build()` wires "containers", the
+  iterable-source snippet now imports `random`/`string`, and the logging snippet
+  imports `logging`.

@@ -85,6 +85,10 @@ Alternatively, :meth:`.Pipeline.set_source` accepts any iterable of items
 
 .. code-block:: python
 
+    import random
+    import string
+
+
     def random_text_items(total=1000):
         for count in range(1, total + 1):
             text = ''.join(
@@ -101,6 +105,7 @@ Alternatively, :meth:`.Pipeline.set_source` accepts any iterable of items
             item.metadata['count'] = count
             yield item
 
+    # TextReplacer is defined in "Defining your stages" below
     pipeline = (
         Pipeline()
         .set_source(random_text_items())
@@ -250,13 +255,13 @@ construction timing:
      - :meth:`.Pipeline.get_stage` returns ``None``
 
 **A class-based stage does not exist until ``build()``.** Class constructors run
-one by one in append order; ``build()`` collects every failure before wiring
-the containers. Heavy setup belongs in ``on_start``, which already runs
+one by one in append order; ``build()`` collects every failure during construction.
+Heavy setup belongs in ``on_start``, which already runs
 sequentially. ``init_args`` and ``init_kwargs`` are only valid with a class.
 
 Always finish the concatenation with :meth:`.Pipeline.build`.
 ``build()`` validates and prepares the pipeline: instance stages already exist,
-class-based stages are constructed, and all containers are wired, but no worker is
+class-based stages are constructed and stored, but no worker is
 started. The start phase happens when the pipeline is executed, as shown below.
 
 The example below adds a second stage that truncates the text, then runs the pipeline.
