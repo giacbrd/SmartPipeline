@@ -1,3 +1,4 @@
+import logging
 import multiprocessing
 import threading
 import time
@@ -6,9 +7,11 @@ from threading import Thread
 import pytest
 
 from smartpipeline.error.handling import ErrorManager
+from smartpipeline.item import Stop
 from smartpipeline.pipeline import Pipeline, PipelineState, PipelineStateError
 from tests.utils import (
     PIPELINE_TIMEOUT,
+    QUEUE_TIMEOUT,
     BrokenInitStage,
     BrokenOnEndBatchStage,
     BrokenOnEndErrorManager,
@@ -837,3 +840,131 @@ def test_start_rollback_releases_workers_when_on_end_fails():
         if child.pid not in baseline and child.is_alive()
     ]
     assert not leaked, f"the failed start leaked processes: {leaked}"
+
+
+def test_source_stop_failure_never_breaks_the_shutdown():
+    """Neither stop() nor close() propagates a source which fails while stopping."""
+
+    class BrokenStopSource(RandomTextSource):
+        def stop(self):
+            super().stop()
+            raise RuntimeError("test source stop failure")
+
+    pipeline = (
+        get_pipeline()
+        .set_source(BrokenStopSource(3))
+        .append("reverser", TextReverser())
+        .build()
+    )
+    pipeline.stop()
+    pipeline.close()
+    assert pipeline.state is PipelineState.CLOSED
+
+
+def test_close_runs_the_on_ends_of_a_pipeline_without_engine():
+    """A pipeline which only processed items has no engine: close() ends its stages."""
+    pipeline = get_pipeline().append("boom", BrokenOnEndStage()).build()
+    pipeline.process(text_item())
+    with pytest.raises(RuntimeError, match="test on_end failure"):
+        pipeline.close()
+    assert pipeline.state is PipelineState.CLOSED
+
+
+def test_close_warns_when_the_background_runner_is_stuck(caplog):
+    """A runner ignoring the cancellation is reported, never waited for forever."""
+    pipeline = get_pipeline().append("reverser", TextReverser()).build()
+    stuck = threading.Event()
+    blocker = Thread(target=stuck.wait, daemon=True)
+    blocker.start()
+    pipeline._pipeline_executor = blocker
+    try:
+        with caplog.at_level(logging.WARNING):
+            pipeline._join_background(0.01)
+        assert "did not end" in caplog.text
+    finally:
+        stuck.set()
+        blocker.join(QUEUE_TIMEOUT)
+
+
+def test_process_start_failure_ends_the_stages_which_started():
+    """A failing on_start closes the pipeline, ending the stages which did start."""
+    events: list = []
+    pipeline = (
+        get_pipeline()
+        .set_error_manager(LifecycleErrorManager(events))
+        .append("first", LifecycleStage(events))
+        .append("boom", LifecycleStage(events, fail_on_start=True))
+        .build()
+    )
+    with pytest.raises(RuntimeError, match="failed on_start"):
+        pipeline.process(text_item())
+    # the error manager never started, so its on_end is skipped
+    assert events == ["first:start", "boom:start", "first:end"]
+    assert pipeline.state is PipelineState.CLOSED
+
+
+def test_process_refuses_items_when_close_wins_the_start_race():
+    """A pipeline closed while its stages start never processes another item."""
+
+    class ClosingOnStartStage(TextReverser):
+        def __init__(self, closer):
+            super().__init__()
+            self._closer = closer
+
+        def on_start(self):
+            self._closer()
+
+        def process(self, item):
+            raise AssertionError("a closed pipeline cannot process items")
+
+    pipeline = get_pipeline().append("reverser", TextReverser())
+    pipeline.append("closer", ClosingOnStartStage(pipeline.close)).build()
+    with pytest.raises(PipelineStateError, match="The pipeline is closed"):
+        pipeline.process(text_item())
+
+
+def test_process_refuses_an_item_which_became_a_stop():
+    """A stage turning its item into a Stop ends the pipeline for process()."""
+
+    class StopReturningStage(TextReverser):
+        def process(self, item):
+            return Stop()
+
+    pipeline = get_pipeline().append("stopper", StopReturningStage()).build()
+    with pytest.raises(PipelineStateError, match="source is stopped"):
+        pipeline.process(text_item())
+
+
+def test_process_async_start_failure_closes_the_pipeline():
+    """A failing on_start closes an asynchronous run which never started."""
+    events: list = []
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(3))
+        .append("boom", LifecycleStage(events, fail_on_start=True), concurrency=1)
+        .build()
+    )
+    with pytest.raises(RuntimeError, match="failed on_start"):
+        pipeline.process_async(text_item())
+    assert pipeline.state is PipelineState.CLOSED
+
+
+def test_async_run_logs_the_on_end_failure_of_its_own_close(caplog):
+    """An asynchronous run has no waiting caller: its close failure is only logged."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(3))
+        .append("boom", BrokenOnEndStage(), concurrency=1)
+        .build()
+    )
+    with cleanup_on_exit(pipeline):
+        pipeline.process_async(text_item())
+        assert get_item_with_timeout(pipeline).data["text"] == "hello"
+        with caplog.at_level(logging.ERROR):
+            pipeline.stop()
+            with pytest.raises(PipelineStateError, match="asynchronous run ended"):
+                get_item_with_timeout(pipeline)
+            assert pipeline._closed.wait(PIPELINE_TIMEOUT)
+            # the consumer closes its own run: wait for its thread to log the failure
+            pipeline._pipeline_executor.join(PIPELINE_TIMEOUT)
+        assert "Problems in closing an async run" in caplog.text

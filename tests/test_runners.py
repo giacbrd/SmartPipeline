@@ -12,6 +12,7 @@ from smartpipeline.runners import worker_loop
 from tests.utils import (
     QUEUE_TIMEOUT,
     BatchTextReverser,
+    BrokenOnEndErrorManager,
     BrokenOnEndStage,
     BrokenProcessAndEndStage,
     LifecycleErrorManager,
@@ -176,6 +177,23 @@ def test_worker_loop_on_end_failure_raises():
             in_queue,
             Queue(),
             ErrorManager(),
+            RetryManager(),
+            Event(),
+            Queue(),
+        )
+
+
+def test_worker_loop_error_manager_on_end_failure_raises():
+    """An error-manager on_end failure is fatal too, even after a successful run."""
+    in_queue: Queue = Queue()
+    in_queue.put(text_item("hello"))
+    in_queue.put(Stop())
+    with pytest.raises(RuntimeError, match="test error manager on_end failure"):
+        worker_loop(
+            TextReverser(),
+            in_queue,
+            Queue(),
+            BrokenOnEndErrorManager(),
             RetryManager(),
             Event(),
             Queue(),

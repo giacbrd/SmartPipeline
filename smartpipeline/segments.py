@@ -456,7 +456,7 @@ class Engine(Generic[DataT]):
                 except Exception as e:
                     self._record(e)
                     self.check_errors()
-                    return
+                    return  # pragma: no cover -- the check above always raises here
                 if raw is not None:
                     with self._stage_lock:
                         result = seg.run_chain(raw, self.error_manager)
