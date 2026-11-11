@@ -6,9 +6,6 @@ LOGS_STOP_TIMEOUT: float = 10.0  # seconds to wait for the logs receiver thread 
 MAX_QUEUES_SIZE: int = (
     1000  # default size for queues between concurrent stages, let's avoid infinite queues
 )
-RUN_LOOP_BACKOFF: float = (
-    0.001  # seconds to sleep when a run loop iteration made no progress, avoids a busy spin while polling concurrent runners or termination
-)
 PIPELINE_CLOSE_TIMEOUT: float = (
     10.0  # seconds to wait for the asynchronous run loop to end when closing
 )

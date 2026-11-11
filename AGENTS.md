@@ -35,6 +35,8 @@ Execution flows `pipeline.py -> segments.py -> runners.py`; read in that order.
   `run()`, `process()`/`process_async()`/`get_item()`/`stop()`, `close()`.
   `append()` only records a `StageSpec`: an instance stage exists and is named
   immediately, while `build()` constructs class-based stages one by one in order.
+  `StageSpec.retry_manager` builds the stage `RetryManager` once, shared by `process()`
+  and the segments.
   `_stages` is empty until `build()`; `get_stage()` returns a class-based stage only after it.
   `PipelineState` (`INITIAL → BUILT → RUNNING → CLOSED`) is the lifecycle contract.
   `Pipeline` keeps `_state`, one `_lock` and one `_closed` `Event`, plus a single
@@ -42,8 +44,9 @@ Execution flows `pipeline.py -> segments.py -> runners.py`; read in that order.
   directly with no containers and no queues. `run()`/`process_async()` compile segments
   and start an `Engine`; `run()` wraps everything in `try/finally: close()`.
   `close()` takes the transition to `CLOSED` under the lock (a second caller waits on
-  `_closed`), sets `cancel`, joins threads, drains queues, runs `on_end`, shuts down
-  executors and the Manager, then sets `_closed`.
+  `_closed`), sets `cancel`, joins the asynchronous runner thread, then shuts the engine
+  down (join workers, drain queues, run `on_end` under the engine stage lock, executors
+  and the Manager), and finally sets `_closed`.
 - `segments.py` — per-run wiring (`InlineSegment`, `ConcurrentSegment`, `compile_segments`,
   `Engine`). A pipeline compiles into segments with queues only *between* them:
   a concurrent stage (a batch stage is always one) becomes one `ConcurrentSegment` with N
@@ -55,14 +58,17 @@ Execution flows `pipeline.py -> segments.py -> runners.py`; read in that order.
   exits on `Stop` (flushing its batch) without forwarding it; the coordinator waits until
   every worker of segment k is done and puts one `Stop` per worker of k+1 into the next queue.
   One `cancel` `Event` (from the `Manager` when any segment uses processes) aborts every blocking
-  `get`/`put` (`get_or_abort`/`put_or_abort` with `CONCURRENCY_WAIT`). Every worker future gets a
+  `get`/`put` (`get_or_abort`/`put_or_abort` with `CONCURRENCY_WAIT`); both helpers treat a dead
+  manager as an abort, so a concurrent `close()` never raises `EOFError`/`OSError` on a queue. Every worker future gets a
   done-callback that records the error and sets `cancel`; the run loop raises via
   `raise_collected_errors` as soon as `cancel` is observed.
 - `runners.py` — `worker_loop(stage, in_queue, out_queue, error_manager, retry_manager, cancel,
-  logs_queue)`: plain stages pull one blocking item, batch stages pull up to `size`/`timeout`;
+  logs_queue)`: plain stages pull one blocking item, batch stages pull up to `size`/`timeout`
+  (waiting in `CONCURRENCY_WAIT` slices, so `cancel` is never delayed by a long `timeout`);
   results go with `put_or_abort`; `Stop` flushes and exits without forwarding; processing errors
   propagate (the callback sets `cancel`); process workers call `on_start`/`on_end`. `process` and
-  `process_batch` keep timing, retry/backoff and `RetryError`; `BatchOutputError` stays non-retryable.
+  `process_batch` keep timing, retry/backoff and `RetryError`; `BatchOutputError` stays
+  non-retryable, and a batch whose items all carry a critical error skips `process_batch`.
 - `stage.py` — `Source` (`pop()` + `self.stop()` to end), `Stage.process`,
   `BatchStage.process_batch` (`__init__(size, timeout)`); `on_start`/`on_end` hooks.
 - `item.py` — `Item` (generic `Item[MyData]`; `.data` is writable); internal `Stop`
@@ -97,7 +103,8 @@ attempt one `RetryError` soft error is attached to the item.
   with a stage class.
   `process()` raises `ValueError` with any concurrent stage (use
   `run()`/`process_async()`), runs stages directly with no queues, and never returns `Stop`;
-  it raises `PipelineStateError` after `stop()`.
+  it raises `PipelineStateError` after `stop()`, and so does `process_async()` (an
+  `Engine` never re-runs the `on_start` of stages already started by `process()`).
 - `concurrency=0` means inline (no executor workers). A middle inline run executes on one
   dedicated driver thread, the last inline run executes on the caller's thread. `BatchStage` with
   `concurrency < 1` is silently forced to `concurrency=1, executor="threads"`.

@@ -16,7 +16,7 @@ from smartpipeline.error.exceptions import BatchOutputError, RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import Item
 from smartpipeline.pipeline import Pipeline, PipelineState, PipelineStateError
-from smartpipeline.stage import Stage
+from smartpipeline.stage import BatchStage, Source, Stage
 from tests.utils import (
     PIPELINE_TIMEOUT,
     BatchTextReverser,
@@ -27,6 +27,7 @@ from tests.utils import (
     ErrorSerializableStage,
     ErrorStage,
     ExceptionStage,
+    LifecycleErrorManager,
     LifecycleStage,
     RandomTextSource,
     TextDuplicator,
@@ -55,6 +56,51 @@ class FailAfter(Stage):
         if self.seen > self.succeed:
             raise RuntimeError("test fail after")
         return item
+
+
+class StopOnLastItemSource(Source[dict]):
+    """A source which declares its end on the very call returning the last item."""
+
+    def __init__(self, total: int = 5):
+        self.total = total
+        self.counter = 0
+
+    def pop(self):
+        self.counter += 1
+        if self.counter > self.total:
+            self.stop()
+            return None
+        item = text_item(str(self.counter))
+        item.data["count"] = self.counter
+        if self.counter == self.total:
+            self.stop()
+        return item
+
+
+class CountingBatchStage(BatchStage):
+    """A batch stage recording the size of every batch it receives."""
+
+    def __init__(self, size: int, calls: list, timeout: float = 0.1):
+        super().__init__(size, timeout)
+        self.calls = calls
+
+    def process_batch(self, items):
+        self.calls.append(len(items))
+        return items
+
+
+class OneItemThenSilentSource(Source[dict]):
+    """Deliver a single item, then stay alive without producing anything."""
+
+    def __init__(self):
+        self.sent = False
+
+    def pop(self):
+        if not self.sent:
+            self.sent = True
+            return text_item("hello")
+        time.sleep(0.2)
+        return None
 
 
 def wait_for_thread_settle(baseline, timeout=10.0):
@@ -489,3 +535,123 @@ def test_process_async_callback_error_is_delivered():
     pipeline.stop()
     with pytest.raises(RuntimeError, match="callback failed"):
         get_item_with_timeout(pipeline)
+
+
+def test_process_async_after_stop_raises():
+    """process_async() rejects items once stop() was called, keeping the running ones."""
+    pipeline = get_pipeline().append("reverser", TextReverser())
+    pipeline.process_async(text_item("hello"))
+    pipeline.stop()
+    with pytest.raises(PipelineStateError, match="source is stopped"):
+        pipeline.process_async(text_item("world"))
+    assert get_item_with_timeout(pipeline).data["text"] == "olleh"
+
+
+def test_close_with_a_full_output_queue_ends_the_async_runner():
+    """close() never waits on an async runner blocked over a full output queue."""
+    pipeline = get_pipeline(max_queues_size=1).append("reverser", TextReverser())
+    pipeline.process_async(text_item("hello"))
+    pipeline.stop()
+    # the runner delivers the item and waits to signal the end of the stream
+    time.sleep(0.5)
+    closer = threading.Thread(target=pipeline.close, daemon=True)
+    started = time.monotonic()
+    closer.start()
+    closer.join(PIPELINE_TIMEOUT)
+    assert not closer.is_alive(), "close() stalled on the blocked async runner"
+    assert time.monotonic() - started < 5, "close() waited for the runner timeout"
+    assert pipeline.state is PipelineState.CLOSED
+
+
+@pytest.mark.parametrize("mode", ["inline", "threads", "processes"])
+def test_source_stopping_on_its_last_item_delivers_it(mode):
+    """The item returned by the pop() calling stop() is never lost."""
+    kwargs = concurrent_kwargs(mode)
+    pipeline = (
+        get_pipeline()
+        .set_source(StopOnLastItemSource(5))
+        .append("reverser", TextReverser(), **kwargs)
+    )
+    items = run_with_timeout(pipeline)
+    check_items(items, 5, pipeline)
+
+
+def test_process_then_run_starts_every_stage_once():
+    """Running after process() does not start (or end) a stage twice."""
+    events = []
+    pipeline = (
+        get_pipeline()
+        .set_error_manager(LifecycleErrorManager(events))
+        .set_source(RandomTextSource(2))
+        .append("tracked", LifecycleStage(events))
+    )
+    pipeline.process(text_item("a"))
+    items = run_with_timeout(pipeline)
+    assert len(items) == 2
+    assert events.count("tracked:start") == 1
+    assert events.count("tracked:end") == 1
+    assert events.count("error-manager:start") == 1
+    assert events.count("error-manager:end") == 1
+
+
+@pytest.mark.parametrize("executor", ["threads", "processes"])
+def test_close_from_another_thread_never_breaks_the_run(executor):
+    """A foreign close() ends the run cleanly and closes every stage once."""
+    events = []
+    pipeline = (
+        get_pipeline(max_queues_size=1)
+        .set_source(RandomTextSource(200))
+        .append("reverser", LifecycleStage(events), concurrency=2, executor=executor)
+    )
+    run = pipeline.run()
+    try:
+        assert next_with_timeout(run, pipeline=pipeline)
+        closer = threading.Thread(target=pipeline.close, daemon=True)
+        closer.start()
+        closer.join(PIPELINE_TIMEOUT)
+        assert not closer.is_alive()
+        # resuming the run must simply end it, no queue/manager error surfacing
+        assert list(run) == []
+    finally:
+        run.close()
+    assert pipeline.state is PipelineState.CLOSED
+    assert events.count("reverser:end") <= 1
+
+
+def test_close_terminates_a_batch_stage_waiting_on_its_timeout():
+    """A batch worker pending for a full batch does not delay a close()."""
+    pipeline = (
+        Pipeline()
+        .set_source(OneItemThenSilentSource())
+        .append("batch", BatchTextReverser(size=100, timeout=600), concurrency=1)
+    )
+    runner = threading.Thread(target=lambda: list(pipeline.run()), daemon=True)
+    runner.start()
+    time.sleep(0.5)  # let the batch worker start waiting for the rest of its batch
+    closer = threading.Thread(target=pipeline.close, daemon=True)
+    started = time.monotonic()
+    closer.start()
+    closer.join(PIPELINE_TIMEOUT)
+    elapsed = time.monotonic() - started
+    assert not closer.is_alive(), "close() waited for the whole batch timeout"
+    # a worker which ignores `cancel` would only flush after its 600s timeout
+    assert (
+        elapsed < 30
+    ), f"close() took {elapsed:.1f}s instead of aborting the batch wait"
+    runner.join(PIPELINE_TIMEOUT)
+    assert not runner.is_alive()
+
+
+def test_batch_stage_skipped_when_every_item_already_failed():
+    """A batch stage is not called at all when its whole batch is already critical."""
+    calls: list = []
+    pipeline = (
+        Pipeline()
+        .set_error_manager(ErrorManager())
+        .set_source(RandomTextSource(4))
+        .append("critical", CriticalIOErrorStage())
+        .append("batch", CountingBatchStage(size=3, calls=calls))
+    )
+    items = run_with_timeout(pipeline)
+    assert len(items) == 4
+    assert calls == [], f"the batch stage ran on an empty batch: {calls}"

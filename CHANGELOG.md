@@ -60,6 +60,8 @@
 - `Pipeline.count` is the number of items delivered by `run()` or
   `process_async()`, including items with soft errors; items processed one by
   one with `process()` are not counted.
+- `StageSpec.retry_manager` exposes the retry configuration of a stage, built once and
+  shared by every item and every execution mode.
 - `BatchStage.process_batch()` output length is validated: it must return exactly
   one item for every input item, and a mismatch raises the public
   `BatchOutputError` and stops the pipeline. Batch stages always run with
@@ -92,6 +94,22 @@
   instead of returning while resources are still being released.
 - `Pipeline.get_item()` raises `PipelineStateError` after the asynchronous run
   has ended and its output has been drained, instead of blocking forever.
+- `Pipeline.close()` called from another thread ends a running `run()` cleanly: the
+  engine (queues, executors and the multiprocessing manager) is released only after the
+  consuming loop stopped, and a queue whose manager is already gone aborts the get/put
+  instead of raising `EOFError` or a broken pipe error.
+- A source calling `stop()` on the same `pop()` returning its last item does not lose
+  that item anymore.
+- Running a pipeline which already processed items with `process()` does not start the
+  stages a second time: `on_start`/`on_end` stay paired.
+- `close()` does not wait on an asynchronous runner blocked over a full output queue.
+- A failed start phase releases executors and manager even when a stage `on_end` fails
+  too, and the original start error is never masked by the rollback.
+- A batch stage is skipped without calling `process_batch()` when every item of its
+  batch already carries a critical error, and a batch stage waiting for a full batch
+  gives up as soon as the pipeline is cancelled, instead of after its whole `timeout`.
+- `Pipeline.process_async()` raises `PipelineStateError` after `stop()` instead of
+  accepting items which would never be processed.
 
 ## Version 0.7.0 [2023-09-27]
 

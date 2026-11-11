@@ -7,6 +7,7 @@ from logging.handlers import QueueHandler
 from threading import Event
 from typing import Callable, List, Optional, Sequence, TypeVar
 
+from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.exceptions import BatchOutputError, RetryError
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import DataT, Item, Stop
@@ -147,6 +148,10 @@ def process_batch(
         else:
             stage.logger.debug("%s is going to process %s", stage, item)
             to_process[i] = item
+    if not to_process:
+        # every item already failed a critical stage: skip the batch call altogether,
+        # as `process()` does for a single item
+        return ret
     time1 = time.perf_counter()
 
     def _call() -> Sequence[Item[DataT]]:
@@ -237,13 +242,18 @@ def _batch_worker_body(
             return
         batch: list[Item[DataT]] = [first]
         got_stop = False
+        deadline = time.monotonic() + stage.timeout
         while len(batch) < stage.size:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
             if cancel.is_set():
                 return
             try:
-                nxt = in_queue.get(block=True, timeout=stage.timeout)
+                # poll in short slices, so a long `timeout` never delays a cancellation
+                nxt = in_queue.get(block=True, timeout=min(CONCURRENCY_WAIT, remaining))
             except queue.Empty:
-                break
+                continue
             in_queue.task_done()
             if isinstance(nxt, Stop):
                 got_stop = True
