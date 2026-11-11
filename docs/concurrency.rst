@@ -236,6 +236,9 @@ sets up its own logging consistently:
 
 .. code-block:: python
 
+    import logging
+
+
     class LoggingStage(Stage):
         def on_start(self):
             self.logger.setLevel(logging.INFO)
