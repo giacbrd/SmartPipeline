@@ -35,6 +35,7 @@ from smartpipeline.runners import process, worker_loop
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage
 from smartpipeline.utils import (
     LogsReceiver,
+    _guards_met,
     get_or_abort,
     put_or_abort,
     raise_collected_errors,
@@ -459,6 +460,8 @@ class Engine(Generic[DataT]):
                     return  # pragma: no cover -- the check above always raises here
                 if raw is not None:
                     with self._stage_lock:
+                        if self.cancel.is_set():
+                            return
                         result = seg.run_chain(raw, self.error_manager)
                     yield result
                 # as in `_source_loop`, an item returned together with the stop signal
@@ -494,6 +497,8 @@ class Engine(Generic[DataT]):
                     return
                 if isinstance(last, InlineSegment):
                     with self._stage_lock:
+                        if _guards_met((self.cancel.is_set,)):
+                            return
                         item = last.run_chain(item, self.error_manager)
                 yield item
 

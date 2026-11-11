@@ -267,20 +267,26 @@ def test_batch_wide_critical_errors(caplog):
 
 def test_batch_output_length_must_match_input():
     """A batch stage must return exactly one item for every input item."""
-    pipeline = (
-        Pipeline()
-        .set_source(RandomTextSource(3))
-        .append(
-            "short",
-            TruncatingBatchStage(size=3),
-            retryable_errors=(Exception,),
-            max_retries=1,
-            backoff=0,
+
+    class NoneReturningBatchStage(BatchTextReverser):
+        def process_batch(self, items):
+            return None
+
+    for stage in (TruncatingBatchStage(size=3), NoneReturningBatchStage(size=3)):
+        pipeline = (
+            Pipeline()
+            .set_source(RandomTextSource(3))
+            .append(
+                "short",
+                stage,
+                retryable_errors=(Exception,),
+                max_retries=1,
+                backoff=0,
+            )
+            .build()
         )
-        .build()
-    )
-    with pytest.raises(BatchOutputError, match="exactly one item per input item"):
-        run_with_timeout(pipeline)
+        with pytest.raises(BatchOutputError, match="exactly one item per input item"):
+            run_with_timeout(pipeline)
 
 
 def test_retryable_batch_stages():

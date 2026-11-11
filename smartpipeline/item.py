@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import reprlib
 import uuid
 from typing import (
     Any,
@@ -29,6 +30,7 @@ DataT = TypeVar("DataT")
 # Sentinel for a missing payload: `None` is a valid payload (e.g. for `Optional`
 # types), so the absence of the payload cannot be detected by checking the value.
 _MISSING = object()
+_SNIPPET_REPR = reprlib.Repr(maxstring=DATA_SNIPPET_SIZE, maxother=DATA_SNIPPET_SIZE)
 
 
 class Item(Generic[DataT]):
@@ -87,7 +89,9 @@ class Item(Generic[DataT]):
 
         :param max_size: Maximum size of the string representation
         """
-        return str(self.data)[:max_size]
+        if isinstance(self.data, str):
+            return self.data[:max_size]
+        return _SNIPPET_REPR.repr(self.data)[:max_size]
 
     @property
     def metadata(self) -> Dict[str, Any]:
@@ -202,36 +206,31 @@ class Item(Generic[DataT]):
         error_cls: type[SoftError] | type[CriticalError],
         forbidden_cls: type[Exception],
     ) -> SoftError | CriticalError:
-        if not isinstance(exception, forbidden_cls):
-            if isinstance(exception, error_cls):
-                # preserve explicit chaining (`raise ... from e`)
-                # across pickling, where __cause__ is lost but _exception_cause survives
-                cause = getattr(exception, "__cause__", None)
-                if (
-                    cause is not None
-                    and getattr(exception, "_exception_cause", None) is None
-                ):
-                    exception.with_exception(cause)
-                exception.set_stage(stage)
-                if error_cls is CriticalError:
-                    assert isinstance(exception, CriticalError)
-                    self._critical_errors.append(exception)
-                else:
-                    assert isinstance(exception, SoftError)
-                    self._soft_errors.append(exception)
-                return exception
-            elif isinstance(exception, Exception):
-                error = error_cls(f"{type(exception).__name__}: {exception}")
-                error.with_exception(exception)
-                error.set_stage(stage)
-                if error_cls is CriticalError:
-                    assert isinstance(error, CriticalError)
-                    self._critical_errors.append(error)
-                else:
-                    assert isinstance(error, SoftError)
-                    self._soft_errors.append(error)
-                return error
-        raise ValueError(f"Add a pipeline {error_cls.__name__} or a generic exception")
+        if isinstance(exception, forbidden_cls) or not isinstance(exception, Exception):
+            raise ValueError(
+                f"Add a pipeline {error_cls.__name__} or a generic exception"
+            )
+        if isinstance(exception, error_cls):
+            # preserve explicit chaining (`raise ... from e`)
+            # across pickling, where __cause__ is lost but _exception_cause survives
+            cause = getattr(exception, "__cause__", None)
+            if (
+                cause is not None
+                and getattr(exception, "_exception_cause", None) is None
+            ):
+                exception.with_exception(cause)
+            error: SoftError | CriticalError = exception
+        else:
+            error = error_cls(f"{type(exception).__name__}: {exception}")
+            error.with_exception(exception)
+        error.set_stage(stage)
+        if error_cls is CriticalError:
+            assert isinstance(error, CriticalError)
+            self._critical_errors.append(error)
+        else:
+            assert isinstance(error, SoftError)
+            self._soft_errors.append(error)
+        return error
 
     def add_soft_error(
         self, stage: str, exception: Union[SoftError, Exception]

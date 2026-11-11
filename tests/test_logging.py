@@ -23,14 +23,16 @@ def _log_record(message):
 
 def test_logging_threads_forwards_records(caplog):
     """Stage logs from thread workers reach the root logger."""
+    stage = Logger()
     with caplog.at_level(logging.INFO):
         pipeline = (
             get_pipeline()
             .set_source(RandomTextSource(100))
-            .append("logger1", Logger(), concurrency=2)
+            .append("logger1", stage, concurrency=2)
             .append("reverser0", TextReverser(), concurrency=1)
             .build()
         )
+        assert stage.logger.name == "logger1"
         run_with_timeout(pipeline)
         messages = [
             record for record in caplog.records if record.levelno == logging.INFO

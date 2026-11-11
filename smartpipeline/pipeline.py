@@ -196,6 +196,9 @@ class Pipeline(Generic[DataT]):
         self._async_stopped: Event = Event()
         self._started_main: list[tuple[str, Stage[DataT] | BatchStage[DataT]]] = []
         self._error_manager_started = False
+        self._process_lock = RLock()
+        self._process_started = False
+        self._stages_log: Optional[str] = None
         self._name = f"{self.__class__.__name__}-{str(uuid.uuid4())[:8]}"
         self._logger = logging.getLogger(self._name)
         self._source_name = f"SourceOf{self._name}"
@@ -304,14 +307,20 @@ class Pipeline(Generic[DataT]):
                 except BaseException as e:
                     termination_error = e
             else:
-                try:
-                    run_stage_on_ends(
-                        self._started_main,
-                        self._error_manager,
+                with self._process_lock:
+                    started, self._started_main = self._started_main, []
+                    em_started, self._error_manager_started = (
                         self._error_manager_started,
+                        False,
                     )
-                except BaseException as e:
-                    termination_error = e
+                    try:
+                        run_stage_on_ends(
+                            started,
+                            self._error_manager,
+                            em_started,
+                        )
+                    except BaseException as e:
+                        termination_error = e
             self._join_background(timeout)
         finally:
             self._closed.set()
@@ -367,6 +376,7 @@ class Pipeline(Generic[DataT]):
                 self._closed.set()
                 raise
             self._stages = OrderedDict(zip(self._stage_specs.keys(), stages))
+            self._stages_log = ", ".join(self._stages.keys())
             self._state = PipelineState.BUILT
             return self
 
@@ -384,14 +394,29 @@ class Pipeline(Generic[DataT]):
         return self._count
 
     def _ensure_process_started(self) -> None:
-        if self._started_main or self._error_manager_started:
+        if self._state is PipelineState.CLOSED:
+            raise PipelineStateError("The pipeline is closed")
+        if self._process_started:
             return
         try:
             for name, stage in self._stages.items():
+                if self._state is PipelineState.CLOSED:
+                    raise PipelineStateError("The pipeline is closed")
                 stage.on_start()
+                if self._closed.is_set():
+                    run_stage_on_ends([(name, stage)], self._error_manager, False)
+                    raise PipelineStateError("The pipeline is closed")
                 self._started_main.append((name, stage))
+            if self._state is PipelineState.CLOSED:
+                raise PipelineStateError("The pipeline is closed")
             self._error_manager.on_start()
+            if self._closed.is_set():
+                run_stage_on_ends([], self._error_manager, True)
+                raise PipelineStateError("The pipeline is closed")
             self._error_manager_started = True
+            self._process_started = True
+        except PipelineStateError:
+            raise
         except BaseException:
             started, self._started_main = self._started_main, []
             self._state = PipelineState.CLOSED
@@ -416,22 +441,26 @@ class Pipeline(Generic[DataT]):
                 "Pipeline.process() only supports pipelines without concurrent stages; "
                 "use run() or process_async()"
             )
-        self._ensure_process_started()
-        if self._state is PipelineState.CLOSED:
-            raise PipelineStateError("The pipeline is closed")
-        self._logger.debug("Processing %s on stages: %s", item, self._log_stages())
-        if self._stopped or isinstance(item, Stop):
-            raise PipelineStateError(
-                "Cannot process item: the pipeline source is stopped"
-            )
-        for spec, stage in zip(self._stage_specs.values(), self._stages.values()):
-            assert not isinstance(stage, BatchStage)
-            item = _process_stage(stage, item, self._error_manager, spec.retry_manager)
-            if isinstance(item, Stop):
+        with self._process_lock:
+            self._ensure_process_started()
+            if self._state is PipelineState.CLOSED:  # pragma: no cover
+                raise PipelineStateError("The pipeline is closed")
+            self._logger.debug("Processing %s on stages: %s", item, self._log_stages())
+            if self._stopped or isinstance(item, Stop):
                 raise PipelineStateError(
                     "Cannot process item: the pipeline source is stopped"
                 )
-        return item
+            for spec, stage in zip(self._stage_specs.values(), self._stages.values()):
+                assert not isinstance(stage, BatchStage)
+                item = _process_stage(
+                    stage, item, self._error_manager, spec.retry_manager
+                )
+                if isinstance(item, Stop):
+                    self._stopped = True
+                    raise PipelineStateError(
+                        "Cannot process item: the pipeline source is stopped"
+                    )
+            return item
 
     def _make_engine(self, source: Source[DataT]) -> Engine[DataT]:
         specs = list(self._stage_specs.values())
@@ -517,30 +546,35 @@ class Pipeline(Generic[DataT]):
             item.set_callback(callback)
         if self._async_queue is None:
             with self._lock:
-                if self._state is PipelineState.CLOSED:  # pragma: no cover
-                    # only reachable by a close() owning the lock before this thread
-                    raise PipelineStateError("The pipeline is closed")
-                if self._state is not PipelineState.BUILT:
-                    raise PipelineStateError("The pipeline is already running")
-                self._async_queue = Queue()
-                self._async_stopped = Event()
-                async_source: Source[DataT] = _AsyncSource(
-                    self._async_queue, self._async_stopped
-                )
-                async_source.set_name(self._source_name)
-                self._engine = engine = self._make_engine(async_source)
-                try:
-                    engine.start()
-                except BaseException:
-                    self._state = PipelineState.CLOSED
-                    self._engine = None
-                    self._closed.set()
-                    raise
-                self._state = PipelineState.RUNNING
-                # the consumer must exist only while the engine is the running one, so a
-                # racing `close()` cannot find a half-started run
-                self._init_out_queue()
-                self._start_background_consumer(engine)
+                if self._async_queue is None:
+                    self._ensure_built()
+                    if self._state is PipelineState.CLOSED:  # pragma: no cover
+                        # only reachable by a close() owning the lock before this thread
+                        raise PipelineStateError("The pipeline is closed")
+                    if self._state is not PipelineState.BUILT:
+                        raise PipelineStateError("The pipeline is already running")
+                    async_queue: Queue = Queue()
+                    self._async_stopped = Event()
+                    async_source: Source[DataT] = _AsyncSource(
+                        async_queue, self._async_stopped
+                    )
+                    async_source.set_name(self._source_name)
+                    self._engine = engine = self._make_engine(async_source)
+                    try:
+                        engine.start()
+                    except BaseException:
+                        self._state = PipelineState.CLOSED
+                        self._engine = None
+                        self._closed.set()
+                        raise
+                    self._state = PipelineState.RUNNING
+                    # the consumer must exist only while the engine is the running one, so a
+                    # racing `close()` cannot find a half-started run
+                    self._init_out_queue()
+                    self._start_background_consumer(engine)
+                    self._async_queue = async_queue
+        if self._state is PipelineState.CLOSED:  # pragma: no cover
+            raise PipelineStateError("The pipeline is closed")
         assert self._async_queue is not None
         self._async_queue.put(item)
 
@@ -553,6 +587,11 @@ class Pipeline(Generic[DataT]):
             Put a result in the output queue, dropping it as soon as a `close()` has been
             requested, instead of blocking forever on a queue nobody reads anymore.
             """
+            try:
+                out_queue.put_nowait(payload)
+                return
+            except queue.Full:
+                pass
             put_or_abort(
                 cast(ItemsQueue, out_queue),
                 payload,
@@ -616,9 +655,19 @@ class Pipeline(Generic[DataT]):
         :raises BaseException: Whatever exception has made the asynchronous runner fail
         """
         if self._out_queue is not None:
-            item = self._out_queue.get(block)
+            if self._closed.is_set():
+                try:
+                    item = self._out_queue.get_nowait()
+                except queue.Empty:
+                    raise PipelineStateError("asynchronous run ended")
+            else:
+                item = self._out_queue.get(block)
             self._out_queue.task_done()
             if isinstance(item, _AsyncPipelineError):
+                try:
+                    self._out_queue.put_nowait(_ASYNC_END)
+                except queue.Full:  # pragma: no cover
+                    pass
                 raise item.error
             if isinstance(item, _AsyncEndOfStream):
                 self._out_queue.put(item)
@@ -844,5 +893,7 @@ class Pipeline(Generic[DataT]):
         self._out_queue = Queue(maxsize=self._max_queues_size)
 
     def _log_stages(self):
+        if self._stages_log is not None:
+            return self._stages_log
         names = self._stages.keys() if self._stages else self._stage_specs.keys()
         return ", ".join(names)

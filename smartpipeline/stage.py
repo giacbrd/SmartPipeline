@@ -19,6 +19,7 @@ class AliveMixin:
 
     def set_name(self, name: str):
         self._name = name
+        self._logger: Optional[Logger] = None
 
     @property
     def name(self) -> str:
@@ -32,9 +33,11 @@ class AliveMixin:
     @property
     def logger(self) -> Logger:
         """Specific logger for this object"""
-        if getattr(self, "_logger", None) is None:
-            self._logger = getLogger(self.name)
-        return self._logger
+        logger: Optional[Logger] = getattr(self, "_logger", None)
+        if logger is None:
+            logger = getLogger(self.name)
+            self._logger = logger
+        return logger
 
 
 class ConstructorMixin:
@@ -67,7 +70,15 @@ class ConstructorMixin:
         pass
 
 
-class Processor(ABC, Generic[DataT]):
+class Stage(AliveMixin, ConstructorMixin, ABC, Generic[DataT]):
+    """
+    Extend this class and override :meth:`.Stage.process` for defining a stage,
+    e.g. `Stage[MyData]` processes `Item[MyData]` items
+    """
+
+    def __str__(self) -> str:
+        return f"Stage {self.name}"
+
     @abstractmethod
     def process(self, item: Item[DataT]) -> Item[DataT]:
         """
@@ -79,7 +90,12 @@ class Processor(ABC, Generic[DataT]):
         return item
 
 
-class BatchProcessor(ABC, Generic[DataT]):
+class BatchStage(AliveMixin, ConstructorMixin, ABC, Generic[DataT]):
+    """
+    Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage,
+    e.g. `BatchStage[MyData]` processes `Item[MyData]` items
+    """
+
     @abstractmethod
     def process_batch(self, items: Sequence[Item[DataT]]) -> Sequence[Item[DataT]]:
         """
@@ -89,23 +105,6 @@ class BatchProcessor(ABC, Generic[DataT]):
         :return: The same batch with items processed and enriched by the stage; it must contain exactly one item for each input item
         """
         return items
-
-
-class Stage(AliveMixin, ConstructorMixin, Processor[DataT], Generic[DataT]):
-    """
-    Extend this class and override :meth:`.Stage.process` for defining a stage,
-    e.g. `Stage[MyData]` processes `Item[MyData]` items
-    """
-
-    def __str__(self) -> str:
-        return f"Stage {self.name}"
-
-
-class BatchStage(AliveMixin, ConstructorMixin, BatchProcessor[DataT], Generic[DataT]):
-    """
-    Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage,
-    e.g. `BatchStage[MyData]` processes `Item[MyData]` items
-    """
 
     def __init__(self, size: int, timeout: float = 1.0):
         """

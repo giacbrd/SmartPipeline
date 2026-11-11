@@ -23,7 +23,9 @@ class LocalFilesSource(Source[Dict[str, Any]]):
     def _iter_files(self) -> Generator[str, None, None]:
         for fname in os.listdir(self.dir_path):
             if fname.endswith(self.postfix) and not fname.startswith("."):
-                yield os.path.join(self.dir_path, fname)
+                path = os.path.join(self.dir_path, fname)
+                if os.path.isfile(path):
+                    yield path
 
     def pop(self) -> Optional[Item[Dict[str, Any]]]:
         file_path = next(self._iterator, None)
@@ -49,4 +51,4 @@ class FilePathItem(Item[Dict[str, Any]]):
 
     @property
     def id(self) -> Any:
-        return os.path.basename(self.path) or super().id()
+        return os.path.basename(self.path) or super().id
