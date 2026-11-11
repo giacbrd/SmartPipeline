@@ -191,6 +191,14 @@ def test_results_end_when_the_run_is_cancelled():
     engine.cancel.set()
     assert list(engine.iter_results()) == []
 
+    first, last = _inline_segment(TextReverser()), _inline_segment(TextReverser())
+    queue: Queue = Queue()
+    queue.put(text_item())
+    first.output_queue = last.input_queue = queue
+    engine = _engine([first, last])
+    engine.cancel = _CancelAfter(1)
+    assert list(engine.iter_results()) == []
+
 
 def test_results_end_when_the_queue_is_gone():
     """A consumer losing its queue mid-read ends the run, it has nothing left to read."""

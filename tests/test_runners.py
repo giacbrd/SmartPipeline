@@ -8,7 +8,7 @@ import pytest
 
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import Item, Stop
-from smartpipeline.runners import worker_loop
+from smartpipeline.runners import process, worker_loop
 from tests.utils import (
     QUEUE_TIMEOUT,
     BatchTextReverser,
@@ -223,3 +223,43 @@ def test_worker_loop_logs_on_end_failure_after_process_error(caplog):
     assert any(
         "processing error" in record.getMessage().lower() for record in caplog.records
     )
+
+
+def test_process_rejects_stage_returning_none():
+    """A stage returning None records a ValueError critical error on the item."""
+
+    class NoneStage(TextReverser):
+        def process(self, item):
+            return None
+
+    item = process(NoneStage(), text_item("hello"), ErrorManager(), RetryManager())
+    assert item.has_critical_errors()
+    assert isinstance(next(item.critical_errors()).get_exception(), ValueError)
+
+
+def test_batch_worker_exits_when_queue_disconnects():
+    """A batch worker whose input queue loses its manager mid-batch exits cleanly."""
+
+    class _DisconnectAfterFirstQueue(Queue):
+        def __init__(self):
+            super().__init__()
+            self._reads = 0
+
+        def get(self, *args, **kwargs):
+            self._reads += 1
+            if self._reads > 1:
+                raise EOFError
+            return super().get(*args, **kwargs)
+
+    in_queue = _DisconnectAfterFirstQueue()
+    out_queue: Queue = Queue()
+    in_queue.put(text_item("hello"))
+    worker_loop(
+        BatchTextReverser(size=4, timeout=1.0),
+        in_queue,
+        out_queue,
+        ErrorManager(),
+        RetryManager(),
+        Event(),
+    )
+    assert out_queue.empty()

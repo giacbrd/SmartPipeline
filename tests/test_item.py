@@ -78,6 +78,7 @@ def test_none_is_a_valid_payload():
     item = Item[Optional[str]](None)
     assert item.data is None
     assert item.data_snippet() == "None"
+    assert Item[str]("hello").data_snippet() == "hello"
     # the default payload is only used when the data is not given at all
     assert Item().data == {}
     assert Item({"a": 1}).data == {"a": 1}
