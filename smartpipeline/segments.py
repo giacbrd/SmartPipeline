@@ -461,6 +461,7 @@ class Engine(Generic[DataT]):
                 if raw is not None:
                     with self._stage_lock:
                         if self.cancel.is_set():
+                            self.check_errors()
                             return
                         result = seg.run_chain(raw, self.error_manager)
                     yield result
@@ -498,6 +499,7 @@ class Engine(Generic[DataT]):
                 if isinstance(last, InlineSegment):
                     with self._stage_lock:
                         if _guards_met((self.cancel.is_set,)):
+                            self.check_errors()
                             return
                         item = last.run_chain(item, self.error_manager)
                 yield item
