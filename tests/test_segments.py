@@ -14,6 +14,7 @@ import pytest
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import Stop
 from smartpipeline.segments import ConcurrentSegment, Engine, InlineSegment
+from smartpipeline.stage import Source
 from tests.utils import (
     CriticalIOErrorStage,
     CustomizableBrokenStage,
@@ -69,11 +70,26 @@ class _CancelAfter:
         self._checks = 0
 
 
-class _GoneQueue(Queue):
-    """A queue which loses its unfinished-tasks tracking, like one of a dead manager."""
+class _IdleSource(Source):
+    """A source which is temporarily idle and never stops by itself."""
 
-    def task_done(self):
-        raise EOFError
+    def pop(self):
+        return None
+
+
+class _GoneQueue(Queue):
+    """A queue whose manager disappears after its buffered items are read."""
+
+    def __init__(self):
+        super().__init__()
+        self._delivered = False
+
+    def get(self, *args, **kwargs):
+        if self._delivered:
+            raise EOFError
+        item = super().get(*args, **kwargs)
+        self._delivered = True
+        return item
 
 
 class _ClosedQueue(Queue):
@@ -130,6 +146,16 @@ def test_source_loop_exits_when_the_run_is_cancelled():
     seg = _inline_segment(TextReverser())
     seg.input_queue = Queue()
     engine = _engine([seg], source=ListSource([text_item()]))
+    engine.cancel.set()
+    engine._source_loop()
+    assert seg.input_queue.empty()
+
+
+def test_source_loop_stops_on_cancel_while_the_source_is_idle():
+    """An idle source must not keep a cancelled source loop spinning."""
+    seg = _inline_segment(TextReverser())
+    seg.input_queue = Queue()
+    engine = _engine([seg], source=_IdleSource())
     engine.cancel.set()
     engine._source_loop()
     assert seg.input_queue.empty()
@@ -201,13 +227,13 @@ def test_results_end_when_the_run_is_cancelled():
 
 
 def test_results_end_when_the_queue_is_gone():
-    """A consumer losing its queue mid-read ends the run, it has nothing left to read."""
+    """A consumer losing its queue mid-read delivers what it already read, then ends."""
     first, last = _inline_segment(TextReverser()), _inline_segment(TextReverser())
     queue = _GoneQueue()
     queue.put(text_item())
     first.output_queue = last.input_queue = queue
     engine = _engine([first, last])
-    assert list(engine.iter_results()) == []
+    assert len(list(engine.iter_results())) == 1
 
 
 def test_join_threads_never_joins_the_calling_thread():

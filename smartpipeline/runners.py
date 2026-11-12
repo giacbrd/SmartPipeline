@@ -216,7 +216,6 @@ def _single_worker_body(
         item: Optional[Item[DataT]] = get_or_abort(in_queue, cancel.is_set)
         if item is None:
             return
-        in_queue.task_done()
         if isinstance(item, Stop):
             return
         result = process(stage, item, error_manager, retry_manager)
@@ -237,7 +236,6 @@ def _batch_worker_body(
         first: Optional[Item[DataT]] = get_or_abort(in_queue, cancel.is_set)
         if first is None:
             return
-        in_queue.task_done()
         if isinstance(first, Stop):
             return
         batch: list[Item[DataT]] = [first]
@@ -256,7 +254,6 @@ def _batch_worker_body(
                 continue
             except (EOFError, OSError):
                 return
-            in_queue.task_done()
             if isinstance(nxt, Stop):
                 got_stop = True
                 break

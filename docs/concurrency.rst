@@ -50,6 +50,33 @@ and may be pickled.
 A ``BatchStage`` with ``concurrency<1`` is automatically promoted
 to ``concurrency=1`` on threads.
 
+Choosing threads or processes
+------------------------------
+
+The process executor has a transport cost that the thread executor does not:
+each item crosses manager-backed queues and is pickled, typically around
+0.2--0.5 ms per item on a modern machine, independent of the work in the stage.
+Decide from the work per item, not from the number of cores:
+
+* I/O-bound stages, and C extensions that release the GIL (numpy, scikit-learn,
+  zlib), usually go faster on threads.
+* Pure-Python CPU stages pay off on processes only when each item keeps a worker
+  busy for roughly a millisecond or more, or when items are few and large.
+* ``BatchStage`` does not change this: it groups items *inside* a worker, but they
+  still cross queues one by one. It amortizes model/API calls, not process transport.
+* Avoid alternating inline, thread and process segments in one pipeline: every
+  boundary is another queue. Combining adjacent CPU steps into one process stage
+  reduces the number of hand-offs.
+* For high item rates on processes, group records into larger *chunk items*
+  upstream and split them only when needed; fewer, larger items are the cheapest
+  way to amortize transport. Error semantics then apply per chunk, so keep a
+  per-record status inside the chunk.
+
+``examples/benchmark.py`` prints the break-even for no-op, 0.1 ms and 1 ms of
+pure-Python work per item; re-run it on the target hardware instead of trusting
+a constant. ``examples/log_lake_etl.py`` and ``examples/genome_kmers.py`` show
+the two sides of the trade-off.
+
 How stages on processes work
 ----------------------------
 
