@@ -60,6 +60,9 @@
 - `Pipeline.count` is the number of items delivered by `run()` or
   `process_async()`, including items with soft errors; items processed one by
   one with `process()` are not counted.
+- `Pipeline.soft_errors_count` and `Pipeline.critical_errors_count` count the
+  errors attached to the same delivered items, so global error totals remain
+  available when the error manager runs as a copy in worker processes.
 - `StageSpec.retry_manager` exposes the retry configuration of a stage, built once and
   shared by every item and every execution mode.
 - `BatchStage.process_batch()` output length is validated: it must return exactly
@@ -78,10 +81,6 @@
 
 ### Fixed
 
-- `get_item()` started before the first `process_async()` now waits for the
-  asynchronous run to start instead of racing it and raising `ValueError`;
-  start failures, `stop()` and `close()` release the waiter with the
-  corresponding error.
 - No execution blocks indefinitely on a queue anymore: blocking puts and gets
   abort when the pipeline is cancelled (on error or `close()`). This fixes
   several hangs and lost items on errors in concurrent stages, including full

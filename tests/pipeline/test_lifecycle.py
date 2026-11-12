@@ -350,6 +350,8 @@ def test_process_can_be_repeated_until_close():
     assert second.data["text"] == "b"
     assert pipeline.state is PipelineState.BUILT
     assert pipeline.count == 0
+    assert pipeline.soft_errors_count == 0
+    assert pipeline.critical_errors_count == 0
     assert events.count("tracked:start") == 1
     assert events.count("tracked:process") == 2
     pipeline.close()
