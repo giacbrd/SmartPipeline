@@ -115,6 +115,11 @@ because the error manager is copied into worker processes together with the stag
 The main-process error manager starts after the process-based runners have been
 submitted, so its ``on_start`` may open non-picklable resources too.
 
+An ``ErrorManager`` is copied into each worker process, so counters updated in
+``handle`` are per worker. For global totals use
+:attr:`.Pipeline.soft_errors_count` / :attr:`.Pipeline.critical_errors_count`,
+the delivered items, or an external sink/``Manager`` proxy.
+
 Take the Elasticsearch example from the :doc:`usage` guide.
 ``Elasticsearch(...)`` clients are not picklable
 (try ``pickle.dumps(Elasticsearch('localhost'))`` yourself),

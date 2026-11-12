@@ -197,6 +197,8 @@ def test_soft_errors_are_delivered(mode):
     items = run_with_timeout(pipeline)
     assert len(items) == 10
     assert pipeline.count == 10
+    assert pipeline.soft_errors_count == 10
+    assert pipeline.critical_errors_count == 0
     for item in items:
         assert item.has_soft_errors()
         assert item.get_timing("reverser") is not None
@@ -218,6 +220,8 @@ def test_critical_errors_are_skipped_by_default(mode):
     items = run_with_timeout(pipeline)
     assert len(items) == 10
     assert pipeline.count == 10
+    assert pipeline.soft_errors_count == 0
+    assert pipeline.critical_errors_count == 10
     for item in items:
         assert item.has_critical_errors()
         assert item.get_timing("reverser") is not None
@@ -353,6 +357,8 @@ def test_retry_gives_single_retry_error(mode):
     items = run_with_timeout(pipeline)
     assert len(items) == 3
     assert pipeline.count == 3
+    assert pipeline.soft_errors_count == 3
+    assert pipeline.critical_errors_count == 0
     for item in items:
         assert not item.has_critical_errors()
         soft = list(item.soft_errors())
@@ -522,6 +528,22 @@ def test_process_async_with_callback():
     for item in got:
         assert item.metadata["check"] is True
     assert pipeline.count == 2
+    assert pipeline.soft_errors_count == 0
+    assert pipeline.critical_errors_count == 0
+
+
+def test_process_async_counts_delivered_item_errors():
+    """The error counters include items delivered by get_item()."""
+    pipeline = get_pipeline().append("error", ErrorStage())
+    pipeline.process_async(text_item("hello"))
+    pipeline.process_async(text_item("world"))
+    pipeline.stop()
+    got = [get_item_with_timeout(pipeline), get_item_with_timeout(pipeline)]
+    pipeline.close()
+    assert len(got) == 2
+    assert pipeline.count == 2
+    assert pipeline.soft_errors_count == 2
+    assert pipeline.critical_errors_count == 0
 
 
 def test_process_async_callback_error_is_delivered():

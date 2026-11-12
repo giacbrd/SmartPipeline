@@ -348,6 +348,11 @@ pipeline which was built but never run. A second ``close()`` racing with another
 one waits until the first has finished. A closed pipeline cannot be built or
 run again.
 
+:attr:`.Pipeline.count`, :attr:`.Pipeline.soft_errors_count` and
+:attr:`.Pipeline.critical_errors_count` describe delivered items and their
+errors; ``process()`` items are excluded. Unlike ``ErrorManager`` counters,
+they stay correct with process workers.
+
 A further example
 -----------------
 

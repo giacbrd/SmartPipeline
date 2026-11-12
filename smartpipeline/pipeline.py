@@ -183,6 +183,8 @@ class Pipeline(Generic[DataT]):
         self._source: Optional[Source[DataT]] = None
         self._max_queues_size = max_queues_size
         self._count = 0
+        self._soft_errors_count = 0
+        self._critical_errors_count = 0
         self._state = PipelineState.INITIAL
         self._build_error: Optional[BaseException] = None
         self._stopped = False
@@ -395,6 +397,41 @@ class Pipeline(Generic[DataT]):
         """
         return self._count
 
+    @property
+    def soft_errors_count(self) -> int:
+        """
+        Number of soft errors attached to the items delivered to the caller.
+
+        Counts the :class:`.error.exceptions.SoftError` instances (including
+        :class:`.error.exceptions.RetryError`) carried by the items yielded by
+        :meth:`.Pipeline.run` or delivered by :meth:`.Pipeline.get_item`.
+        Items processed one by one with :meth:`.Pipeline.process` are not counted.
+
+        :return: Count of soft errors on delivered items
+        """
+        return self._soft_errors_count
+
+    @property
+    def critical_errors_count(self) -> int:
+        """
+        Number of critical errors attached to the items delivered to the caller.
+
+        Counts the :class:`.error.exceptions.CriticalError` instances carried by
+        the items yielded by :meth:`.Pipeline.run` or delivered by
+        :meth:`.Pipeline.get_item`. Critical items skip downstream stages but are
+        still delivered, so they are included. Items processed one by one with
+        :meth:`.Pipeline.process` are not counted.
+
+        :return: Count of critical errors on delivered items
+        """
+        return self._critical_errors_count
+
+    def _record_delivery(self, item: Item[DataT]) -> None:
+        """Count a delivered item and its errors, keeping the three counters aligned."""
+        self._count += 1
+        self._soft_errors_count += sum(1 for _ in item.soft_errors())
+        self._critical_errors_count += sum(1 for _ in item.critical_errors())
+
     def _ensure_process_started(self) -> None:
         if self._process_started:
             return
@@ -501,7 +538,7 @@ class Pipeline(Generic[DataT]):
         self._logger.debug("Running the pipeline on stages: %s", self._log_stages())
         try:
             for result in engine.iter_results():
-                self._count += 1
+                self._record_delivery(result)
                 yield result
         except BaseException as run_error:
             try:
@@ -600,7 +637,7 @@ class Pipeline(Generic[DataT]):
                     except BaseException as e:
                         _deliver(_AsyncPipelineError(e))
                         return
-                    self._count += 1
+                    self._record_delivery(result)
                     if not put_or_abort(
                         cast(ItemsQueue, out_queue), result, engine.cancel.is_set
                     ):
