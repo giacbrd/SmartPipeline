@@ -102,14 +102,19 @@ class Item(Generic[DataT]):
 
     def set_timing(self, stage_name: str, seconds: float) -> Item[DataT]:
         """
-        Set the time spent by a stage (referenced by its name) for processing the item
+        Set the wall-clock time spent by a stage (referenced by its name) for processing the item.
+
+        The duration includes blocking work, retries and, on threads, time spent waiting for
+        the GIL, so it is not CPU time. See the concurrency guide for how to read it.
         """
         self._timings[stage_name] = seconds
         return self
 
     def get_timing(self, stage_name: str) -> Optional[float]:
         """
-        Get the time spent by a stage (referenced by its name) for processing the item
+        Get the wall-clock time spent by a stage (referenced by its name) for processing the item.
+
+        It is not CPU time and excludes queue waiting; on threads it includes GIL waiting.
 
         :return: The time in seconds or None if the item has not been processed by the stage
         """

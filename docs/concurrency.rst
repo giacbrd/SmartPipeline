@@ -53,29 +53,22 @@ to ``concurrency=1`` on threads.
 Choosing threads or processes
 ------------------------------
 
-The process executor has a transport cost that the thread executor does not:
-each item crosses manager-backed queues and is pickled, typically around
-0.2--0.5 ms per item on a modern machine, independent of the work in the stage.
-Decide from the work per item, not from the number of cores:
+Process transport costs roughly 0.2--0.5 ms per item, so choose by work per item:
+threads for I/O and C extensions that release the GIL; processes for pure-Python
+CPU work of roughly a millisecond or more per item, or for few large items.
+``BatchStage`` groups items inside a worker, but they still cross queues one by
+one: for high item rates on processes, send fewer and larger chunk items.
+``examples/benchmark.py`` measures the break-even; ``examples/log_lake_etl.py``
+and ``examples/genome_kmers.py`` show both sides.
 
-* I/O-bound stages, and C extensions that release the GIL (numpy, scikit-learn,
-  zlib), usually go faster on threads.
-* Pure-Python CPU stages pay off on processes only when each item keeps a worker
-  busy for roughly a millisecond or more, or when items are few and large.
-* ``BatchStage`` does not change this: it groups items *inside* a worker, but they
-  still cross queues one by one. It amortizes model/API calls, not process transport.
-* Avoid alternating inline, thread and process segments in one pipeline: every
-  boundary is another queue. Combining adjacent CPU steps into one process stage
-  reduces the number of hand-offs.
-* For high item rates on processes, group records into larger *chunk items*
-  upstream and split them only when needed; fewer, larger items are the cheapest
-  way to amortize transport. Error semantics then apply per chunk, so keep a
-  per-record status inside the chunk.
+Reading stage timings
+---------------------
 
-``examples/benchmark.py`` prints the break-even for no-op, 0.1 ms and 1 ms of
-pure-Python work per item; re-run it on the target hardware instead of trusting
-a constant. ``examples/log_lake_etl.py`` and ``examples/genome_kmers.py`` show
-the two sides of the trade-off.
+Stage timings are wall-clock durations inside ``process``/``process_batch``, not
+CPU time: they include I/O, retries and, on threads, GIL wait, but exclude queue
+transport. Summed durations can therefore exceed wall time, and a batch stage
+reports one average duration for all its items. Use them to find expensive
+stages, not to measure CPU or end-to-end latency.
 
 How stages on processes work
 ----------------------------
