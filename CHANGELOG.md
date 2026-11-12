@@ -78,6 +78,10 @@
 
 ### Fixed
 
+- `get_item()` started before the first `process_async()` now waits for the
+  asynchronous run to start instead of racing it and raising `ValueError`;
+  start failures, `stop()` and `close()` release the waiter with the
+  corresponding error.
 - No execution blocks indefinitely on a queue anymore: blocking puts and gets
   abort when the pipeline is cancelled (on error or `close()`). This fixes
   several hangs and lost items on errors in concurrent stages, including full
