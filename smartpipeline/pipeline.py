@@ -121,7 +121,6 @@ class _AsyncSource(Source[DataT]):
             item: Optional[Item[DataT]] = self._async_queue.get(
                 block=True, timeout=CONCURRENCY_WAIT
             )
-            self._async_queue.task_done()
             return item
         except queue.Empty:
             if self._stopped_event.is_set():
@@ -646,7 +645,6 @@ class Pipeline(Generic[DataT]):
         """
         if self._out_queue is not None:
             item = self._out_queue.get(block)
-            self._out_queue.task_done()
             if isinstance(item, _AsyncPipelineError):
                 try:
                     self._out_queue.put_nowait(_ASYNC_END)

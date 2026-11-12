@@ -134,11 +134,9 @@ class LogsReceiver:
                     try:
                         record = queue.get()
                         if record is None:
-                            queue.task_done()
                             break
                         logger = logging.getLogger(record.name)
                         logger.handle(record)
-                        queue.task_done()
                     except (EOFError, OSError):
                         # the queue has been closed, e.g. by the multiprocessing manager
                         break

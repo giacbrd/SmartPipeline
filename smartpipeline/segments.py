@@ -208,6 +208,7 @@ class Engine(Generic[DataT]):
         self._stage_lock = RLock()
 
     def _new_queue(self) -> ItemsQueue:
+        # queues are drained but never joined: task_done bookkeeping is not used
         if self._manager is not None:
             return self._manager.Queue(maxsize=self.max_queues_size)
         return queue.Queue(maxsize=self.max_queues_size)
@@ -362,16 +363,17 @@ class Engine(Generic[DataT]):
         assert first.input_queue is not None
         try:
             while True:
-                if self.cancel.is_set():
-                    return
                 try:
                     item = self.source.pop()
                 except Exception as e:
                     self._record(e)
                     return
-                if item is not None and not put_or_abort(
-                    first.input_queue, item, self.cancel.is_set
-                ):
+                if item is not None:
+                    if not put_or_abort(first.input_queue, item, self.cancel.is_set):
+                        return
+                elif self.cancel.is_set():
+                    # a source may return None temporarily, but a cancelled run has
+                    # nothing left to wait for
                     return
                 # the check comes after the put: a source stopping while returning its
                 # last item must not lose it
@@ -396,7 +398,6 @@ class Engine(Generic[DataT]):
                 )
                 if item is None:
                     return
-                seg.input_queue.task_done()
                 if isinstance(item, Stop):
                     for _ in range(next_workers):
                         if not put_or_abort(
@@ -486,13 +487,6 @@ class Engine(Generic[DataT]):
                 if item is None:
                     self.check_errors()
                     return
-                try:
-                    results.task_done()
-                except (EOFError, OSError):
-                    # a concurrent close() shut down the manager while this thread was
-                    # consuming: the run is over, there is nothing left to read
-                    self.check_errors()
-                    return
                 if isinstance(item, Stop):
                     self.check_errors()
                     return
@@ -519,7 +513,6 @@ class Engine(Generic[DataT]):
                 while True:
                     try:
                         q.get_nowait()
-                        q.task_done()
                     except queue.Empty:
                         break
                     except (ValueError, AttributeError, EOFError, OSError):

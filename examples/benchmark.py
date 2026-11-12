@@ -4,10 +4,14 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 
 Times 20k items through four pipelines: inline, one threads stage with
 concurrency 2, one processes stage with concurrency 2, and a batch stage of
-size 100. Plain script, not a test.
+size 100. It also reports the thread/process break-even for 0.1ms and 1ms of
+pure-Python CPU work per item, where the queue transport cost is visible.
+Plain script, not a test.
 """
 
 import time
+
+import _common  # noqa: F401  (puts the repository root on sys.path)
 
 from smartpipeline.item import Item
 from smartpipeline.pipeline import Pipeline
@@ -30,6 +34,21 @@ class TextSource(Source):
 class Upper(Stage):
     def process(self, item: Item):
         item.data["text"] = item.data["text"].upper()
+        return item
+
+
+class CpuBurn(Stage):
+    """Busy-wait CPU work, so threads are limited by the GIL."""
+
+    def __init__(self, seconds):
+        self._seconds = seconds
+
+    def process(self, item: Item):
+        deadline = time.perf_counter() + self._seconds
+        iterations = 0
+        while time.perf_counter() < deadline:
+            iterations += 1
+        item.data["iterations"] = iterations
         return item
 
 
@@ -77,6 +96,20 @@ def main():
         .set_source(TextSource(total))
         .append("upper", UpperBatch(size=100), concurrency=2, executor="threads"),
     )
+    for work, count in (("0.1ms", 5000), ("1ms", 2000)):
+        seconds = 0.0001 if work == "0.1ms" else 0.001
+        for executor in ("threads", "processes"):
+            run_case(
+                f"cpu-{work} {executor}-2",
+                Pipeline()
+                .set_source(TextSource(count))
+                .append(
+                    "burn",
+                    CpuBurn(seconds),
+                    concurrency=2,
+                    executor=executor,
+                ),
+            )
 
 
 if __name__ == "__main__":

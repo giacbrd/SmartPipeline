@@ -34,7 +34,6 @@ def test_put_or_abort_retries_until_space():
     def _free():
         time.sleep(0.05)
         q.get_nowait()
-        q.task_done()
 
     releaser = threading.Thread(target=_free, daemon=True)
     releaser.start()
