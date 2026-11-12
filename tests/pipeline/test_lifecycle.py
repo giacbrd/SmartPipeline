@@ -388,6 +388,62 @@ def test_process_async_rejected_after_close():
         pipeline.process_async(text_item())
 
 
+def test_get_item_waits_for_async_startup():
+    """get_item() started before process_async() waits for on_start to finish."""
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowStartStage(TextReverser):
+        def on_start(self):
+            started.set()
+            assert release.wait(timeout=PIPELINE_TIMEOUT)
+
+    pipeline = get_pipeline().append("slow", SlowStartStage()).build()
+    outcome: dict = {}
+    waiter = Thread(
+        target=lambda: outcome.setdefault("item", pipeline.get_item()),
+        daemon=True,
+    )
+    with cleanup_on_exit(pipeline):
+        waiter.start()
+        starter = Thread(
+            target=lambda: pipeline.process_async(text_item("hello")), daemon=True
+        )
+        starter.start()
+        assert started.wait(PIPELINE_TIMEOUT)
+        assert waiter.is_alive()
+        release.set()
+        starter.join(timeout=PIPELINE_TIMEOUT)
+        waiter.join(timeout=PIPELINE_TIMEOUT)
+        assert not starter.is_alive() and not waiter.is_alive()
+        assert outcome["item"].data["text"] == "olleh"
+        pipeline.stop()
+
+
+@pytest.mark.parametrize(
+    "action,expected",
+    [
+        (lambda p: p.close(), PipelineStateError),
+        (lambda p: p.stop(), PipelineStateError),
+        (
+            lambda p: pytest.raises(RuntimeError, p.process_async, text_item()),
+            RuntimeError,
+        ),
+    ],
+)
+def test_get_item_waiter_is_released_when_run_never_starts(action, expected):
+    """A get_item() waiter wakes up on close(), stop() or a failing on_start."""
+    pipeline = (
+        get_pipeline()
+        .append("boom", LifecycleStage([], fail_on_start=True), concurrency=1)
+        .build()
+    )
+    with cleanup_on_exit(pipeline):
+        Thread(target=lambda: (time.sleep(0.05), action(pipeline)), daemon=True).start()
+        with pytest.raises(expected):
+            get_item_with_timeout(pipeline, timeout=5.0)
+
+
 def test_get_item_after_async_run_end_raises():
     """get_item() raises after the async run drained instead of blocking."""
     pipeline = get_pipeline().append("reverser", TextReverser()).build()

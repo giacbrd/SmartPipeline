@@ -193,6 +193,7 @@ class Pipeline(Generic[DataT]):
         self._pipeline_executor: Optional[Thread] = None
         self._async_queue: Optional[Queue] = None
         self._async_stopped: Event = Event()
+        self._async_ready: Event = Event()
         self._started_main: list[tuple[str, Stage[DataT] | BatchStage[DataT]]] = []
         self._error_manager_started = False
         self._process_lock = RLock()
@@ -323,6 +324,7 @@ class Pipeline(Generic[DataT]):
             self._join_background(timeout)
         finally:
             self._closed.set()
+            self._async_ready.set()
         if termination_error is not None:
             raise termination_error
 
@@ -373,6 +375,7 @@ class Pipeline(Generic[DataT]):
                 self._build_error = e
                 self._state = PipelineState.CLOSED
                 self._closed.set()
+                self._async_ready.set()
                 raise
             self._stages = OrderedDict(zip(self._stage_specs.keys(), stages))
             self._stages_log = ", ".join(self._stages.keys())
@@ -543,7 +546,6 @@ class Pipeline(Generic[DataT]):
                     if self._state is not PipelineState.BUILT:
                         raise PipelineStateError("The pipeline is already running")
                     async_queue: Queue = Queue()
-                    self._async_stopped = Event()
                     async_source: Source[DataT] = _AsyncSource(
                         async_queue, self._async_stopped
                     )
@@ -551,10 +553,12 @@ class Pipeline(Generic[DataT]):
                     self._engine = engine = self._make_engine(async_source)
                     try:
                         engine.start()
-                    except BaseException:
+                    except BaseException as e:
+                        self._build_error = e
                         self._state = PipelineState.CLOSED
                         self._engine = None
                         self._closed.set()
+                        self._async_ready.set()
                         raise
                     self._state = PipelineState.RUNNING
                     # the consumer must exist only while the engine is the running one, so a
@@ -562,6 +566,7 @@ class Pipeline(Generic[DataT]):
                     self._init_out_queue()
                     self._start_background_consumer(engine)
                     self._async_queue = async_queue
+                    self._async_ready.set()
         if self._state is PipelineState.CLOSED:  # pragma: no cover
             raise PipelineStateError("The pipeline is closed")
         assert self._async_queue is not None
@@ -633,32 +638,45 @@ class Pipeline(Generic[DataT]):
             except Exception:
                 pass
         self._async_stopped.set()
+        self._async_ready.set()
 
     def get_item(self, block: bool = True) -> Item[DataT]:
         """
         Get a single item from the asynchronous execution of the pipeline on single items from :meth:`.Pipeline.process_async`
 
-        :param block: If True wait indefinitely for the next processed item
-        :raises ValueError: When there is not output queue set, the pipeline is not running asynchronously
+        When called before the first :meth:`.Pipeline.process_async`, it waits for the
+        asynchronous run to start (or for the pipeline to be closed/stopped) instead of
+        raising just because the output queue does not exist yet.
+
+        :param block: If True wait for the run to start and then for the next processed item
+        :raises ValueError: When `block` is False and no asynchronous run has started
+        :raises PipelineStateError: When the run ends or the pipeline is closed/stopped before an item is available
         :raises queue.Empty: When we do not block and the queue is empty
         :raises BaseException: Whatever exception has made the asynchronous runner fail
         """
-        if self._out_queue is not None:
-            item = self._out_queue.get(block)
-            if isinstance(item, _AsyncPipelineError):
-                try:
-                    self._out_queue.put_nowait(_ASYNC_END)
-                except queue.Full:  # pragma: no cover
-                    pass
-                raise item.error
-            if isinstance(item, _AsyncEndOfStream):
-                self._out_queue.put(item)
-                raise PipelineStateError("asynchronous run ended")
-            return item
-        else:
-            raise ValueError(
-                "No pipeline is running asynchronously, no item can be retrieved from the output queue"
-            )
+        if self._out_queue is None:
+            if not block:
+                raise ValueError(
+                    "No pipeline is running asynchronously, no item can be retrieved from the output queue"
+                )
+            self._async_ready.wait()
+            with self._lock:
+                if self._out_queue is None:
+                    raise self._build_error or PipelineStateError(
+                        "asynchronous run ended"
+                    )
+        assert self._out_queue is not None
+        item = self._out_queue.get(block)
+        if isinstance(item, _AsyncPipelineError):
+            try:
+                self._out_queue.put_nowait(_ASYNC_END)
+            except queue.Full:  # pragma: no cover
+                pass
+            raise item.error
+        if isinstance(item, _AsyncEndOfStream):
+            self._out_queue.put(item)
+            raise PipelineStateError("asynchronous run ended")
+        return item
 
     def set_source(self, source: Source[DataT] | Iterable[Item[DataT]]) -> Self:
         """

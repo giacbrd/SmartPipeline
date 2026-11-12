@@ -704,7 +704,7 @@ def test_single_items(items_generator_fx):
         .build()
     )
     with pytest.raises(ValueError):
-        get_item_with_timeout(pipeline)
+        pipeline.get_item(block=False)
     item = next(items_generator_fx)
     pipeline.process_async(copy.deepcopy(item), callback=mark_item_checked)
     pipeline.stop()
