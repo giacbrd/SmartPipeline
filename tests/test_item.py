@@ -1,3 +1,4 @@
+import pickle
 from typing import Optional
 
 import pytest
@@ -92,6 +93,26 @@ def test_timed_stages_lists_the_stages_with_a_timing():
     assert set(item.timed_stages) == {"reverser", "generator"}
     assert item.get_timing("reverser") == 0.5
     assert not Item().timed_stages
+
+
+def test_pickle_sends_the_callback_id_but_not_the_callback():
+    """A pickled item keeps the key of its callback, but not the callback itself."""
+    fired: list = []
+    item = Item({"text": "hello"})
+    key = item.set_callback(lambda it: fired.append(it.data["text"]))
+    item.set_timing("reverser", 0.5)
+    item.metadata["source"] = "remote"
+    item.callback()
+    assert fired == ["hello"]
+
+    copy = pickle.loads(pickle.dumps(item))
+    assert copy.callback_id == key
+    assert copy.callback() is None
+    # everything else, and the original item, are untouched
+    assert fired == ["hello"]
+    assert copy.data == {"text": "hello"}
+    assert copy.get_timing("reverser") == 0.5
+    assert copy.metadata["source"] == "remote"
 
 
 def test_stop_is_a_str_signal_item():

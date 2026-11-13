@@ -63,6 +63,7 @@ class Item(Generic[DataT]):
         self._payload: DataT = payload
         self._timings: Dict[str, float] = {}
         self._callback_fun: Optional[Callable[[Item[DataT]], Any]] = None
+        self._callback_id: Optional[str] = None
         self._id: Optional[str] = None
 
     def __str__(self) -> str:
@@ -147,11 +148,39 @@ class Item(Generic[DataT]):
                 return self._id
         return ret
 
-    def set_callback(self, fun: Callable[[Item[DataT]], Any]):
+    def set_callback(self, fun: Callable[[Item[DataT]], Any]) -> str:
         """
         Set a function to call after a successful asynchronous execution of a pipeline on the item (through :meth:`.pipeline.Pipeline.process_async`)
+
+        The function runs in the process which submitted the item: stage workers get a
+        copy of the item without it, and the pipeline calls it back through
+        :attr:`.Item.callback_id`.
+
+        :return: the :attr:`.Item.callback_id` of this item
         """
         self._callback_fun = fun
+        return self.callback_id
+
+    @property
+    def callback_id(self) -> str:
+        """
+        Identifier of the callback set with :meth:`.Item.set_callback`.
+
+        Unlike the function, it travels with the item when a stage worker gets a copy
+        of it, so a pipeline can find the callback it kept in the caller's process.
+        """
+        if self._callback_id is None:
+            self._callback_id = str(uuid.uuid4())
+        return self._callback_id
+
+    def __getstate__(self) -> Dict[str, Any]:
+        # the callback is a callable of the submitting process: sending it to a stage
+        # worker would require it to be picklable (a lambda is not)
+        # shortcut: copy.deepcopy shares this hook, so it drops the callback too;
+        # upgrade to __reduce_ex__ if a copy must keep it
+        state = self.__dict__.copy()
+        state["_callback_fun"] = None
+        return state
 
     def callback(self) -> Any:
         """

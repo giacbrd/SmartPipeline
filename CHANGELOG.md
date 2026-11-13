@@ -113,6 +113,15 @@
   gives up as soon as the pipeline is cancelled, instead of after its whole `timeout`.
 - `Pipeline.process_async()` raises `PipelineStateError` after `stop()` instead of
   accepting items which would never be processed.
+- A `CriticalError` is never retried, even when it is one of the `retryable_errors`
+  (as with `retryable_errors=(Exception,)`): it stays a critical error on the item
+  instead of turning into a soft `RetryError` which lets the item flow downstream.
+- The callback of a `process_async()` item stays in the caller's process: stage
+  workers receive the item without it, so a lambda or a closure no longer fails a
+  pipeline using `executor="processes"` with a `PicklingError`. It is called on every
+  delivered copy of the item, it is given back to the delivered item (so
+  `Item.callback()` still works on it), and `Item.set_callback()` now returns the
+  item's `callback_id`.
 
 ## Version 0.7.0 [2023-09-27]
 

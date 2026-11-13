@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from smartpipeline.error.exceptions import BatchOutputError, RetryError
+from smartpipeline.error.exceptions import BatchOutputError, CriticalError, RetryError
 from smartpipeline.error.handling import ErrorManager
 from smartpipeline.item import Item
 from smartpipeline.pipeline import Pipeline, PipelineState, PipelineStateError
@@ -365,6 +365,42 @@ def test_retry_gives_single_retry_error(mode):
         assert len(soft) == 1
         assert isinstance(soft[0], RetryError)
         assert "failed after 3 attempts" in str(soft[0])
+
+
+def test_retries_never_soften_a_critical_error():
+    """A CriticalError stays fatal even when every exception is declared retryable."""
+    pipeline = (
+        get_pipeline()
+        .set_source(RandomTextSource(1))
+        .append(
+            "flaky",
+            CustomizableBrokenStage([CriticalError]),
+            retryable_errors=(Exception,),
+            max_retries=2,
+            backoff=0,
+        )
+        .append("reverser", TextReverser())
+        .build()
+    )
+    with pytest.raises(CriticalError):
+        run_with_timeout(pipeline)
+
+    pipeline = (
+        Pipeline()
+        .set_source(RandomTextSource(1))
+        .append(
+            "flaky",
+            CustomizableBrokenStage([CriticalError]),
+            retryable_errors=(Exception,),
+            max_retries=2,
+            backoff=0,
+        )
+        .append("reverser", TextReverser())
+        .build()
+    )
+    item = run_with_timeout(pipeline)[0]
+    assert not item.has_soft_errors()
+    assert [type(er).__name__ for er in item.critical_errors()] == ["CriticalError"]
 
 
 def test_lifecycle_state_sequence():

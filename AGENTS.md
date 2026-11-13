@@ -67,12 +67,16 @@ Execution flows `pipeline.py -> segments.py -> runners.py`; read in that order.
   (waiting in `CONCURRENCY_WAIT` slices, so `cancel` is never delayed by a long `timeout`);
   results go with `put_or_abort`; `Stop` flushes and exits without forwarding; processing errors
   propagate (the callback sets `cancel`); process workers call `on_start`/`on_end`. `process` and
-  `process_batch` keep timing, retry/backoff and `RetryError`; `BatchOutputError` stays
-  non-retryable, and a batch whose items all carry a critical error skips `process_batch`.
+  `process_batch` keep timing, retry/backoff and `RetryError`; `BatchOutputError` and
+  `CriticalError` stay non-retryable (a retry would soften a critical error into a
+  `RetryError`), and a batch whose items all carry a critical error skips `process_batch`.
 - `stage.py` — `Source` (`pop()` + `self.stop()` to end), `Stage.process`,
   `BatchStage.process_batch` (`__init__(size, timeout)`); `on_start`/`on_end` hooks.
 - `item.py` — `Item` (generic `Item[MyData]`; `.data` is writable); internal `Stop`
-  sentinel ends flow.
+  sentinel ends flow. `__getstate__` drops `_callback_fun`, so a callback never reaches a
+  worker process; `process_async` remembers it in `Pipeline._callbacks` (only when the
+  run has process workers) under `Item.callback_id`, and `_run_callback` re-attaches it
+  on the delivered item and calls it. Thread and inline runs keep it on the item.
 - `error/` — `SoftError`/`CriticalError`/`RetryError`; `ErrorManager` (**critical errors
   are skipped by default** — `raise_on_critical_error()` to raise).
 - `defaults.py` — `CONCURRENCY_WAIT=0.1`, `MAX_QUEUES_SIZE=1000`.
