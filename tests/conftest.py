@@ -4,24 +4,17 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-from smartpipeline.item import Item
-from tests.utils import TEXT_SAMPLES, random_text
+from tests.utils import TEXT_SAMPLES, text_item
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
-
-
-@pytest.fixture(scope="session")
-def text_samples_fx():
-    yield TEXT_SAMPLES
 
 
 @pytest.fixture
 def items_generator_fx():
     def _generator():
         for i in itertools.count():
-            item = Item()
+            item = text_item()
             item.data["id"] = i
-            item.data["text"] = random_text()
             yield item
 
     yield _generator()

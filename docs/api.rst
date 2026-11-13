@@ -4,7 +4,7 @@ Developer Interface
 Source and Stages
 -----------------
 
-Base abstract classes for pipeline source and stages
+Base abstract classes for defining a pipeline source and processing stages.
 
 .. autoclass:: smartpipeline.stage.Source
    :inherited-members:
@@ -21,7 +21,7 @@ Base abstract classes for pipeline source and stages
 Data Items
 ----------
 
-The unit of data in a pipeline
+The unit of data flowing through a pipeline.
 
 .. autoclass:: smartpipeline.item.Item
    :inherited-members:
@@ -30,16 +30,31 @@ The unit of data in a pipeline
 Pipeline
 --------
 
-Main class for designing the sequence of stages and execute them
+Main class for assembling stages and executing the pipeline, along with its
+stage specification and lifecycle types.
 
 .. autoclass:: smartpipeline.pipeline.Pipeline
    :inherited-members:
    :members:
 
-Error Handling
------------------
+.. autoclass:: smartpipeline.pipeline.StageSpec
+   :members:
 
-Exceptions to generate in case of errors and how to handle them
+.. autoclass:: smartpipeline.pipeline.PipelineState
+   :members:
+
+.. autoclass:: smartpipeline.pipeline.PipelineStateError
+   :members:
+
+Error Handling
+--------------
+
+Exception classes raised during stage execution and managers for handling and
+retrying errors.
+
+.. autoclass:: smartpipeline.error.exceptions.Error
+   :inherited-members:
+   :members:
 
 .. autoclass:: smartpipeline.error.exceptions.SoftError
    :inherited-members:
@@ -49,6 +64,31 @@ Exceptions to generate in case of errors and how to handle them
    :inherited-members:
    :members:
 
+.. autoclass:: smartpipeline.error.exceptions.RetryError
+   :inherited-members:
+   :members:
+
+.. autoclass:: smartpipeline.error.exceptions.BatchOutputError
+   :inherited-members:
+   :members:
+
 .. autoclass:: smartpipeline.error.handling.ErrorManager
+   :inherited-members:
+   :members:
+
+.. autoclass:: smartpipeline.error.handling.RetryManager
+   :inherited-members:
+   :members:
+
+Helpers
+-------
+
+Built-in helper sources and item subclasses shipped with the library.
+
+.. autoclass:: smartpipeline.helpers.LocalFilesSource
+   :inherited-members:
+   :members:
+
+.. autoclass:: smartpipeline.helpers.FilePathItem
    :inherited-members:
    :members:

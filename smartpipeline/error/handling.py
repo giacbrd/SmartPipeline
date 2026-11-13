@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-import logging
-import uuid
 from typing import Any, Optional, Tuple, Type, Union
 
 from smartpipeline.error.exceptions import CriticalError, SoftError
 from smartpipeline.item import Item
-from smartpipeline.stage import AliveMixin
+from smartpipeline.stage import AliveMixin, ConstructorMixin
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
-class ErrorManager:
+__all__ = ["ErrorManager", "RetryManager"]
+
+
+class ErrorManager(AliveMixin, ConstructorMixin):
     """
     Basic error handling of a pipeline, principally manages :class:`.exceptions.SoftError` and :class:`.exceptions.CriticalError` types
     """
@@ -36,24 +37,8 @@ class ErrorManager:
         self._skip_on_critical = False
         return self
 
-    def on_start(self) -> Any:
-        """
-        Called for a concurrent stage executor in a process (only when multiprocessing concurrency)
-        or simply after construction, by the pipeline.
-        The error manager in the executor is a copy of the original,
-        by overriding this method one can initialize variables specifically for the copies, that is mandatory
-        when they are not serializable.
-        """
-        pass
-
-    def on_end(self) -> Any:
-        """
-        Called when the pipeline terminates, useful for executing closing operations (e.g. on files)
-        """
-        pass
-
     def handle(
-        self, error: Exception, stage: AliveMixin, item: Item
+        self, error: Exception, stage: AliveMixin, item: Item[Any]
     ) -> Optional[CriticalError]:
         """
         Manage an error produced by a stage
@@ -80,14 +65,6 @@ class ErrorManager:
                 return item_error
         return None
 
-    @property
-    def logger(self) -> logging.Logger:
-        if getattr(self, "_logger", None) is None:
-            self._logger = logging.getLogger(
-                f"{self.__class__.__name__}-{str(uuid.uuid4())[:8]}"
-            )
-        return self._logger
-
     def _check_critical(
         self, error: CriticalError
     ) -> Optional[Union[BaseException, CriticalError]]:
@@ -104,7 +81,7 @@ class ErrorManager:
             return ex or error
         return None
 
-    def check_critical_errors(self, item: Item) -> Optional[BaseException]:
+    def check_critical_errors(self, item: Item[Any]) -> Optional[BaseException]:
         """
         Check the critical errors registered for an item
         """
@@ -129,7 +106,7 @@ class RetryManager:
     ):
         """
         :param retryable_errors: tuple of errors types which the retry strategy is applied for
-        :param max_retries: maximum number of attempts for a which a stage is run in case of one of the `retryable_errors` is raised during its execution
+        :param max_retries: maximum number of retries after the first attempt for a stage in case one of the `retryable_errors` is raised during its execution
         :param backoff: weight for the exponential back-off strategy
         """
         self._backoff = backoff

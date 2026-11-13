@@ -5,6 +5,9 @@ from typing import Optional
 __author__ = "Giacomo Berardi <giacbrd.com>"
 
 
+__all__ = ["Error", "SoftError", "CriticalError", "RetryError", "BatchOutputError"]
+
+
 class Error(Exception):
     """
     Base exception type for stages
@@ -29,6 +32,11 @@ class Error(Exception):
         # they are both necessary, in particular the second one is to preserve the cause from child thread exception
         self.__cause__ = exception
         self._exception_cause = exception
+        if not self.args or not self.args[0]:
+            # preserve the original error name even when the cause is lost,
+            # e.g. after pickling for multiprocessing (tracebacks and __cause__
+            # are not picklable), so the wrapped message must carry it
+            self.args = (f"{type(exception).__name__}: {exception}",)
         return self
 
     def get_exception(self) -> Optional[BaseException]:
@@ -36,7 +44,10 @@ class Error(Exception):
         Get the original exception (if any) that has generated this error,
         equivalent to the `__cause__ <https://www.python.org/dev/peps/pep-3134/#explicit-exception-chaining>`_ attribute
         """
-        return self.__cause__ or self._exception_cause
+        cause = getattr(self, "__cause__", None)
+        if cause is not None:
+            return cause
+        return getattr(self, "_exception_cause", None)
 
 
 class SoftError(Error):
@@ -58,8 +69,19 @@ class CriticalError(Error):
 class RetryError(SoftError):
     """
     A stage processing an input item may raise some Exception for which the stage must try to reprocess the item using
-    an exponential backoff retry strategy. After several attempts a RetryError is raised and
-    that stage is skipped for that item
+    an exponential backoff retry strategy. After all attempts fail, a single RetryError is attached
+    to the item and that stage is skipped for it
+    """
+
+    pass
+
+
+class BatchOutputError(Error):
+    """
+    A :class:`.stage.BatchStage` returned a number of items different from its input batch.
+
+    This is a fatal contract error: the pipeline stops instead of retrying it or
+    attaching a per-item soft/critical error.
     """
 
     pass

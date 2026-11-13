@@ -2,11 +2,14 @@ import uuid
 from abc import ABC, abstractmethod
 from logging import Logger, getLogger
 from queue import Queue
-from typing import Any, Optional, Sequence, TypeVar, Union
+from typing import Any, Generic, Optional, Sequence
 
-from smartpipeline.item import Item
+from smartpipeline.item import DataT, Item
 
 __author__ = "Giacomo Berardi <giacbrd.com>"
+
+
+__all__ = ["Source", "Stage", "BatchStage", "ItemsQueue"]
 
 
 class AliveMixin:
@@ -16,6 +19,7 @@ class AliveMixin:
 
     def set_name(self, name: str):
         self._name = name
+        self._logger: Optional[Logger] = None
 
     @property
     def name(self) -> str:
@@ -29,32 +33,54 @@ class AliveMixin:
     @property
     def logger(self) -> Logger:
         """Specific logger for this object"""
-        if getattr(self, "_logger", None) is None:
-            self._logger = getLogger(self.name)
-        return self._logger
+        logger: Optional[Logger] = getattr(self, "_logger", None)
+        if logger is None:
+            logger = getLogger(self.name)
+            self._logger = logger
+        return logger
 
 
 class ConstructorMixin:
     def on_start(self) -> Any:
         """
-        Called after concurrent stage executor initialization in a process (only on multiprocessing concurrency)
-        or after construction in all other cases, by the pipeline.
-        The stage in the executor is a copy of the original,
-        by overriding this method one can initialize variables specifically for the copies, that is mandatory
-        when they are not serializable.
+        Called in the pipeline start phase, when :meth:`.Pipeline.run` or
+        :meth:`.Pipeline.process_async` starts the stage, never by
+        :meth:`.Pipeline.build`.
+        With multiprocessing concurrency the stage in the executor is a copy of the
+        original, so by overriding this method one can initialize variables
+        specifically for the copies; that is mandatory when they are not serializable.
+
+        Any exception raised here is fatal for the whole pipeline and is
+        reported to the pipeline caller (on `run()`/`process_async()`) instead of
+        hanging the execution without feedback. `on_end` runs only for stages
+        whose `on_start` completed.
         """
         pass
 
     def on_end(self) -> Any:
         """
         Called when the stage terminates, useful for executing closing operations (e.g. on files)
+
+        It is paired with a successful :meth:`.on_start`, also when the start phase
+        fails after this stage has started.
+        Any exception raised here is fatal for the whole pipeline and is
+        reported to the pipeline caller on termination instead of hanging
+        the execution without feedback.
         """
         pass
 
 
-class Processor(ABC):
+class Stage(AliveMixin, ConstructorMixin, ABC, Generic[DataT]):
+    """
+    Extend this class and override :meth:`.Stage.process` for defining a stage,
+    e.g. `Stage[MyData]` processes `Item[MyData]` items
+    """
+
+    def __str__(self) -> str:
+        return f"Stage {self.name}"
+
     @abstractmethod
-    def process(self, item: Item) -> Item:
+    def process(self, item: Item[DataT]) -> Item[DataT]:
         """
         Process a single item received by the stage.
         Must be overridden for properly defining a stage
@@ -64,37 +90,32 @@ class Processor(ABC):
         return item
 
 
-class BatchProcessor(ABC):
+class BatchStage(AliveMixin, ConstructorMixin, ABC, Generic[DataT]):
+    """
+    Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage,
+    e.g. `BatchStage[MyData]` processes `Item[MyData]` items
+    """
+
     @abstractmethod
-    def process_batch(self, items: Sequence[Item]) -> Sequence[Item]:
+    def process_batch(self, items: Sequence[Item[DataT]]) -> Sequence[Item[DataT]]:
         """
         Process a batch of items received by the stage.
         Must be overridden for properly defining a batch stage
 
-        :return: The same batch with items processed and enriched by the stage
+        :return: The same batch with items processed and enriched by the stage; it must contain exactly one item for each input item
         """
         return items
 
-
-class Stage(AliveMixin, ConstructorMixin, Processor):
-    """
-    Extend this class and override :meth:`.Stage.process` for defining a stage
-    """
-
-    def __str__(self) -> str:
-        return f"Stage {self.name}"
-
-
-class BatchStage(AliveMixin, ConstructorMixin, BatchProcessor):
-    """
-    Extend this class and override :meth:`.BatchStage.process_batch` for defining a batch stage
-    """
-
     def __init__(self, size: int, timeout: float = 1.0):
         """
-        :param size: Maximum size of item batches that can be processed together
-        :param timeout: Seconds to wait before flushing a batch (calling :meth:`.BatchStage.process_batch` on it)
+        :param size: Maximum size of item batches that can be processed together, at least 1
+        :param timeout: Seconds to wait before flushing a batch (calling :meth:`.BatchStage.process_batch` on it), 0 to flush it as soon as one item is in it
+        :raises ValueError: When `size` is < 1 or `timeout` is negative
         """
+        if size < 1:
+            raise ValueError("The `size` parameter must be >= 1")
+        if timeout < 0:
+            raise ValueError("The `timeout` parameter must be >= 0")
         self._size = size
         self._timeout = timeout
 
@@ -116,13 +137,14 @@ class BatchStage(AliveMixin, ConstructorMixin, BatchProcessor):
         return self._timeout
 
 
-class Source(ABC, AliveMixin):
+class Source(ABC, AliveMixin, Generic[DataT]):
     """
-    Extend this for defining a pipeline source
+    Extend this for defining a pipeline source,
+    e.g. `Source[MyData]` generates `Item[MyData]` items
     """
 
     @abstractmethod
-    def pop(self) -> Optional[Item]:
+    def pop(self) -> Optional[Item[DataT]]:
         """
         Generate items for feeding a pipeline.
         Must be overridden for properly defining a source.
@@ -146,6 +168,4 @@ class Source(ABC, AliveMixin):
         return getattr(self, "_is_stopped", False)
 
 
-ItemsQueue = Queue[Optional[Item]]
-StageType = Union[Stage, BatchStage]
-StageTypeVar = TypeVar("StageTypeVar", bound=StageType)
+ItemsQueue = Queue[Item[Any]]

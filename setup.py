@@ -12,7 +12,7 @@ def readfile(fname):
 
 setup(
     name="SmartPipeline",
-    version="0.7.3",
+    version="1.0.0",
     description="A framework for fast developing scalable data pipelines following a simple design pattern",
     long_description=readfile("README.rst"),
     long_description_content_type="text/x-rst",
@@ -23,10 +23,11 @@ setup(
         "Intended Audience :: Science/Research",
         "License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)",
         "Operating System :: OS Independent",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-        "Development Status :: 4 - Beta",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Programming Language :: Python :: 3.15",
+        "Development Status :: 5 - Production/Stable",
     ],
     url="https://github.com/giacbrd/SmartPipeline",
     project_urls={
@@ -46,6 +47,7 @@ setup(
     package_data={
         "smartpipeline": ["py.typed"],
     },
-    tests_require=["pytest", "coverage"],
-    python_requires=">=3.9",
+    # coverage 7.9 is the first version supporting the `core = sysmon` option
+    tests_require=["pytest", "pytest-timeout", "coverage>=7.9"],
+    python_requires=">=3.12",
 )

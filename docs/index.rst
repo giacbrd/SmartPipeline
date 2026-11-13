@@ -10,7 +10,9 @@ SmartPipeline's documentation
    :start-after: documentation-marker
 
 .. toctree::
-   :maxdepth: 4
+   :maxdepth: 2
+   :caption: Contents
 
    usage
+   concurrency
    api

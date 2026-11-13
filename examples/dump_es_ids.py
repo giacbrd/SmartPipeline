@@ -59,7 +59,6 @@ class ESRetrieve(BatchStage):
             self._retrieve = self._search
         self.logger.setLevel(logging.INFO)
 
-    @staticmethod
     def _mget(self, items: Sequence[Item]) -> Sequence[Item]:
         body = {"docs": [{"_id": item.data["_id"]} for item in items]}
         resp = self._es_client.mget(body=body, index=self._es_indices)
@@ -68,16 +67,17 @@ class ESRetrieve(BatchStage):
                 items[i].data.update(doc)
         return items
 
-    @staticmethod
     def _search(self, items: Sequence[Item]) -> Sequence[Item]:
-        query = {"query": {"ids": {"values": [item.data["_id"] for item in items]}}}
+        by_id = {item.data["_id"]: item for item in items}
+        query = {"query": {"ids": {"values": list(by_id.keys())}}}
         resp = self._es_client.search(body=query, index=self._es_indices)
-        for i, doc in enumerate(resp["hits"]["hits"]):
-            items[i].data.update(doc)
+        for doc in resp["hits"]["hits"]:
+            if doc.get("_id") in by_id:
+                by_id[doc["_id"]].data.update(doc)
         return items
 
     def process_batch(self, items: Sequence[Item]) -> Sequence[Item]:
-        return self._retrieve(self, items)
+        return self._retrieve(items)
 
 
 class JsonlDump(Stage):
@@ -97,7 +97,7 @@ def get_pipeline(input_file, output_file, es_hosts, es_indices):
             "es_retrieve",
             ESRetrieve(es_hosts=es_hosts, es_indices=es_indices),
             concurrency=4,
-            parallel=True,
+            executor="processes",
         )
         .append("jsonl_dump", JsonlDump(file_obj=output_file))
         .build()
