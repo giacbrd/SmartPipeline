@@ -953,7 +953,10 @@ class Pipeline(Generic[DataT]):
             )
         if not (
             isinstance(retryable_errors, tuple)
-            and all(issubclass(err, Exception) for err in retryable_errors)
+            and all(
+                isinstance(err, type) and issubclass(err, Exception)
+                for err in retryable_errors
+            )
         ):
             raise ValueError(
                 "The `retryable_errors` parameter must be a tuple and all its elements must be Exceptions"

@@ -183,12 +183,11 @@ def process_batch(
                 retry_manager.max_retries + 1,
             )
             batch_error = result
-    spent = (time.perf_counter() - time1) / (len(to_process) or 1.0)
+    spent = (time.perf_counter() - time1) / len(to_process)
     if batch_error is not None:
         for i, item in to_process.items():
             item.set_timing(stage.name, spent)
             error_manager.handle(batch_error, stage, item)
-            ret[i] = item
         return ret
     assert not isinstance(result, RetryError)
     for n, i in enumerate(to_process.keys()):
@@ -252,8 +251,7 @@ def _batch_worker_body(
             if isinstance(nxt, Stop):
                 got_stop = True
                 break
-            if nxt is not None:
-                batch.append(nxt)
+            batch.append(nxt)
         for res in process_batch(stage, batch, error_manager, retry_manager):
             if not put_or_abort(out_queue, res, cancel.is_set):
                 return

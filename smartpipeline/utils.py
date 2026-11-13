@@ -48,7 +48,7 @@ def _guards_met(guards: Sequence[Callable[[], bool]]) -> bool:
 
 def put_or_abort(
     items_queue: ItemsQueue,
-    item: Optional[Item[DataT]],
+    item: Item[DataT],
     *guards: Callable[[], bool],
     timeout: float = CONCURRENCY_WAIT,
 ) -> bool:

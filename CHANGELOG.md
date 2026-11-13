@@ -129,6 +129,9 @@
 - `BatchStage` rejects a `size` below 1 and a negative `timeout` with a
   `ValueError`: `size=0` used to flush a batch of exactly one item and ignore the
   timeout, quietly disabling the batching the stage was written for.
+- `Pipeline.append()` rejects an element of `retryable_errors` which is an exception
+  instance and not a class with a `ValueError`, the error documented for an invalid
+  stage configuration, instead of a `TypeError` from `issubclass`.
 
 ## Version 0.7.0 [2023-09-27]
 

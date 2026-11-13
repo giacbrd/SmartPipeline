@@ -168,4 +168,4 @@ class Source(ABC, AliveMixin, Generic[DataT]):
         return getattr(self, "_is_stopped", False)
 
 
-ItemsQueue = Queue[Optional[Item[Any]]]
+ItemsQueue = Queue[Item[Any]]
