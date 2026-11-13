@@ -194,6 +194,7 @@ class Pipeline(Generic[DataT]):
         self._out_queue: Optional[Queue[Any]] = None
         self._pipeline_executor: Optional[Thread] = None
         self._async_queue: Optional[Queue] = None
+        self._callbacks: dict[str, Callable[[Item[DataT]], Any]] = {}
         self._async_stopped: Event = Event()
         self._async_ready: Event = Event()
         self._started_main: list[tuple[str, Stage[DataT] | BatchStage[DataT]]] = []
@@ -324,6 +325,8 @@ class Pipeline(Generic[DataT]):
                     except BaseException as e:
                         termination_error = e
             self._join_background(timeout)
+            # no item can be delivered anymore, so drop the callbacks still remembered
+            self._callbacks.clear()
         finally:
             self._closed.set()
             self._async_ready.set()
@@ -556,7 +559,7 @@ class Pipeline(Generic[DataT]):
         Process a single item asynchronously through the pipeline, stages may run concurrently.
         The call returns immediately, processed items are retrieved with :meth:`.Pipeline.get_item`
 
-        :param callback: A function to call after a successful process of the item
+        :param callback: A function to call after a successful process of the item; it runs in this process, also when stages use workers in other processes
         :raises PipelineStateError: When the pipeline is closed or its source has stopped
         """
         if self._state is not PipelineState.RUNNING:
@@ -606,6 +609,13 @@ class Pipeline(Generic[DataT]):
                     self._async_ready.set()
         if self._state is PipelineState.CLOSED:  # pragma: no cover
             raise PipelineStateError("The pipeline is closed")
+        running = self._engine
+        if item._callback_fun is not None and running is not None:
+            if running.has_processes:
+                # the copy a process worker gets has no callback, which may not even be
+                # picklable: keep it here, by the id travelling with the item. One entry
+                # per item object carrying a callback (not per copy), dropped by close()
+                self._callbacks[item.callback_id] = item._callback_fun
         assert self._async_queue is not None
         self._async_queue.put(item)
 
@@ -633,7 +643,7 @@ class Pipeline(Generic[DataT]):
             try:
                 for result in engine.iter_results():
                     try:
-                        result.callback()
+                        self._run_callback(result)
                     except BaseException as e:
                         _deliver(_AsyncPipelineError(e))
                         return
@@ -662,6 +672,23 @@ class Pipeline(Generic[DataT]):
         thread = Thread(target=_consume, daemon=True)
         self._pipeline_executor = thread
         thread.start()
+
+    def _run_callback(self, item: Item[DataT]) -> None:
+        """
+        Call the callback submitted for a delivered item, in this process.
+
+        An item which ran on inline or thread stages still carries its callback; a copy
+        coming back from a process worker does not, so it is taken back from the ones
+        :meth:`.Pipeline.process_async` remembered. Does nothing for an item submitted
+        without a callback. Failures propagate to the asynchronous consumer, which
+        reports them through :meth:`.Pipeline.get_item`.
+        """
+        remembered = self._callbacks.get(item.callback_id) if self._callbacks else None
+        if remembered is not None:
+            # the item came back from a worker process without its callback: give it
+            # back, so Item.callback() works on it as it does on a thread run's item
+            item.set_callback(remembered)
+        item.callback()
 
     def stop(self):
         """

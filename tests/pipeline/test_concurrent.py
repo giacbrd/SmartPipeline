@@ -35,6 +35,25 @@ __author__ = "Giacomo Berardi <giacbrd.com>"
 logger = logging.getLogger(__name__)
 
 
+def test_async_callback_is_not_sent_to_process_workers(items_generator_fx):
+    """A process pipeline still runs an unpicklable callback on the delivered item."""
+    pipeline = (
+        get_pipeline()
+        .append("reverser", TextReverser, concurrency=1, executor="processes")
+        .build()
+    )
+    item = next(items_generator_fx)
+    expected = item.data["text"][::-1]
+    delivered: list = []
+    pipeline.process_async(
+        item, callback=lambda result: delivered.append(result.data["text"])
+    )
+    pipeline.stop()
+    result = get_item_with_timeout(pipeline)
+    assert result.data["text"] == expected
+    assert delivered == [expected]
+
+
 def test_concurrent_run():
     """Mixed inline, thread and process stage pipelines deliver all 100 items."""
     # no stages

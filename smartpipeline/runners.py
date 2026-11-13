@@ -8,7 +8,7 @@ from threading import Event
 from typing import Callable, List, Optional, Sequence, TypeVar
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
-from smartpipeline.error.exceptions import BatchOutputError, RetryError
+from smartpipeline.error.exceptions import BatchOutputError, CriticalError, RetryError
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import DataT, Item, Stop
 from smartpipeline.stage import BatchStage, ItemsQueue, Stage
@@ -69,13 +69,15 @@ def _retry(call: Callable[[], T], retry_manager: RetryManager) -> T | RetryError
 
     Sleeps `2**(n-1) * backoff` between attempts, never after the last one, and
     returns the built `RetryError` on exhaustion. Other exceptions propagate.
+    A `CriticalError` never retries even when declared retryable, as it declares the
+    item unusable: turning it into a soft `RetryError` would let it flow downstream.
     """
     caught: list[Exception] = []
     while True:
         try:
             return call()
         except retry_manager.retryable_errors as exc:
-            if isinstance(exc, BatchOutputError):
+            if isinstance(exc, (BatchOutputError, CriticalError)):
                 raise
             caught.append(exc)
             if len(caught) > retry_manager.max_retries:
