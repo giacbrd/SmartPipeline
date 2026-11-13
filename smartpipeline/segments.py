@@ -73,6 +73,25 @@ def run_stage_on_ends(
     raise_collected_errors(errors, "pipeline termination failed")
 
 
+def rollback_on_ends(
+    started_main: list[tuple[str, StageInstance]],
+    error_manager: ErrorManager,
+    error_manager_started: bool,
+) -> None:
+    """
+    End the stages started before a start-phase failure, keeping that failure.
+
+    The rollback runs the paired ``on_end`` hooks, but a hook failing here is only a
+    side effect of the failure being rolled back: it is logged, never raised, so the
+    caller keeps seeing the error which ended the run.
+    """
+    try:
+        run_stage_on_ends(started_main, error_manager, error_manager_started)
+    except BaseException:
+        # the start failure is the reason of the rollback, it must not be masked
+        logging.exception("Problems in the start-phase rollback termination")
+
+
 @dataclass
 class InlineSegment(Generic[DataT]):
     """A maximal run of consecutive inline stages, run as one function chain."""
@@ -114,6 +133,13 @@ class ConcurrentSegment(Generic[DataT]):
 
 
 Segment = InlineSegment | ConcurrentSegment
+
+
+def _uses_processes(segment: Segment) -> bool:
+    """True when the workers of this segment run in other processes."""
+    return (
+        isinstance(segment, ConcurrentSegment) and segment.executor_name == "processes"
+    )
 
 
 def compile_segments(
@@ -182,10 +208,7 @@ class Engine(Generic[DataT]):
         self.error_manager = error_manager
         self.source = source
         self.max_queues_size = max_queues_size
-        self.has_processes = any(
-            isinstance(s, ConcurrentSegment) and s.executor_name == "processes"
-            for s in segments
-        )
+        self.has_processes = any(_uses_processes(s) for s in segments)
         self._manager: Optional[SyncManager] = None
         if self.has_processes:
             self._manager = Manager()
@@ -207,9 +230,16 @@ class Engine(Generic[DataT]):
         # the pipeline from inside its own `process`
         self._stage_lock = RLock()
 
-    def _new_queue(self) -> ItemsQueue:
+    def _new_queue(self, *segments: Segment) -> ItemsQueue:
+        """
+        A queue for the boundary between the given segments.
+
+        Only a queue a worker process reads or writes needs the shared manager: a
+        plain one keeps the items in this process, with no pickle on every hop.
+        """
         # queues are drained but never joined: task_done bookkeeping is not used
-        if self._manager is not None:
+        if any(_uses_processes(segment) for segment in segments):
+            assert self._manager is not None
             return self._manager.Queue(maxsize=self.max_queues_size)
         return queue.Queue(maxsize=self.max_queues_size)
 
@@ -234,15 +264,16 @@ class Engine(Generic[DataT]):
         n = len(self.segments)
         if n == 1 and isinstance(self.segments[0], InlineSegment):
             return
+        # a queue needs the shared manager only when a worker process touches it
         for i in range(n - 1):
-            q = self._new_queue()
             seg, nxt = self.segments[i], self.segments[i + 1]
+            q = self._new_queue(seg, nxt)
             seg.output_queue = q  # type: ignore[union-attr]
             nxt.input_queue = q  # type: ignore[union-attr]
         first, last = self.segments[0], self.segments[-1]
-        first.input_queue = self._new_queue()  # type: ignore[union-attr]
+        first.input_queue = self._new_queue(first)  # type: ignore[union-attr]
         if isinstance(last, ConcurrentSegment):
-            last.output_queue = self._new_queue()
+            last.output_queue = self._new_queue(last)
 
     def _ensure_logs(self) -> Optional[queue.Queue[logging.LogRecord]]:
         if not self.has_processes:
@@ -319,13 +350,9 @@ class Engine(Generic[DataT]):
             # hooks, so `on_end` never runs while a worker is still using the stage
             self.cancel.set()
             self._shutdown_executors()
-            try:
-                run_stage_on_ends(
-                    self.started_main, self.error_manager, self.error_manager_started
-                )
-            except BaseException:
-                # the start failure is the reason of the rollback, it must not be masked
-                logging.exception("Problems in the start-phase rollback termination")
+            rollback_on_ends(
+                self.started_main, self.error_manager, self.error_manager_started
+            )
             raise
         for i, seg in enumerate(self.segments):
             is_last = i == len(self.segments) - 1
