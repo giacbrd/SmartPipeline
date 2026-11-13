@@ -117,6 +117,21 @@ def _inline_segment(*stages) -> InlineSegment:
     )
 
 
+def _concurrent_segment(name: str, executor: str) -> ConcurrentSegment:
+    return ConcurrentSegment(
+        name=name,
+        stage=TextReverser(),
+        retry_manager=RetryManager(),
+        concurrency=1,
+        executor_name=executor,
+    )
+
+
+def _is_shared(items_queue) -> bool:
+    """A queue living in the manager process is not a local `queue.Queue`."""
+    return not isinstance(items_queue, Queue)
+
+
 def _engine(segments, error_manager=None, source=None) -> Engine:
     return Engine(
         segments,
@@ -234,6 +249,33 @@ def test_results_end_when_the_queue_is_gone():
     first.output_queue = last.input_queue = queue
     engine = _engine([first, last])
     assert len(list(engine.iter_results())) == 1
+
+
+def test_only_process_boundaries_use_the_shared_manager():
+    """A queue never touched by a worker process stays local, without pickling."""
+    inline = _inline_segment(TextReverser())
+    threads = _concurrent_segment("threads", "threads")
+    processes = _concurrent_segment("processes", "processes")
+    engine = _engine([inline, threads, processes])
+    try:
+        engine._wire_queues()
+        assert not _is_shared(inline.input_queue)  # the source loop feeds a driver
+        assert inline.output_queue is threads.input_queue
+        assert not _is_shared(threads.input_queue)  # driver to thread workers
+        assert threads.output_queue is processes.input_queue
+        assert _is_shared(processes.input_queue)  # read by a worker process
+        assert _is_shared(processes.output_queue)  # written by a worker process
+    finally:
+        engine._shutdown_executors()
+
+    tail = _concurrent_segment("threads", "threads")
+    engine = _engine([_concurrent_segment("processes", "processes"), tail])
+    try:
+        engine._wire_queues()
+        assert _is_shared(tail.input_queue)  # written by a worker process
+        assert not _is_shared(tail.output_queue)  # the caller reads it locally
+    finally:
+        engine._shutdown_executors()
 
 
 def test_join_threads_never_joins_the_calling_thread():

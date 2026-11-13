@@ -981,6 +981,24 @@ def test_process_start_failure_ends_the_stages_which_started():
     assert pipeline.state is PipelineState.CLOSED
 
 
+def test_process_start_rollback_never_masks_the_start_error(caplog):
+    """An on_end failing during the process() start rollback only gets logged."""
+    events: list = []
+    pipeline = (
+        get_pipeline()
+        .set_error_manager(LifecycleErrorManager(events))
+        .append("bad_end", BrokenOnEndStage())
+        .append("boom", LifecycleStage(events, fail_on_start=True))
+        .build()
+    )
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError, match="boom failed on_start"):
+            pipeline.process(text_item())
+    assert "Problems in the start-phase rollback termination" in caplog.text
+    assert pipeline.state is PipelineState.CLOSED
+    assert events == ["boom:start"]
+
+
 def test_process_refuses_items_when_close_wins_the_start_race():
     """A pipeline closed while its stages start never processes another item."""
     events: list = []

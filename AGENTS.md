@@ -127,9 +127,11 @@ attempt one `RetryError` soft error is attached to the item.
 - `count` is the number of items delivered by `run()`/`process_async()` (yielded or via
   `get_item()`), including items with soft errors; `process()` items are not counted.
 - All cross-process state via one `multiprocessing.Manager()` owned by the `Engine`
-  (queues, `cancel` `Event`, logs queue) when any segment uses processes — don't swap in raw mp
-  primitives. Cross-process logging needs the `LogsReceiver` wiring; process workers set it up
-  from `logs_queue`.
+  (the queues a worker process reads or writes, `cancel` `Event`, logs queue) when any
+  segment uses processes — don't swap in raw mp primitives. Only those boundary queues
+  come from the manager: every other queue is a plain in-process `queue.Queue`, even in
+  a mixed pipeline. Cross-process logging needs the `LogsReceiver` wiring; process
+  workers set it up from `logs_queue`.
 
 ## Tests
 

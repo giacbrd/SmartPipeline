@@ -30,7 +30,12 @@ from smartpipeline.defaults import (
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import DataT, Item, Stop
 from smartpipeline.runners import process as _process_stage
-from smartpipeline.segments import Engine, compile_segments, run_stage_on_ends
+from smartpipeline.segments import (
+    Engine,
+    compile_segments,
+    rollback_on_ends,
+    run_stage_on_ends,
+)
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage
 from smartpipeline.utils import put_or_abort, raise_collected_errors
 
@@ -447,7 +452,7 @@ class Pipeline(Generic[DataT]):
             for name, stage in self._stages.items():
                 stage.on_start()
                 if self._closed.is_set():
-                    run_stage_on_ends([(name, stage)], self._error_manager, False)
+                    rollback_on_ends([(name, stage)], self._error_manager, False)
                     raise PipelineStateError("The pipeline is closed")
                 self._started_main.append((name, stage))
             self._error_manager.on_start()
@@ -460,7 +465,7 @@ class Pipeline(Generic[DataT]):
             self._state = PipelineState.CLOSED
             self._closed.set()
             # the error manager never started if its own on_start raised
-            run_stage_on_ends(started, self._error_manager, False)
+            rollback_on_ends(started, self._error_manager, False)
             raise
 
     def process(self, item: Item[DataT]) -> Item[DataT]:
