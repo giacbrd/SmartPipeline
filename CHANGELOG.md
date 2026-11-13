@@ -82,56 +82,28 @@
 ### Fixed
 
 - No execution blocks indefinitely on a queue anymore: blocking puts and gets
-  abort when the pipeline is cancelled (on error or `close()`). This fixes
-  several hangs and lost items on errors in concurrent stages, including full
-  queues, concurrent batch stages, and the process log forwarding.
-- Worker failures are reported via futures and never silently lost, and problems
-  during termination never mask the original exception.
-- A missing source is checked before any worker starts, so `run()` with no
-  source fails fast instead of hanging; a failed stage initialization is reported
-  again instead of hanging a second `build()` or `run()`.
-- `Pipeline.process()` raises `ValueError` for pipelines with concurrent stages
-  instead of hanging (use `run()` or `process_async()` for concurrency), raises
-  `PipelineStateError` after `stop()`, and never returns an end-of-stream item.
-- A second concurrent `Pipeline.close()` waits for the first one to finish
-  instead of returning while resources are still being released.
-- `Pipeline.get_item()` raises `PipelineStateError` after the asynchronous run
-  has ended and its output has been drained, instead of blocking forever.
-- `Pipeline.close()` called from another thread ends a running `run()` cleanly: the
-  engine (queues, executors and the multiprocessing manager) is released only after the
-  consuming loop stopped, and a queue whose manager is already gone aborts the get/put
-  instead of raising `EOFError` or a broken pipe error.
-- A source calling `stop()` on the same `pop()` returning its last item does not lose
-  that item anymore.
-- Running a pipeline which already processed items with `process()` does not start the
-  stages a second time: `on_start`/`on_end` stay paired.
-- `close()` does not wait on an asynchronous runner blocked over a full output queue.
-- A failed start phase releases executors and manager even when a stage `on_end` fails
-  too, and the original start error is never masked by the rollback.
-- A batch stage is skipped without calling `process_batch()` when every item of its
-  batch already carries a critical error, and a batch stage waiting for a full batch
-  gives up as soon as the pipeline is cancelled, instead of after its whole `timeout`.
-- `Pipeline.process_async()` raises `PipelineStateError` after `stop()` instead of
-  accepting items which would never be processed.
-- A `CriticalError` is never retried, even when it is one of the `retryable_errors`
-  (as with `retryable_errors=(Exception,)`): it stays a critical error on the item
-  instead of turning into a soft `RetryError` which lets the item flow downstream.
-- The callback of a `process_async()` item stays in the caller's process: stage
-  workers receive the item without it, so a lambda or a closure no longer fails a
-  pipeline using `executor="processes"` with a `PicklingError`. It is called on every
-  delivered copy of the item, it is given back to the delivered item (so
-  `Item.callback()` still works on it), and `Item.set_callback()` now returns the
-  item's `callback_id`.
-- `Pipeline(max_queues_size=...)` rejects a negative value with a `ValueError`
-  instead of silently disabling the queues bound: Python reads any `maxsize <= 0`
-  as "no limit", so `0` stays the documented way to run unbounded queues and a
-  typo like `-1` cannot remove backpressure unnoticed anymore.
-- `BatchStage` rejects a `size` below 1 and a negative `timeout` with a
-  `ValueError`: `size=0` used to flush a batch of exactly one item and ignore the
-  timeout, quietly disabling the batching the stage was written for.
-- `Pipeline.append()` rejects an element of `retryable_errors` which is an exception
-  instance and not a class with a `ValueError`, the error documented for an invalid
-  stage configuration, instead of a `TypeError` from `issubclass`.
+  abort when the pipeline is cancelled (on error or `close()`), fixing hangs
+  and lost items with full queues, batch stages waiting for a full batch,
+  and process log forwarding.
+- Worker failures are never silently lost, and termination problems never mask
+  the original exception.
+- `run()` with no source fails fast before any worker starts, and a failed
+  stage initialization is reported again instead of hanging a second `build()`
+  or `run()`.
+- `Pipeline.process()` rejects pipelines with concurrent stages with a
+  `ValueError` (use `run()`/`process_async()`), raises `PipelineStateError`
+  after `stop()`, and never returns an end-of-stream item; `process_async()`
+  also raises `PipelineStateError` after `stop()`, and `get_item()` raises it
+  once the run has ended and its output is drained, instead of blocking forever.
+- A `CriticalError` is never retried, even when listed in `retryable_errors`:
+  it stays critical instead of becoming a soft `RetryError` which lets the item
+  flow downstream.
+- `process_async()` item callbacks stay in the caller's process, so lambdas and
+  closures no longer fail `executor="processes"` pipelines with a
+  `PicklingError`; `Item.set_callback()` now returns the item's `callback_id`.
+- Invalid configurations fail fast with a `ValueError`: negative
+  `max_queues_size`, `BatchStage` with `size < 1` or a negative `timeout`,
+  and non-class entries in `retryable_errors`.
 
 ## Version 0.7.0 [2023-09-27]
 
