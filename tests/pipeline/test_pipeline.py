@@ -389,6 +389,15 @@ def test_retryable_stage(items_generator_fx):
             max_retries=2.5,
             retryable_errors=(ValueError, CustomException),
         )
+    # an exception instance is not a retryable error class
+    with pytest.raises(ValueError):
+        Pipeline().append(
+            "broken_stage",
+            CustomizableBrokenStage([CustomException]),
+            backoff=1,
+            max_retries=1,
+            retryable_errors=(ValueError(),),
+        )
 
 
 def test_retry_on_different_errors(items_generator_fx):
