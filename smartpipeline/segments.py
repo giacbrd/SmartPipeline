@@ -31,7 +31,7 @@ from typing import Any, Callable, Generator, Generic, Literal, Optional, Sequenc
 from smartpipeline.defaults import MAX_QUEUES_SIZE
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import DataT, Item, Stop
-from smartpipeline.runners import process, worker_loop
+from smartpipeline.runners import process, run_stage_on_ends, worker_loop
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage
 from smartpipeline.utils import (
     LogsReceiver,
@@ -51,26 +51,6 @@ __all__ = [
 
 ExecutorName = Literal["threads", "processes"]
 StageInstance = Stage[Any] | BatchStage[Any]
-
-
-def run_stage_on_ends(
-    started_main: list[tuple[str, StageInstance]],
-    error_manager: ErrorManager,
-    error_manager_started: bool,
-) -> None:
-    """Run `on_end` for every started main-process stage and the error manager."""
-    errors: list[Exception] = []
-    for _, stage in list(started_main):
-        try:
-            stage.on_end()
-        except Exception as e:
-            errors.append(e)
-    if error_manager_started:
-        try:
-            error_manager.on_end()
-        except Exception as e:
-            errors.append(e)
-    raise_collected_errors(errors, "pipeline termination failed")
 
 
 def rollback_on_ends(

@@ -5,7 +5,7 @@ import queue
 import time
 from logging.handlers import QueueHandler
 from threading import Event
-from typing import Callable, List, Optional, Sequence, TypeVar
+from typing import Any, Callable, List, Optional, Sequence, TypeVar
 
 from smartpipeline.defaults import CONCURRENCY_WAIT
 from smartpipeline.error.exceptions import BatchOutputError, CriticalError, RetryError
@@ -30,37 +30,30 @@ def _setup_process_logging(logs_queue: queue.Queue[logging.LogRecord]) -> None:
         root_logger.addHandler(QueueHandler(logs_queue))
 
 
-def _call_on_end_best_effort(
+def run_stage_on_ends(
+    started: Sequence[tuple[str, Stage[Any] | BatchStage[Any]]],
     error_manager: ErrorManager,
-    stage: Stage | BatchStage,
-) -> list[Exception]:
+    error_manager_started: bool,
+) -> None:
     """
-    Run `on_end` lifecycle hooks attempting both, never raising.
+    Run `on_end` for every started stage, then for the error manager.
 
-    :return: The raised errors, error-manager first, skipping hooks that succeeded.
+    Every hook is attempted even after one has failed, and the failures are raised
+    together: a stage flushing its buffers needs the resources the error manager
+    opens in its own `on_start`, so it always ends first.
     """
     errors: list[Exception] = []
-    try:
-        error_manager.on_end()
-    except Exception as e:
-        errors.append(e)
-    try:
-        stage.on_end()
-    except Exception as e:
-        errors.append(e)
-    return errors
-
-
-def _raise_on_end_errors(
-    errors: list[Exception],
-    stage: Stage | BatchStage,
-) -> None:
-    """Report `on_end` failures as fatal pipeline errors."""
-    if not errors:
-        return
-    for error in errors:
-        stage.logger.exception("%s failed on_end", stage, exc_info=error)
-    raise_collected_errors(errors, f"{stage} failed on_end")
+    for _, stage in list(started):
+        try:
+            stage.on_end()
+        except Exception as e:
+            errors.append(e)
+    if error_manager_started:
+        try:
+            error_manager.on_end()
+        except Exception as e:
+            errors.append(e)
+    raise_collected_errors(errors, "pipeline termination failed")
 
 
 def _retry(call: Callable[[], T], retry_manager: RetryManager) -> T | RetryError:
@@ -306,8 +299,9 @@ def worker_loop(
     it: the coordinator forwards `Stop` downstream once every worker is done.
     Processing errors propagate to the done-callback, which records them and sets
     `cancel`. In a worker process (`logs_queue` given) `on_start` runs at entry and
-    `on_end` in a `finally`: `on_end` failures are logged when another error is
-    already propagating and raised otherwise.
+    `run_stage_on_ends` at exit, in the same order as in the main process: `on_end`
+    failures are logged when another error is already propagating and raised
+    otherwise.
     """
     if logs_queue is None:
         _run_worker_body(
@@ -326,11 +320,21 @@ def worker_loop(
             stage, in_queue, out_queue, error_manager, retry_manager, cancel
         )
     except BaseException:
-        for end_error in _call_on_end_best_effort(error_manager, stage):
+        # a processing error is already propagating: report the teardown failure
+        # instead of masking the reason the worker is stopping
+        try:
+            run_stage_on_ends([(stage.name, stage)], error_manager, True)
+        except Exception as end_error:
             stage.logger.exception(
                 "%s failed on_end after a processing error",
                 stage,
                 exc_info=end_error,
             )
         raise
-    _raise_on_end_errors(_call_on_end_best_effort(error_manager, stage), stage)
+    try:
+        run_stage_on_ends([(stage.name, stage)], error_manager, True)
+    except Exception:
+        # the worker log is the only place this traceback survives: an exception
+        # raised by a worker process is pickled back without its traceback
+        stage.logger.exception("%s failed on_end", stage)
+        raise

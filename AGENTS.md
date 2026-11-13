@@ -66,7 +66,8 @@ Execution flows `pipeline.py -> segments.py -> runners.py`; read in that order.
   logs_queue)`: plain stages pull one blocking item, batch stages pull up to `size`/`timeout`
   (waiting in `CONCURRENCY_WAIT` slices, so `cancel` is never delayed by a long `timeout`);
   results go with `put_or_abort`; `Stop` flushes and exits without forwarding; processing errors
-  propagate (the callback sets `cancel`); process workers call `on_start`/`on_end`. `process` and
+  propagate (the callback sets `cancel`); process workers call `on_start`/`on_end` with
+  the same `run_stage_on_ends` the main process uses. `process` and
   `process_batch` keep timing, retry/backoff and `RetryError`; `BatchOutputError` and
   `CriticalError` stay non-retryable (a retry would soften a critical error into a
   `RetryError`), and a batch whose items all carry a critical error skips `process_batch`.
@@ -122,7 +123,8 @@ attempt one `RetryError` soft error is attached to the item.
 - `on_start`/`on_end` failures are fatal and bypass `ErrorManager` (no `Item` to attach
   to): single failure re-raised as-is, several as `ExceptionGroup`. `on_end` runs only
   for stages whose `on_start` completed, including on start failures (process workers run
-  theirs in `worker_loop`). Never swallow termination errors or the pipeline hangs silently;
+  theirs in `worker_loop`), and always for the stages before the `ErrorManager`, which
+  may own resources a stage `on_end` still needs. Never swallow termination errors or the pipeline hangs silently;
   `run()` preserves the original failure when `close()` also fails.
 - `count` is the number of items delivered by `run()`/`process_async()` (yielded or via
   `get_item()`), including items with soft errors; `process()` items are not counted.
