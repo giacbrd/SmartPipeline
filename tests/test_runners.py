@@ -125,14 +125,16 @@ def test_worker_loop_exits_on_cancel_while_blocked():
 
 
 def test_worker_loop_process_lifecycle_pairs_on_start_on_end():
-    """A process worker runs on_start at entry and on_end on exit."""
+    """A process worker starts the error manager first and ends it last."""
     events: list = []
     in_queue: Queue = Queue()
     out_queue: Queue = Queue()
     in_queue.put(text_item("hello"))
     in_queue.put(Stop())
+    stage = LifecycleStage(events)
+    stage.set_name("track")
     worker_loop(
-        LifecycleStage(events),
+        stage,
         in_queue,
         out_queue,
         LifecycleErrorManager(events),
@@ -140,11 +142,16 @@ def test_worker_loop_process_lifecycle_pairs_on_start_on_end():
         Event(),
         Queue(),
     )
-    assert "error-manager:start" in events
-    assert any(e.endswith(":start") and "track" not in e for e in events)
     assert out_queue.qsize() == 1
-    assert "error-manager:end" in events
-    assert any(e.endswith(":end") for e in events)
+    # the stage ends before the error manager, whose resources it may still need to
+    # flush its own work: the same order the main-process teardown uses
+    assert events == [
+        "error-manager:start",
+        "track:start",
+        "track:process",
+        "track:end",
+        "error-manager:end",
+    ]
 
 
 def test_worker_loop_on_start_failure_propagates_without_on_end():

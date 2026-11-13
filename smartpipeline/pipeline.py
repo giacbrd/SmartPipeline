@@ -30,12 +30,8 @@ from smartpipeline.defaults import (
 from smartpipeline.error.handling import ErrorManager, RetryManager
 from smartpipeline.item import DataT, Item, Stop
 from smartpipeline.runners import process as _process_stage
-from smartpipeline.segments import (
-    Engine,
-    compile_segments,
-    rollback_on_ends,
-    run_stage_on_ends,
-)
+from smartpipeline.runners import run_stage_on_ends
+from smartpipeline.segments import Engine, compile_segments, rollback_on_ends
 from smartpipeline.stage import BatchStage, ItemsQueue, Source, Stage
 from smartpipeline.utils import put_or_abort, raise_collected_errors
 
