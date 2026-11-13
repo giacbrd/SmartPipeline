@@ -5,164 +5,186 @@
 Concurrency and parallelism
 ===========================
 
-This page explains how ``concurrency`` and ``executor`` work,
-and what a stage must do to run correctly on threads and on processes.
+This page explains how ``concurrency`` and ``executor`` work, how to choose
+between threads and processes, and how to write stages that run safely in both
+modes.
 
 .. figure:: _static/concurrency.png
    :alt: SmartPipeline concurrency: pipeline parallelism across stages and data parallelism within a stage
    :width: 100%
 
    Top: a pipeline snapshot. Items (orange) sit in stage workers while others
-   wait in queues. ``Stage B ×3`` runs three workers on items ``#4``–``#6``:
-   that is data parallelism. All stages holding different items at once:
-   that is pipeline parallelism. Bottom: the same execution over time, items
+   wait in bounded queues. ``Stage B ×3`` runs three workers on items
+   ``#4``-``#6`` (data parallelism), while all stages hold different items at
+   once (pipeline parallelism). Bottom: the same execution over time; items
    flow diagonally, so the vertical ``now`` slice cuts one item per stage.
 
-``×N`` is the ``concurrency`` argument of :meth:`.Pipeline.append`
-(threads by default, processes with ``executor="processes"``).
-``concurrency=0`` means inline execution: no executor workers.
+Execution modes
+---------------
 
-Internally a pipeline compiles into *segments* with queues only *between* them:
-one concurrent stage becomes one segment with ``N`` workers, while a maximal run of
-``concurrency=0`` stages becomes one inline segment executed as a plain chain.
-A middle inline segment runs on one dedicated driver thread, the last inline segment
-runs on the caller's thread; a single inline pipeline uses no threads, queues or overlap.
+Each stage selects its execution mode via the ``concurrency`` and ``executor``
+arguments of :meth:`.Pipeline.append`:
 
-Concurrency vs. parallelism
----------------------------
+* ``concurrency=0`` (default): **inline execution**. No worker threads or
+  processes are spawned for this stage. Consecutive inline stages execute as a
+  direct chain of :meth:`.Stage.process` calls with no queues in between; if
+  every stage in the pipeline is inline, the entire pipeline runs on the
+  caller's thread.
+* ``concurrency>=1, executor="threads"`` (default executor): the stage runs on
+  ``concurrency`` worker threads. Ideal for I/O-bound work (HTTP calls, file or
+  database queries) and native libraries that release the GIL.
+* ``concurrency>=1, executor="processes"``: the stage runs on ``concurrency``
+  worker processes. Ideal for pure-Python CPU-bound work that would otherwise
+  be serialized by Python's `GIL <https://en.wikipedia.org/wiki/Global_interpreter_lock>`_.
 
-There are three ways to run a stage, selected per stage
-with the ``concurrency`` and ``executor`` arguments of :meth:`.Pipeline.append`:
+A :class:`.BatchStage` always runs on a worker so it can accumulate items up to
+its ``size`` or ``timeout``; if configured with ``concurrency < 1``, it is
+automatically promoted to ``concurrency=1, executor="threads"``.
 
-* ``concurrency=0`` (default): *inline* execution.
-  No threads or processes are involved.
-  Each item flows through a simple chain of :meth:`.Stage.process` calls.
-* ``concurrency>=1, executor="threads"`` (default): the stage runs on ``concurrency`` threads.
-  Good for I/O-bound work (HTTP calls, file reads, database queries),
-  where threads spend most of their time waiting.
-* ``concurrency>=1, executor="processes"``: the stage runs on ``concurrency`` processes.
-  Good for CPU-bound work (text processing, model inference),
-  because threads cannot run Python code in parallel
-  due to the `GIL <https://en.wikipedia.org/wiki/Global_interpreter_lock>`_.
-
-With any concurrent stage, items travel through queues between stages
-and may be pickled.
-A ``BatchStage`` with ``concurrency<1`` is automatically promoted
-to ``concurrency=1`` on threads.
+Queues between concurrent stages are bounded by ``max_queues_size`` on
+:class:`.Pipeline` (1000 items by default). When a slow stage fills its input
+queue, upstream stages and the source block until space frees up, providing
+automatic backpressure and bounding memory usage.
 
 Choosing threads or processes
-------------------------------
+-----------------------------
 
-Process transport costs roughly 0.2--0.5 ms per item, so choose by work per item:
-threads for I/O and C extensions that release the GIL; processes for pure-Python
-CPU work of roughly a millisecond or more per item, or for few large items.
-``BatchStage`` groups items inside a worker, but they still cross queues one by
-one: for high item rates on processes, send fewer and larger chunk items.
-``examples/benchmark.py`` measures the break-even; ``examples/log_lake_etl.py``
-and ``examples/genome_kmers.py`` show both sides.
+Worker processes are not automatically faster than threads: every item crossing
+a process boundary is pickled through an inter-process queue, which adds roughly
+0.2-0.5 ms per item regardless of what the stage does. Choose the executor
+based on the work per item:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Work per item
+     - Recommended setting
+   * - Waiting on I/O (HTTP, disk, database)
+     - ``executor="threads"``
+   * - C extensions that release the GIL (``numpy``, ``scikit-learn``, ``zlib``)
+     - ``executor="threads"``
+   * - Pure-Python CPU work below ~0.2 ms per item
+     - ``concurrency=0`` (inline) or ``executor="threads"``
+   * - Pure-Python CPU work of ~1 ms or more per item, or few large items
+     - ``executor="processes"``
+
+Note that a :class:`.BatchStage` batches items *inside* its worker to amortize
+bulk calls (such as model inference or batch HTTP endpoints), but items still
+travel through queues one by one. If inter-process queue transport is the
+bottleneck, pack multiple records into a single chunk :class:`.Item` or merge
+adjacent CPU steps into one stage.
+
+You can measure the break-even on your machine with ``examples/benchmark.py``,
+and compare ``examples/log_lake_etl.py`` (many small items) with
+``examples/genome_kmers.py`` (fewer, CPU-heavy items).
 
 Reading stage timings
 ---------------------
 
-Stage timings are wall-clock durations inside ``process``/``process_batch``, not
-CPU time: they include I/O, retries and, on threads, GIL wait, but exclude queue
-transport. Summed durations can therefore exceed wall time, and a batch stage
-reports one average duration for all its items. Use them to find expensive
-stages, not to measure CPU or end-to-end latency.
+Every processed item records the wall-clock time spent in each stage:
+
+.. code-block:: python
+
+    for item in pipeline.run():
+        for stage_name in item.timed_stages:
+            print(stage_name, f"{item.get_timing(stage_name) * 1000:.2f} ms")
+
+Keep in mind when interpreting timings:
+
+* They measure wall-clock time inside ``process`` / ``process_batch`` (including
+  I/O wait, retries, and GIL contention on threads), not pure CPU time, and they
+  exclude time spent waiting in queues.
+* For a :class:`.BatchStage`, each item in a batch receives the average
+  per-item duration of that batch (``batch_elapsed / len(batch)``).
+* Summed across concurrent workers, stage timings can exceed total elapsed wall
+  time. Use them to spot bottleneck stages rather than to measure end-to-end
+  latency.
 
 How stages on processes work
 ----------------------------
 
-OS processes do not share memory, unlike threads.
-SmartPipeline starts its worker processes with the ``spawn`` method
-and copies each process-based stage into every worker process with
-`pickle <https://docs.python.org/3/library/pickle.html>`_.
-Communication between processes also goes through queues,
-which means items are serialized on every hand-off.
+Unlike threads, OS processes do not share memory. SmartPipeline starts worker
+processes using the ``spawn`` method and sends a copy of the stage to each
+worker with `pickle <https://docs.python.org/3/library/pickle.html>`_. Items
+are likewise pickled whenever they cross a queue into or out of a process
+stage.
 
-Consequences:
+This has three practical consequences:
 
-* A stage on processes, and everything stored on it, must be picklable.
-* Each worker process owns an independent *copy* of the stage.
-  Mutating an attribute in one worker is invisible to the others.
-* Objects that cannot be pickled (open files, sockets, most clients)
-  or should not be shared (one connection per process)
-  cannot be created in ``__init__``; they must be created per process
-  (see below).
+1. **Picklability**: the stage instance (and everything stored on ``self`` in
+   ``__init__``) as well as every :class:`.Item` must be picklable.
+2. **Independent copies**: each worker process owns its own copy of the stage
+   and of the :class:`.ErrorManager`. Mutating ``self`` in one process is
+   invisible to other processes and to the main process.
+3. **Per-process resources**: unpicklable objects (open files, sockets, database
+   or HTTP clients) must be created inside each worker after spawning, not in
+   ``__init__``.
 
-By contrast, a threaded stage exists only once:
-all of its worker threads share the same object,
-so shared attributes need thread-safe access.
+By contrast, a threaded stage exists as a single instance shared by all of its
+worker threads, so mutating attributes on ``self`` from multiple threads
+requires thread-safe synchronization.
 
-Making stages process-safe with ``on_start`` and ``on_end``
-------------------------------------------------------------
+Initializing resources with ``on_start`` and ``on_end``
+-------------------------------------------------------
 
-:meth:`.Stage.on_start` runs in the pipeline start phase, when ``run()`` or
-``process_async()`` is called, not during ``build()``.
-With multiprocessing it initializes each stage *after* the stage has been copied
-into its worker process: it is called once per process, on that process's copy,
-before the copy processes its first item.
-Without multiprocessing it is simply called once per stage, before the stage
-processes its first item.
-:meth:`.Stage.on_end` is the mirror hook: it runs when the worker terminates,
-including when the pipeline terminates because of a failure, and is the right
-place to close files or connections opened in ``on_start``.
-If the start phase fails, ``on_end`` runs only for the stages whose ``on_start``
-completed; a stage whose construction or ``on_start`` failed does not receive it.
-The same pair of hooks exists on :class:`.ErrorManager`
-as :meth:`.ErrorManager.on_start` and :meth:`.ErrorManager.on_end`,
-because the error manager is copied into worker processes together with the stage.
-The main-process error manager starts after the process-based runners have been
-submitted, so its ``on_start`` may open non-picklable resources too.
+Use :meth:`.Stage.on_start` and :meth:`.Stage.on_end` to manage resources
+cleanly across inline, threaded, and process stages:
 
-An ``ErrorManager`` is copied into each worker process, so counters updated in
-``handle`` are per worker. For global totals use
-:attr:`.Pipeline.soft_errors_count` / :attr:`.Pipeline.critical_errors_count`,
-the delivered items, or an external sink/``Manager`` proxy.
+* :meth:`.Stage.on_start` runs when the pipeline starts (in :meth:`.Pipeline.run`
+  or :meth:`.Pipeline.process_async`, never in :meth:`.Pipeline.build`). On
+  process stages, it runs once inside each worker process on that worker's copy
+  before any item is processed. On inline or threaded stages, it runs once on
+  the stage instance.
+* :meth:`.Stage.on_end` runs when the worker shuts down (including on pipeline
+  errors) for every stage whose ``on_start`` completed. Use it to flush buffers
+  or close connections opened in ``on_start``.
 
-Take the Elasticsearch example from the :doc:`usage` guide.
-``Elasticsearch(...)`` clients are not picklable
-(try ``pickle.dumps(Elasticsearch('localhost'))`` yourself),
-and even if they were, sharing one connection object across processes
-would be unreliable.
-The fix is small: keep only plain configuration in ``__init__``
-and create the client in ``on_start``.
+The same hooks exist on :class:`.ErrorManager` (:meth:`.ErrorManager.on_start`
+and :meth:`.ErrorManager.on_end`).
+
+Store plain, picklable configuration in ``__init__`` and open clients, files, or
+large models lazily in ``on_start``:
 
 .. code-block:: python
 
-    class ESErrorLogger(ErrorManager):
-
-        def __init__(self, es_host: str, es_index: str):
-            self.es_host = es_host
-            self.es_index = es_index
-            self.es_client = None
-
-        def on_start(self):
-            self.es_client = Elasticsearch(self.es_host)
+    from elasticsearch import Elasticsearch
+    from smartpipeline import Stage
 
 
     class Indexer(Stage):
-
         def __init__(self, es_host: str, es_index: str):
             self.es_host = es_host
             self.es_index = es_index
             self.es_client = None
 
         def on_start(self):
+            # Elasticsearch clients are not picklable, ensuring one per process
             self.es_client = Elasticsearch(self.es_host)
 
-This pattern also avoids copying large data into every process:
-load models, open files, or connect clients lazily in ``on_start``.
-As a rule, whenever an attribute needs special per-process construction,
-create it in ``on_start`` (leaving a ``None`` placeholder in ``__init__``)
-so the stage works in all three modes: inline, threaded, and on processes.
+        def on_end(self):
+            if self.es_client is not None:
+                self.es_client.close()
 
-Per-worker local state
-----------------------
+        def process(self, item):
+            self.es_client.index(index=self.es_index, body=item.data)
+            return item
 
-Because each process worker owns a copy of the stage,
-plain instance attributes are a natural *per-worker* state:
-each process accumulates its own values without interfering with the others.
+.. note::
+   Because :class:`.ErrorManager` is also copied into each worker process,
+   custom counters updated inside :meth:`.ErrorManager.handle` only count
+   errors seen by that worker. For pipeline-wide totals, read
+   :attr:`.Pipeline.soft_errors_count` and
+   :attr:`.Pipeline.critical_errors_count`, or inspect the yielded items.
+
+Managing state across workers
+-----------------------------
+
+Per-worker state
+^^^^^^^^^^^^^^^^
+
+Because each process worker has its own stage copy, standard instance attributes
+act as isolated per-worker state, useful for local caches, buffers, or per-worker
+counters:
 
 .. code-block:: python
 
@@ -171,40 +193,40 @@ each process accumulates its own values without interfering with the others.
             self._count = 0
 
         def process(self, item):
-            # each worker counts only the items it has seen itself
+            # counts only the items handled by this worker process
             self._count += 1
-            item.metadata["seen_by_this_worker"] = self._count
+            item.metadata["seen_by_worker"] = self._count
             return item
 
-This is ideal for caches, buffers, per-process connections, or loaded models:
-initialize the attribute in ``__init__`` (picklable value)
-or in ``on_start`` (non-picklable resource),
-mutate it freely in ``process``, and optionally flush or close it in ``on_end``.
-Keep in mind that no worker sees the full stream,
-so per-worker counters never add up to a global total by themselves.
+Avoiding or sharing global state
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Sharing state between workers
------------------------------
+Whenever possible, prefer **shared-nothing** designs over cross-process mutable
+state:
 
-Sometimes workers genuinely need shared state, e.g. a global counter
-or a dictionary visible to every process.
-Since processes do not share memory, the standard tool is a
-`multiprocessing manager <https://docs.python.org/3/library/multiprocessing.html#managers>`_,
-which exposes proxy objects (``dict``, ``list``, ``Value``, ``Lock``, ...)
-whose operations are forwarded to a server process.
+* **Carry state in the item**: store intermediate values in ``item.data`` or
+  ``item.metadata``.
+* **Aggregate downstream**: compute partial results in concurrent workers and
+  merge them in a downstream stage with ``concurrency=0``, which sees every
+  item sequentially in a single instance.
+* **Use an external store**: write shared state that must outlive the run (such
+  as deduplication sets or checkpoints) to SQLite, Redis, or a database.
 
-Create the manager and its proxies in the main process and pass the proxies
-into the stage constructor: proxies are picklable, so the stage stays picklable.
-Do not create the manager inside ``on_start``: that would give each worker
-its own independent manager instead of one shared object.
+If workers genuinely need small, low-frequency shared state in memory, create a
+`multiprocessing.Manager <https://docs.python.org/3/library/multiprocessing.html#managers>`_
+in the main process and pass its picklable proxies (``dict``, ``list``,
+``Value``, ``Lock``) into the stage's ``__init__`` (never create the manager
+inside ``on_start``, which would spawn separate managers per worker):
 
 .. code-block:: python
 
     from multiprocessing import Manager
+    from smartpipeline import Pipeline, Stage
 
     manager = Manager()
     shared_stats = manager.dict({"processed": 0})
     shared_lock = manager.Lock()
+
 
     class SharedCountingStage(Stage):
         def __init__(self, stats, lock):
@@ -212,56 +234,37 @@ its own independent manager instead of one shared object.
             self._lock = lock
 
         def process(self, item):
-            # proxy access is a remote call: correct, but much slower than local memory
             with self._lock:
                 self._stats["processed"] += 1
             return item
 
+
     pipeline = (
         Pipeline()
-        .append("counter", SharedCountingStage(shared_stats, shared_lock),
-                concurrency=4, executor="processes")
+        .append(
+            "counter",
+            SharedCountingStage(shared_stats, shared_lock),
+            concurrency=4,
+            executor="processes",
+        )
         .build()
     )
-
-Shared proxies come with real costs: every read or write is inter-process
-communication, all mutations need explicit locking to avoid races,
-failures of the manager process break every worker,
-and the code becomes harder to test.
-For these reasons, prefer one of the alternatives below whenever possible.
-
-Prefer shared-nothing designs
------------------------------
-
-In most pipelines shared mutable state is a sign that the work can be reorganized:
-
-* *Aggregate downstream.* Keep per-worker partial results as local state
-  and combine them in a later, non-concurrent stage
-  (``concurrency=0`` sees every item in order).
-* *Carry state in the items.* Put counters, accumulations, or flags
-  in ``item.data`` or ``item.metadata`` instead of on the stage.
-* *Use an external store.* For state that must survive or be visible outside
-  the pipeline (progress, deduplication sets, caches), write to a database,
-  a file, or a service such as Redis, rather than to process memory.
-
-Reach for a ``Manager`` only for small, low-frequency coordination
-(e.g. a global progress counter), not for per-item hot paths.
 
 Logging in stages on processes
 ------------------------------
 
-Worker processes do not inherit the parent logging configuration
-(when ``spawn`` is used, there is no inherited memory at all).
-SmartPipeline forwards log records emitted through :attr:`.Stage.logger`
-back to the main process, but logger *configuration*
-(levels, handlers, formatters) must be applied per process.
+Worker processes spawned with ``spawn`` do not inherit the parent process's
+logging configuration. SmartPipeline automatically forwards log records emitted
+through :attr:`.Stage.logger` back to the main process, so your handlers receive
+them as usual, but logger levels set only in the parent process are not copied.
 
-Configure :attr:`.Stage.logger` inside ``on_start`` so every worker copy
-sets up its own logging consistently:
+Set the desired level on ``self.logger`` inside :meth:`.Stage.on_start` so every
+worker configures its logger before processing items:
 
 .. code-block:: python
 
     import logging
+    from smartpipeline import Stage
 
 
     class LoggingStage(Stage):
