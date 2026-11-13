@@ -532,6 +532,13 @@ def test_append_rejects_constructor_args_for_an_instance():
         get_pipeline().append("reverser", TextReverser(), init_args=[1])
 
 
+def test_append_rejects_a_blank_stage_name():
+    """A stage name shows up in logs and in get_stage, so blanks are rejected."""
+    for name in ("", "   ", None, 42):
+        with pytest.raises(ValueError, match="non-empty string"):
+            get_pipeline().append(name, TextReverser())
+
+
 def test_append_concurrently_is_removed():
     """The old append_concurrently() alias is gone: use append() with a class."""
     assert not hasattr(Pipeline(), "append_concurrently")

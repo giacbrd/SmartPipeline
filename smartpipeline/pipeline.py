@@ -362,7 +362,7 @@ class Pipeline(Generic[DataT]):
                 )
             if self._state is PipelineState.RUNNING:
                 raise PipelineStateError("The pipeline is already running")
-            if not any(self._stage_specs):
+            if not self._stage_specs:
                 raise ValueError("Must append at least a stage")
 
             self._logger.debug(
@@ -822,7 +822,7 @@ class Pipeline(Generic[DataT]):
         No stage worker starts until :meth:`.Pipeline.run` or
         :meth:`.Pipeline.process_async`.
 
-        :param name: Name for identify the stage in the pipeline, it is also set in the stage and it must be unique in the pipeline
+        :param name: Name to identify the stage in the pipeline, it must be a non-empty string, it is set in the stage and it must be unique in the pipeline
         :param stage: Instance of a stage, or a stage class to construct at build time
         :param concurrency: Number of concurrent stage executions, if 0 then threads/processes won't be involved for this stage
         :param executor: "threads" for using threads, "processes" for using multiprocessing
@@ -892,9 +892,12 @@ class Pipeline(Generic[DataT]):
 
     def _check_stage_name(self, name: str):
         """
-        Check if a stage name is not already defined in the pipeline
-        :raises ValueError: Stage name is already defined in the pipeline
+        Check that a stage name is meaningful and not already defined in the pipeline
+        :raises ValueError: Stage name is not a non-empty string
+        :raises ValueError: Stage name is already defined in this pipeline
         """
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("The stage name must be a non-empty string")
         if name in self._stage_specs:
             raise ValueError(f"The stage name {name} is already used in this pipeline")
 
