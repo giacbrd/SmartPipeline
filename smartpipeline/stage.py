@@ -108,9 +108,14 @@ class BatchStage(AliveMixin, ConstructorMixin, ABC, Generic[DataT]):
 
     def __init__(self, size: int, timeout: float = 1.0):
         """
-        :param size: Maximum size of item batches that can be processed together
-        :param timeout: Seconds to wait before flushing a batch (calling :meth:`.BatchStage.process_batch` on it)
+        :param size: Maximum size of item batches that can be processed together, at least 1
+        :param timeout: Seconds to wait before flushing a batch (calling :meth:`.BatchStage.process_batch` on it), 0 to flush it as soon as one item is in it
+        :raises ValueError: When `size` is < 1 or `timeout` is negative
         """
+        if size < 1:
+            raise ValueError("The `size` parameter must be >= 1")
+        if timeout < 0:
+            raise ValueError("The `timeout` parameter must be >= 0")
         self._size = size
         self._timeout = timeout
 

@@ -122,6 +122,13 @@
   delivered copy of the item, it is given back to the delivered item (so
   `Item.callback()` still works on it), and `Item.set_callback()` now returns the
   item's `callback_id`.
+- `Pipeline(max_queues_size=...)` rejects a negative value with a `ValueError`
+  instead of silently disabling the queues bound: Python reads any `maxsize <= 0`
+  as "no limit", so `0` stays the documented way to run unbounded queues and a
+  typo like `-1` cannot remove backpressure unnoticed anymore.
+- `BatchStage` rejects a `size` below 1 and a negative `timeout` with a
+  `ValueError`: `size=0` used to flush a batch of exactly one item and ignore the
+  timeout, quietly disabling the batching the stage was written for.
 
 ## Version 0.7.0 [2023-09-27]
 

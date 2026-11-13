@@ -613,6 +613,13 @@ def test_append_rejects_invalid_execution_options(kwargs, match):
         get_pipeline().append("stage", TextReverser(), **kwargs)
 
 
+def test_pipeline_rejects_a_negative_queues_size():
+    """The queues bound is validated: 0 means no limit, a negative value is a typo."""
+    with pytest.raises(ValueError, match="max_queues_size"):
+        get_pipeline(max_queues_size=-1)
+    assert get_pipeline(max_queues_size=0)._max_queues_size == 0
+
+
 def test_append_rejects_non_stage_types():
     """append() rejects classes and instances which are not stages."""
     with pytest.raises(ValueError, match="extend Stage"):
