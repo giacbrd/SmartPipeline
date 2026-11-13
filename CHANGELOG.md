@@ -1,6 +1,6 @@
 # SmartPipeline changelog
 
-## Version 1.0.0 [Unreleased]
+## Version 1.0.0 [2026-11-13]
 
 ### Breaking changes
 
