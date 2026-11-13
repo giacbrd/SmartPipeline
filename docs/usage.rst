@@ -4,46 +4,361 @@ Guide
 Data items
 ----------
 
-The unit of data in a pipeline is the *item*,
-represented by the :class:`.Item` class or a subclass of it.
-The actual payload lives in :attr:`.Item.data`,
-which by default is a dictionary,
-while :attr:`.Item.metadata` holds auxiliary information such as
-temporary values or descriptors of the item.
+The unit of data in a pipeline is the *item*, represented by :class:`.Item` or
+a subclass of it:
 
-If a stage runs on multiple processes (see the ``executor`` parameter in
-:doc:`concurrency`), items are sent between processes through queues,
-so both ``data`` and ``metadata`` must be serializable with the
-`pickle <https://docs.python.org/3/library/pickle.html>`_ module.
+* :attr:`.Item.data` holds the payload: by default a dictionary (``Item()``), or
+  any value passed to ``Item(data)``.
+* :attr:`.Item.metadata` is a dictionary for auxiliary or temporary values that
+  should stay separate from the main payload.
+* :attr:`.Item.id` identifies the item. By default it looks up an ``id`` key or
+  attribute on :attr:`.Item.data`, falls back to ``item.metadata["id"]``, and
+  otherwise generates a UUID. Subclasses can override :attr:`.Item.id` to
+  compute a custom identifier.
+
+.. code-block:: python
+
+    from smartpipeline import Item
+
+    item = Item({"id": "doc-1", "text": "hello world"})
+    item.metadata["source"] = "local"
+    print(item.id)  # "doc-1"
+
+As an item travels through a pipeline, it also records per-stage execution
+times (:meth:`.Item.get_timing`, :attr:`.Item.timed_stages`) and any errors
+raised on it (:meth:`.Item.soft_errors`, :meth:`.Item.critical_errors`).
+
+If any stage runs on multiple processes (see :doc:`concurrency`), items are
+sent across processes through queues, so both ``data`` and ``metadata`` must be
+serializable with `pickle <https://docs.python.org/3/library/pickle.html>`_.
+
+Defining the source
+-------------------
+
+A pipeline reads its input from a source set with :meth:`.Pipeline.set_source`.
+For simple streams, pass any iterable or generator of :class:`.Item` instances
+directly; SmartPipeline wraps it in a source that stops automatically when the
+iterable is exhausted:
+
+.. code-block:: python
+
+    from smartpipeline import Item, Pipeline
+
+
+    def number_items(total=100):
+        for i in range(1, total + 1):
+            item = Item({"id": i, "text": f"document {i} with code 12ab"})
+            item.metadata["count"] = i
+            yield item
+
+For stateful sources (paginated APIs, database cursors, live queues), subclass
+:class:`.Source` and implement :meth:`.Source.pop`. It is called repeatedly and
+must return one item per call:
+
+* Return ``None`` when no item is currently ready without ending the stream.
+* Call :meth:`.Source.stop` once the source is exhausted (or leave it uncalled
+  for an infinite stream).
+
+.. code-block:: python
+
+    import random
+    import string
+    from smartpipeline import Item, Source
+
+
+    class RandomTextSource(Source):
+        def __init__(self, total=1000):
+            self._total = total
+            self._counter = 0
+
+        def pop(self):
+            self._counter += 1
+            if self._counter > self._total:
+                self.stop()
+                return None
+            text = "".join(
+                random.choices(string.ascii_letters + string.digits, k=80)
+            )
+            item = Item({"id": hash(text), "text": text})
+            item.metadata["count"] = self._counter
+            return item
+
+Defining your stages
+--------------------
+
+A stage encapsulates one processing step and extends either :class:`.Stage` or
+:class:`.BatchStage`.
+
+Single-item stages
+^^^^^^^^^^^^^^^^^^
+
+Override :meth:`.Stage.process` to receive one item, enrich or transform it,
+and return it:
+
+.. code-block:: python
+
+    import re
+    from smartpipeline import SoftError, Stage
+
+
+    class TextReplacer(Stage):
+        def __init__(self, substitution: str):
+            self._pattern = re.compile(r"\d\d\D\D")
+            self._sub = substitution
+
+        def process(self, item):
+            new_text = self._pattern.sub(self._sub, item.data["text"])
+            if item.data["text"] == new_text:
+                # skip this stage for the item, but keep the item in the pipeline
+                raise SoftError("Text has not been modified")
+            item.data["text"] = new_text
+            return item
+
+Every stage provides:
+
+* :meth:`.Stage.on_start` and :meth:`.Stage.on_end` lifecycle hooks for opening
+  and closing resources (files, network clients, ML models) when the pipeline
+  starts and shuts down. When a stage runs on multiple processes, these hooks
+  run once inside each worker process (see :doc:`concurrency`).
+* :attr:`.Stage.logger`, a dedicated standard-library ``Logger`` named after the
+  stage.
+
+Batch stages
+^^^^^^^^^^^^
+
+When an operation is faster in bulk (such as calling a remote API that accepts
+lists of records or running batched model inference), subclass
+:class:`.BatchStage` and override :meth:`.BatchStage.process_batch`.
+
+Pass ``size`` (maximum items per batch) and optionally ``timeout`` (seconds to
+wait before flushing a partial batch, default ``1.0``) to ``super().__init__``:
+
+.. code-block:: python
+
+    from smartpipeline import BatchStage
+
+
+    class BatchTextNormalizer(BatchStage):
+        def __init__(self, size: int = 32, timeout: float = 0.5):
+            super().__init__(size=size, timeout=timeout)
+
+        def process_batch(self, items):
+            for item in items:
+                item.data["text"] = item.data["text"].strip().lower()
+            return items
+
+:meth:`.BatchStage.process_batch` must return **one item for each input item**
+in the batch; returning a different count raises :class:`.BatchOutputError` and
+stops the pipeline. Any item that already carries a critical error from an
+earlier stage automatically bypasses ``process_batch``.
+
+Building and running a pipeline
+-------------------------------
+
+Stages are chained onto a :class:`.Pipeline` with :meth:`.Pipeline.append` and
+finalized with :meth:`.Pipeline.build`:
+
+* Each stage gets a unique ``name``.
+* ``concurrency`` controls how many workers run the stage (``0`` by default for
+  inline execution; ``>= 1`` for concurrent threads, or processes with
+  ``executor="processes"``, see :doc:`concurrency`).
+* ``stage`` can be an **instance** (created immediately and retrievable via
+  :meth:`.Pipeline.get_stage`) or a **class** with optional ``init_args`` and
+  ``init_kwargs`` (constructed in append order when :meth:`.Pipeline.build`
+  runs).
+
+:meth:`.Pipeline.build` validates the configuration and constructs any
+class-based stages, without starting workers or calling ``on_start``.
+
+SmartPipeline supports three ways to execute a built pipeline:
+
+1. Iterating over a source with ``run()``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The standard mode when a source is configured. :meth:`.Pipeline.run` starts the
+pipeline, yields processed items as they exit the last stage, and automatically
+closes the pipeline when finished:
+
+.. code-block:: python
+
+    from smartpipeline import Pipeline, Stage
+
+
+    class TextReducer(Stage):
+        def process(self, item):
+            item.data["text"] = item.data["text"][:40]
+            return item
+
+
+    pipeline = (
+        Pipeline()
+        .set_source(RandomTextSource(total=100))
+        .append("text_replacer", TextReplacer(substitution="XXX"))
+        .append("text_reducer", TextReducer, init_kwargs={})
+        .build()
+    )
+
+    for item in pipeline.run():
+        print(item.data["text"])
+
+2. Pushing items manually with ``process_async()``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When items arrive from an external loop (e.g. a web handler or message
+consumer) and you still want concurrent or batch stages, submit items with
+:meth:`.Pipeline.process_async`, read results with :meth:`.Pipeline.get_item`,
+and call :meth:`.Pipeline.stop` once no more items will be sent:
+
+.. code-block:: python
+
+    pipeline = (
+        Pipeline()
+        .append("text_replacer", TextReplacer(substitution="XXX"), concurrency=3)
+        .append("text_reducer", TextReducer(), concurrency=1)
+        .build()
+    )
+
+    for i in range(100):
+        pipeline.process_async(
+            Item({"id": i, "text": f"sample {i} with 99zz"}),
+            callback=lambda it: it.metadata.setdefault("done", True),
+        )
+
+    for _ in range(100):
+        print(pipeline.get_item().data["text"])
+
+    pipeline.stop()
+
+.. note::
+   ``process_async`` uses worker threads/processes under the hood, not Python's
+   ``asyncio``. Once ``stop()`` has been called and all output items have been
+   read, further calls to :meth:`.Pipeline.get_item` raise
+   :class:`.PipelineStateError`.
+
+3. Synchronous single-item calls with ``process()``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When every stage is inline (``concurrency=0`` and no :class:`.BatchStage`),
+:meth:`.Pipeline.process` runs an item directly through the stage chain and
+returns it immediately, with no queues or background threads:
+
+.. code-block:: python
+
+    pipeline = (
+        Pipeline()
+        .append("text_replacer", TextReplacer(substitution="XXX"))
+        .append("text_reducer", TextReducer())
+        .build()
+    )
+
+    item = pipeline.process(Item({"text": "order 42ab confirmed"}))
+    print(item.data["text"])
+    pipeline.close()
+
+If the pipeline has any concurrent or batch stage, :meth:`.Pipeline.process`
+raises ``ValueError``.
+
+Pipeline lifecycle and metrics
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A pipeline moves through four states (:class:`.PipelineState`):
+``INITIAL -> BUILT -> RUNNING -> CLOSED``.
+
+* After :meth:`.Pipeline.build`, stages and the error manager are frozen (adding
+  stages or changing the error manager raises :class:`.PipelineStateError`),
+  though :meth:`.Pipeline.set_source` is still allowed until execution starts.
+* ``run()`` and ``process_async()`` are one-shot: when the run finishes, the
+  pipeline transitions to ``CLOSED``. By contrast, :meth:`.Pipeline.process`
+  can be called repeatedly while the pipeline is ``BUILT`` until you call
+  :meth:`.Pipeline.close`.
+* :meth:`.Pipeline.close` is idempotent and runs ``on_end`` on every started
+  stage and the error manager.
+* :attr:`.Pipeline.count`, :attr:`.Pipeline.soft_errors_count`, and
+  :attr:`.Pipeline.critical_errors_count` track the items delivered by
+  ``run()`` and ``get_item()`` (including across process workers).
+
+Error handling and retries
+--------------------------
+
+Soft vs. critical errors
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+SmartPipeline distinguishes two kinds of stage errors, managed by
+:class:`.ErrorManager`:
+
+* :class:`.SoftError` (raised explicitly by a stage): logged and attached to
+  the item via :meth:`.Item.soft_errors`. Only the stage that raised it is
+  skipped; the item continues to the next stages. (In a :class:`.BatchStage`,
+  raising mid-loop skips the rest of that batch for that stage.)
+* :class:`.CriticalError` (raised explicitly, or wrapping any unhandled
+  exception): logged and attached to the item via :meth:`.Item.critical_errors`.
+  By default, the item skips all remaining stages and is still yielded at the
+  end of the pipeline.
+
+You can change how critical errors are treated on the error manager:
+
+* :meth:`.ErrorManager.raise_on_critical_error` stops the pipeline and re-raises
+  the exception to the caller.
+* :meth:`.ErrorManager.no_skip_on_critical_error` keeps sending the item to
+  subsequent stages, like a soft error.
+* Subclass :class:`.ErrorManager` and override :meth:`.ErrorManager.handle` for
+  custom reporting or alerting, then register it with
+  :meth:`.Pipeline.set_error_manager`.
+
+When raising :class:`.SoftError` or :class:`.CriticalError` from a caught
+exception, use explicit chaining (``raise SoftError("...") from e``) so the
+original cause stays accessible via :meth:`.Error.get_exception`.
+
+Stage retries
+^^^^^^^^^^^^^
+
+Transient failures (such as network timeouts or rate limits) can be retried per
+stage by passing ``retryable_errors``, ``max_retries``, and ``backoff`` (for
+exponential backoff) to :meth:`.Pipeline.append`:
+
+.. code-block:: python
+
+    pipeline = (
+        Pipeline()
+        .set_source(number_items(10))
+        .append(
+            "fetcher",
+            RemoteFetcher(),
+            concurrency=4,
+            retryable_errors=(TimeoutError, ConnectionError),
+            max_retries=3,
+            backoff=0.5,
+        )
+        .build()
+    )
+
+    for item in pipeline.run():
+        if item.has_soft_errors():
+            for err in item.soft_errors():
+                print(err.get_stage(), err, err.get_exception())
+
+If all retry attempts fail, a single :class:`.RetryError` (a subclass of
+:class:`.SoftError`) is attached to the item and that stage is skipped. Because
+retries re-run the stage on the same :class:`.Item` instance, retried stages
+should be idempotent or mutate ``item.data`` only after the fallible operation
+succeeds.
 
 Typing the payload
 ------------------
 
-The payload type is generic and checked statically, e.g. by ``mypy``.
-``Item[MyData]`` carries ``MyData`` in :attr:`.Item.data`,
-which can be a ``TypedDict``, a dataclass, or even a primitive.
-Stages, sources, and the pipeline itself take the same parameter,
-so ``Stage[MyData]`` processes ``Item[MyData]`` items
-in a ``Pipeline[MyData]`` pipeline.
-Without parameters the payload defaults to ``Dict[str, Any]``.
+:class:`.Item`, :class:`.Source`, :class:`.Stage`, :class:`.BatchStage`, and
+:class:`.Pipeline` are generic over the payload type and checked statically by
+``mypy``. Without a type parameter, the payload defaults to ``Dict[str, Any]``.
+Pass a ``TypedDict``, dataclass, or any other type to enforce it across the
+pipeline:
 
 .. code-block:: python
 
-    from dataclasses import dataclass
     from typing import TypedDict
-
-    from smartpipeline.item import Item
-    from smartpipeline.pipeline import Pipeline
-    from smartpipeline.stage import Source, Stage
+    from smartpipeline import Item, Pipeline, Stage
 
 
     class Row(TypedDict):
-        id: str
-        text: str
-
-
-    @dataclass
-    class Doc:
         id: str
         text: str
 
@@ -54,333 +369,47 @@ Without parameters the payload defaults to ``Dict[str, Any]``.
             return item
 
 
-    class UpperDoc(Stage[Doc]):
-        def process(self, item: Item[Doc]) -> Item[Doc]:
-            item.data = Doc(id=item.data.id, text=item.data.text.upper())
-            return item
-
-
     row_pipeline: Pipeline[Row] = (
-        Pipeline[Row]().append("upper", UpperRow()).build()
-    )
-    doc_pipeline: Pipeline[Doc] = (
-        Pipeline[Doc]().append("upper", UpperDoc()).build()
-    )
-
-Defining the source
--------------------
-
-To build your own pipeline you define a source and a sequence of stages.
-Extend :class:`.Source` and override :meth:`.Source.pop`.
-This method is called repeatedly and must return one new item per call.
-It may return ``None`` when no item is currently available,
-without ending the stream.
-When the source is exhausted, it must call :meth:`.Source.stop`.
-Typical cases are: all documents in an index have been read,
-or all lines of a CSV file have been consumed.
-A source may also produce items indefinitely, in which case the pipeline never ends.
-
-Alternatively, :meth:`.Pipeline.set_source` accepts any iterable of items
-(e.g. a generator), which is wrapped in a private source stopping when exhausted:
-
-.. code-block:: python
-
-    import random
-    import string
-
-
-    def random_text_items(total=1000):
-        for count in range(1, total + 1):
-            text = ''.join(
-                random.choices(
-                    string.ascii_letters + string.digits,
-                    k=random.randint(50, 200)
-                )
-            )
-            item = Item()
-            item.data.update({
-                "text": text,
-                "id": hash(text)
-            })
-            item.metadata['count'] = count
-            yield item
-
-    # TextReplacer is defined in "Defining your stages" below
-    pipeline = (
-        Pipeline()
-        .set_source(random_text_items())
-        .append("text_replacer", TextReplacer(substitution="XXX"))
+        Pipeline[Row]()
+        .set_source([Item[Row]({"id": "1", "text": "hello"})])
+        .append("upper", UpperRow())
         .build()
     )
 
-The following example defines a source that generates 1000 items,
-each carrying a random string in its data.
+Complete example
+----------------
+
+The pipeline below reads HTML files from ``./document_files`` using the built-in
+:class:`.LocalFilesSource` and :class:`.FilePathItem` helpers, extracts text,
+finds VAT code occurrences, and indexes the documents in Elasticsearch. Errors
+are logged to a dedicated Elasticsearch index through a custom
+:class:`.ErrorManager`.
+
+More self-contained runnable pipelines live in the ``examples/`` directory of
+the repository.
 
 .. code-block:: python
 
-    class RandomTextSource(Source):
-        def __init__(self, total=1000):
-            self._total = total
-            self._counter = 0
-
-        def pop(self):
-            self._counter += 1
-            # once 1000 items have been generated we signal the end;
-            # the stop condition stays valid for all subsequent pop() calls
-            if self._counter > self._total:
-                self.stop()
-                return
-            else:
-                item = Item()
-                text = ''.join(
-                    random.choices(
-                        string.ascii_letters + string.digits,
-                        k=random.randint(50, 200)
-                    )
-                )
-                item.data.update({
-                    "text": text,
-                    "id": hash(text)
-                })
-                item.metadata['count'] = self._counter
-                return item
-
-Defining your stages
---------------------
-
-A stage is a subclass of :class:`.Stage` or :class:`.BatchStage`.
-
-The actual processing happens in :meth:`.Stage.process` for single items,
-or in :meth:`.BatchStage.process_batch` for lists of items.
-
-A stage receives one item and returns the same item, enriched by its computation.
-A batch stage processes several items at once and must return exactly one item
-for each item it receives; filtering a batch belongs upstream or in a normal stage.
-Returning a different number of items raises :class:`.BatchOutputError`
-and stops the pipeline.
-Batching pays off when the underlying operation is cheaper in bulk,
-for example an HTTP API that accepts lists of values (fewer calls),
-or a machine learning model optimized for predicting on multiple samples.
-As with a single item, an item which already raised a critical error skips the
-batch stage: if the whole batch is made of such items, :meth:`.BatchStage.process_batch`
-is not called at all.
-
-When a stage is concurrent, its ``process`` method is invoked
-on different subsets of the data flow at the same time
-(see :doc:`concurrency`).
-
-Each stage exposes its own logger through :attr:`.Stage.logger`.
-
-The following stage takes the items produced by the previous example
-and replaces every occurrence of a pattern with a fixed string.
-
-.. code-block:: python
-
-    class TextReplacer(Stage):
-        def __init__(self, substitution):
-            self._pattern = re.compile(r"\d\d\D\D")
-            self._sub = substitution
-
-        def process(self, item):
-            new_text = self._pattern.sub(self._sub, item.data["text"])
-            if item.data["text"] == new_text:
-                # a SoftError skips this stage for the item,
-                # but the item still continues through the pipeline
-                raise SoftError("Text has not been modified")
-            item.data["text"] = new_text
-            return item
-
-Error handling
---------------
-
-The snippet above raises a :class:`.SoftError` when the text is unchanged.
-The :class:`.ErrorManager` handles the error,
-but the item is still passed to the following stages.
-By subclassing :class:`.ErrorManager` you can customize how these "soft" errors,
-and any other exception, are handled.
-
-:class:`.SoftError` must be raised explicitly.
-It skips processing only for the stage that raised it, not for the whole pipeline.
-Note the batch-stage caveat: if you raise while iterating over a batch,
-the remaining items of that batch are skipped as well.
-
-Any uncaught exception is wrapped in a :class:`.CriticalError`,
-or the stage can raise one explicitly.
-By default the error manager records it and skips the current item,
-and the pipeline moves on to the next one.
-Call :meth:`.ErrorManager.raise_on_critical_error` to stop the pipeline instead.
-
-When raising :class:`.SoftError` or :class:`.CriticalError` explicitly,
-use `explicit exception chaining <https://www.python.org/dev/peps/pep-3134/#explicit-exception-chaining>`_
-(``raise ... from ...``) so the original cause is preserved.
-
-Setting and running the pipeline
---------------------------------
-
-Stages are added to a :class:`.Pipeline` instance in sequence, with a builder pattern.
-:meth:`.Pipeline.append` is the main method for adding stages.
-Each stage needs a unique name, plus an optional concurrency setting.
-``concurrency`` defaults to 0, which means inline execution.
-A value of 1 or greater makes the stage concurrent.
-Combined with ``executor="processes"``, concurrent executions run in separate processes;
-otherwise they run in separate threads.
-With concurrency, items travel through queues and may be serialized.
-
-As a rule of thumb, use threads when stages are mostly waiting on I/O,
-and processes when stages perform heavy computation.
-Without concurrency the pipeline is a simple chain of :meth:`.Stage.process` calls,
-one item after the other.
-
-If you plan to run stages on multiple processes,
-read :doc:`concurrency` first: there are important constraints on what
-a stage may hold and how it must be initialized.
-
-:meth:`.Pipeline.append` also accepts a retry policy for selected errors
-(see the method documentation for details).
-Retries re-run the stage on the same item objects, so a failed attempt that mutates
-an item is visible to the next attempt: retried stages should be idempotent or only
-mutate after the operations that may fail.
-
-:meth:`.Pipeline.append` accepts two forms of stage argument, with different
-construction timing:
-
-.. list-table::
-   :header-rows: 1
-
-   * - Stage argument
-     - When it is constructed
-     - Before ``build()``
-   * - An instance, e.g. ``TextReplacer()``
-     - Immediately, by the caller
-     - The instance exists and :meth:`.Pipeline.get_stage` returns it
-   * - A class, optionally with ``init_args``/``init_kwargs``
-     - By :meth:`.Pipeline.build`
-     - :meth:`.Pipeline.get_stage` returns ``None``
-
-**A class-based stage does not exist until ``build()``.** Class constructors run
-one by one in append order; ``build()`` collects every failure during construction.
-Heavy setup belongs in ``on_start``, which already runs
-sequentially. ``init_args`` and ``init_kwargs`` are only valid with a class.
-
-Always finish the concatenation with :meth:`.Pipeline.build`.
-``build()`` validates and prepares the pipeline: instance stages already exist,
-class-based stages are constructed and stored, but no worker is
-started. The start phase happens when the pipeline is executed, as shown below.
-
-The example below adds a second stage that truncates the text, then runs the pipeline.
-
-.. code-block:: python
-
-    class TextReducer(Stage):
-        def process(self, item):
-            item.data["text"] = item.data["text"][:40]
-            return item
-
-    pipeline = (
-        Pipeline()
-        .set_source(RandomTextSource())
-        .append("text_replacer", TextReplacer(substitution="XXX"))
-        .append("text_reducer", TextReducer())
-        .build()
-    )
-
-    for item in pipeline.run():
-        print(item.data["text"])
-
-The next example processes 100 items concurrently with
-:meth:`.Pipeline.process_async` (here "async" has nothing to do with ``asyncio``).
-No source is set: items are submitted explicitly, one by one.
-
-.. code-block:: python
-
-    pipeline = (
-        Pipeline()
-        .append("text_replacer", TextReplacer(substitution="XXX"), concurrency=3)
-        .append("text_reducer", TextReducer(), concurrency=1)
-        .build()
-    )
-    # "manually" send 100 items into the pipeline
-    for _ in range(100):
-        item = Item()
-        text = ''.join(
-            random.choices(
-                string.ascii_letters + string.digits,
-                k=random.randint(50, 200)
-            )
-        )
-        item.data.update({
-            "text": text,
-            "id": hash(text)
-        })
-        pipeline.process_async(item)
-    # retrieve the processed items
-    for _ in range(100):
-        print(pipeline.get_item().data["text"])
-    # explicitly stop the pipeline once no more items will arrive
-    pipeline.stop()
-
-``process_async()`` can be called again while the pipeline is running to submit
-more items. After ``stop()`` the current run terminates and the pipeline is
-closed. Once the run has ended and its output has been drained,
-:meth:`.Pipeline.get_item` raises :class:`.PipelineStateError` instead of blocking.
-
-Use :meth:`.Pipeline.process` only when no stage is concurrent:
-the item is processed synchronously and returned directly by the call.
-``process()`` raises ``ValueError`` as soon as the pipeline contains a stage
-with ``concurrency > 0``, so it can never block on a concurrent queue.
-Both :meth:`.Pipeline.process` and :meth:`.Pipeline.process_async` raise
-:class:`.PipelineStateError` after :meth:`.Pipeline.stop` has been called:
-the run is ending, so new items cannot be delivered anymore.
-
-Pipeline lifecycle
-^^^^^^^^^^^^^^^^^^
-
-A pipeline has an explicit lifecycle. ``build()`` prepares it, ``run()`` and
-``process_async()`` start its workers, and :meth:`.Pipeline.close` releases them.
-A pipeline can run only once: after ``run()`` or ``process_async()`` finishes it
-is closed. ``process()`` is the exception, since it can process several items
-one by one while the pipeline is built.
-
-After ``build()`` the configuration is frozen: adding stages or replacing the
-error manager raises :class:`.PipelineStateError`, while a source can still be
-set until the pipeline starts. ``close()`` is idempotent and can release a
-pipeline which was built but never run. A second ``close()`` racing with another
-one waits until the first has finished. A closed pipeline cannot be built or
-run again.
-
-:attr:`.Pipeline.count`, :attr:`.Pipeline.soft_errors_count` and
-:attr:`.Pipeline.critical_errors_count` describe delivered items and their
-errors; ``process()`` items are excluded. Unlike ``ErrorManager`` counters,
-they stay correct with process workers.
-
-A further example
------------------
-
-This pipeline processes the local files in the ``./document_files`` directory,
-extracts their text, finds VAT code occurrences,
-and indexes the result in an Elasticsearch cluster.
-Errors are logged to a separate Elasticsearch index
-through a custom error manager.
-The source used here is a helper shipped with the library,
-combined with a custom item type that carries a file reference.
-
-Further runnable examples live in the ``examples`` directory at the repository root.
-
-.. code-block:: python
-
-    from smartpipeline.pipeline import Pipeline
-    from smartpipeline.stage import Stage, AliveMixin
-    from smartpipeline.item import Item
-    from smartpipeline.error.handling import ErrorManager
-    from smartpipeline.error.exceptions import SoftError, CriticalError
-    from smartpipeline.helpers import LocalFilesSource, FilePathItem
-    from elasticsearch import Elasticsearch
+    import logging
+    import re
     from typing import Optional
-    import logging, re
+
+    from elasticsearch import Elasticsearch
+
+    from smartpipeline import (
+        CriticalError,
+        ErrorManager,
+        Item,
+        Pipeline,
+        SoftError,
+        Stage,
+    )
+    from smartpipeline.helpers import FilePathItem, LocalFilesSource
+    from smartpipeline.stage import AliveMixin
 
 
     class ESErrorLogger(ErrorManager):
-        """An error manager that writes error info into an Elasticsearch index"""
+        """Write stage error details into an Elasticsearch index."""
 
         def __init__(self, es_host: str, es_index: str):
             self.es_host = es_host
@@ -389,6 +418,10 @@ Further runnable examples live in the ``examples`` directory at the repository r
 
         def on_start(self):
             self.es_client = Elasticsearch(self.es_host)
+
+        def on_end(self):
+            if self.es_client is not None:
+                self.es_client.close()
 
         def handle(
             self, error: Exception, stage: AliveMixin, item: Item
@@ -400,7 +433,7 @@ Further runnable examples live in the ``examples`` directory at the repository r
                 body={
                     "stage": str(stage),
                     "item": str(item),
-                    "exception": type(logged_error),
+                    "exception": str(type(logged_error)),
                     "message": str(logged_error),
                 },
             )
@@ -408,21 +441,19 @@ Further runnable examples live in the ``examples`` directory at the repository r
 
 
     class TextExtractor(Stage):
-        """Read the text content of files"""
+        """Read the text content of files."""
 
         def process(self, item: FilePathItem) -> Item:
             try:
                 with open(item.path) as f:
                     item.data["text"] = f.read()
             except IOError as e:
-                # the item still reaches the next stages;
-                # we wrap the failure in a "soft error"
                 raise SoftError(f"Problems in reading file {item.path}") from e
             return item
 
 
     class VatFinder(Stage):
-        """Identify Italian VAT codes in texts"""
+        """Identify Italian VAT codes in texts."""
 
         def __init__(self):
             self.regex = re.compile(
@@ -430,15 +461,15 @@ Further runnable examples live in the ``examples`` directory at the repository r
             )
 
         def process(self, item: Item) -> Item:
-            vat_codes = []
-            for vat_match in self.regex.finditer(item.data.get("text", "")):
-                vat_codes.append((vat_match.start(), vat_match.end()))
-            item.data["vat_codes"] = vat_codes
+            item.data["vat_codes"] = [
+                (m.start(), m.end())
+                for m in self.regex.finditer(item.data.get("text", ""))
+            ]
             return item
 
 
     class Indexer(Stage):
-        """Write item payloads into an Elasticsearch index"""
+        """Write item payloads into an Elasticsearch index."""
 
         def __init__(self, es_host: str, es_index: str):
             self.es_host = es_host
@@ -447,6 +478,10 @@ Further runnable examples live in the ``examples`` directory at the repository r
 
         def on_start(self):
             self.es_client = Elasticsearch(self.es_host)
+
+        def on_end(self):
+            if self.es_client is not None:
+                self.es_client.close()
 
         def process(self, item: Item) -> Item:
             self.es_client.index(index=self.es_index, body=item.data)
