@@ -289,6 +289,18 @@ def test_batch_output_length_must_match_input():
             run_with_timeout(pipeline)
 
 
+def test_batch_stage_rejects_an_invalid_batch():
+    """A batch stage must batch at least one item and never wait a negative time."""
+    for kwargs, message in (
+        ({"size": 0}, "size"),
+        ({"size": -3}, "size"),
+        ({"timeout": -1}, "timeout"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            BatchTextReverser(**kwargs)
+    assert BatchTextReverser(size=1, timeout=0).size == 1
+
+
 def test_retryable_batch_stages():
     """Failing batch stages retry into per-item soft RetryErrors."""
     pipeline = (

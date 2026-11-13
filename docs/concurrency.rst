@@ -44,7 +44,8 @@ automatically promoted to ``concurrency=1, executor="threads"``.
 Queues between concurrent stages are bounded by ``max_queues_size`` on
 :class:`.Pipeline` (1000 items by default). When a slow stage fills its input
 queue, upstream stages and the source block until space frees up, providing
-automatic backpressure and bounding memory usage.
+automatic backpressure and bounding memory usage. Pass ``0`` to remove the bound
+(no backpressure: a fast source grows the queues until memory runs out).
 
 Choosing threads or processes
 -----------------------------

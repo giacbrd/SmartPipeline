@@ -147,6 +147,9 @@ wait before flushing a partial batch, default ``1.0``) to ``super().__init__``:
                 item.data["text"] = item.data["text"].strip().lower()
             return items
 
+``size`` must be at least ``1`` and ``timeout`` at least ``0`` (which flushes a
+batch as soon as it holds one item).
+
 :meth:`.BatchStage.process_batch` must return **one item for each input item**
 in the batch; returning a different count raises :class:`.BatchOutputError` and
 stops the pipeline. Any item that already carries a critical error from an

@@ -173,8 +173,13 @@ class Pipeline(Generic[DataT]):
         max_queues_size: int = MAX_QUEUES_SIZE,
     ):
         """
-        :param max_queues_size: Maximum size of any queue instanced for the pipeline (stage input and output queues)
+        :param max_queues_size: Maximum size of any queue instanced for the pipeline (stage input and output queues), 0 for no limit
+        :raises ValueError: When `max_queues_size` is negative
         """
+        if max_queues_size < 0:
+            raise ValueError(
+                "The `max_queues_size` parameter must be >= 0 (0 means no limit)"
+            )
         self._stage_specs: OrderedDictType[str, StageSpec[DataT]] = OrderedDict()
         self._stages: OrderedDictType[str, Stage[DataT] | BatchStage[DataT]] = (
             OrderedDict()
